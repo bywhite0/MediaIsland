@@ -4,7 +4,7 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 
 ![截图](./Assets/screenshot.png)
 
-> ![Note]
+> [!NOTE]
 >
 > 本项目由 WinForms 迁移而来，目前代码还是一片屎山，欢迎大家参与贡献🙏
 
