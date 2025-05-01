@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.13.35931.197 d17.13
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MediaIsland", "MediaIsland.csproj", "{35FD1221-663D-4CA8-869C-BD34A6B7FA12}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MediaIsland", "MediaIsland\MediaIsland.csproj", "{35FD1221-663D-4CA8-869C-BD34A6B7FA12}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -14,9 +14,9 @@ namespace MediaIsland
     {
         public override void Initialize(HostBuilderContext context, IServiceCollection services)
         {
-            Console.WriteLine("[MI]正在加载 MediaIsland...");
+            Console.WriteLine("[MI]姝ｅ湪鍔犺浇 MediaIsland...");
             services.AddComponent<NowPlayingComponent>();
-            Console.WriteLine("[MI]MediaIsland 加载成功");
+            Console.WriteLine("[MI]MediaIsland 鍔犺浇鎴愬姛");
         }
 
     }

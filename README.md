@@ -4,14 +4,16 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 
 ![截图](./Assets/screenshot.png)
 
-> Note
+> ![Note]
+>
 > 本项目由 WinForms 迁移而来，目前代码还是一片屎山，欢迎大家参与贡献🙏
 
 ## 要求
 
-本插件使用了 [GlobalSystemMediaTransportControlsSessionManager 类](https://learn.microsoft.com/en-us/uwp/api/windows.media.control.globalsystemmediatransportcontrolssessionmanager)，故需要 Windows 10 Build 17763 (1809) 或以上版本。
+本插件需要 Windows 10 Build 17763 (1809) 或以上版本。
 
 ## TODO
+
 - [x] 显示播放器图标
 - [ ] 【正在播放】组件设置页面
 - [ ] 优化代码
