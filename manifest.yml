@@ -1,0 +1,17 @@
+# 插件清单文件使用 YAML 格式存储。
+# YAML 教程：https://www.runoob.com/w3cnote/yaml-intro.html
+# 插件清单格式：https://docs.classisland.tech/zh-cn/latest/dev/plugins/create-project/#%E6%8F%92%E4%BB%B6%E6%B8%85%E5%8D%95%E6%96%87%E4%BB%B6
+
+id: bywhite.mediaisland
+name: MediaIsland
+description: 在 ClassIsland 显示 SMTC 媒体信息。
+entranceAssembly: "MediaIsland.dll"
+url: https://github.com/bywhite0/MediaIsland
+version: 1.0.0.0
+apiVersion: 1.5.0
+author: bywhite0
+readme: README.md
+icon: icon.png
+repoOwner: bywhite0
+repoName: MediaIsland
+assetsRoot: master/.
