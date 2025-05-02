@@ -139,19 +139,20 @@ namespace MediaIsland.Components
         {
             if (thumbRef != null)
             {
-                // 打开 WinRT 流
-                IRandomAccessStreamWithContentType winRtStream = await thumbRef.OpenReadAsync();
-
-                // 扩展方法 AsStreamForRead 转为 .NET Stream
-                using Stream netStream = winRtStream.AsStreamForRead();
-
-                // WPF BitmapImage 从 Stream 加载
+                var winRtStream = await thumbRef.OpenReadAsync();
+                MemoryStream ms = new();
+                using (var stream = winRtStream.AsStreamForRead())
+                {
+                    await stream.CopyToAsync(ms);
+                }
+                ms.Position = 0;
                 var bmp = new BitmapImage();
                 bmp.BeginInit();
                 bmp.CacheOption = BitmapCacheOption.OnLoad;
-                bmp.StreamSource = netStream;
+                bmp.StreamSource = ms;
                 bmp.EndInit();
                 bmp.Freeze();
+                ms.Dispose();
                 AlbumArt.ImageSource = bmp;
             }
         }
