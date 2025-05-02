@@ -19,6 +19,14 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 - [ ] 优化代码
 - [ ] 与 [LyricsIsland](https://github.com/jiangyin14/LyricsIsland) 联动（？
 
+## 致谢
+
+本项目使用了以下第三方库：
+
+- [ClassIsland.PluginSdk](https://www.nuget.org/packages/ClassIsland.PluginSdk)
+- [Microsoft-WindowsAPICodePack-Core](https://www.nuget.org/packages/Microsoft-WindowsAPICodePack-Core/)
+- [WindowsAPICodePackShell](https://www.nuget.org/packages/WindowsAPICodePackShell)
+
 ## 许可
 
 本项目基于 GNU Affero General Public License v3.0 许可。
