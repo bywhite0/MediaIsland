@@ -14,12 +14,13 @@ namespace MediaIsland.Helpers
             {
                 ["Microsoft.ZuneMusic"] = "Groove 音乐",
                 ["Microsoft.ZuneVideo"] = "电影与电视",
-                ["MSEDGE"] = "Microsoft Edge",
-                ["Chrome"] = "Google Chrome",
-                ["WMPlayer"] = "Windows Media Player",
-                ["CloudMusic"] = "网易云音乐",
+                ["msedge"] = "Edge",
+                ["chrome"] = "Chrome",
+                ["cloudmusic"] = "网易云音乐",
                 ["1F8B0F94.122165AE053F"] = "网易云音乐 UWP",
-                ["QQMusic"] = "QQ 音乐"
+                ["qqmusic"] = "QQ 音乐",
+                ["spotify"] = "Spotify",
+                ["sim-music"] = "SimMusic"
             };
 
             // 多级匹配策略
@@ -66,12 +67,12 @@ namespace MediaIsland.Helpers
         private static string CleanTechnicalName(string technicalName)
         {
             return technicalName
-                .Replace(".exe", "")                   // 移除扩展名
-                .Replace("_", " ")                     // 转换下划线为空格
-                .Trim()                                // 去除首尾空格
-                .Split('.', '-')                       // 分割符号
-                .LastOrDefault()                      // 取首段
-                ?? "未知播放器";                         // 最终回退
+                .Replace(".exe", "")
+                .Replace("_", " ")
+                .Trim()
+                .Split('.', '-')
+                .LastOrDefault()
+                ?? "未知播放器";
         }
     }
 }
