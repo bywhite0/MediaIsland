@@ -18,7 +18,7 @@ namespace MediaIsland.Helpers
                 ["chrome"] = "Chrome",
                 ["cloudmusic"] = "网易云音乐",
                 ["1F8B0F94.122165AE053F"] = "网易云音乐 UWP",
-                ["qqmusic"] = "QQ 音乐",
+                ["QQMusic"] = "QQ 音乐",
                 ["spotify"] = "Spotify",
                 ["sim-music"] = "SimMusic",
                 ["PotPlayer"] = "PotPlayer"
