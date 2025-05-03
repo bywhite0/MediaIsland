@@ -24,9 +24,11 @@ namespace MediaIsland.Components
         GlobalSystemMediaTransportControlsSession? currentSession;
         //TimeSpan currentDuration;
         //TimeSpan currentPosition;
-        public NowPlayingComponent()
+        private ILogger<MediaIsland.Plugin> Logger { get; }
+        public NowPlayingComponent(ILogger<Plugin> logger)
         {
             InitializeComponent();
+            Logger = logger;
             LoadCurrentPlayingInfoAsync();
         }
 
@@ -42,19 +44,19 @@ namespace MediaIsland.Components
                 smtcManager.SessionsChanged += SmtcManager_SessionsChanged;
 
                 currentSession = smtcManager.GetCurrentSession();
-                Console.WriteLine("[MI]尝试获取 SMTC 会话信息");
+                Logger.LogInformation("尝试获取 SMTC 会话信息");
                 if (currentSession != null)
                 {
-                    Console.WriteLine("[MI]存在 SMTC 会话信息，订阅事件");
+                    Logger.LogInformation("存在 SMTC 会话信息");
                     currentSession.MediaPropertiesChanged += CurrentSession_MediaPropertiesChanged;
                     currentSession.PlaybackInfoChanged += CurrentSession_PlaybackInfoChanged;
                     currentSession.TimelinePropertiesChanged += CurrentSession_TimelinePropertiesChanged;
-                    Console.WriteLine("[MI]刷新【正在播放】组件内容");
+                    Logger.LogInformation("刷新【正在播放】组件内容");
                     await RefreshMediaInfo(currentSession);
                 }
                 else
                 {
-                    Console.WriteLine("[MI]不存在 SMTC 会话信息，隐藏组件 UI");
+                    Logger.LogInformation("不存在 SMTC 会话信息");
                     await Dispatcher.InvokeAsync(() => {
                         InfoStackPanel.Visibility = Visibility.Collapsed;
                         CoverStackPanel.Visibility = Visibility.Collapsed;
@@ -65,7 +67,7 @@ namespace MediaIsland.Components
             catch (Exception ex)
             {
                 await Dispatcher.InvokeAsync(() => {
-                    Console.WriteLine($"[MI]获取 SMTC 会话时发生错误: {ex.Message}");
+                    Logger.LogError($"获取 SMTC 会话时发生错误: {ex.Message}");
                     InfoStackPanel.Visibility = Visibility.Collapsed;
                     CoverStackPanel.Visibility = Visibility.Collapsed;
                     SourceStackPanel.Visibility = Visibility.Collapsed;
@@ -96,7 +98,7 @@ namespace MediaIsland.Components
                 var mediaProperties = await session.TryGetMediaPropertiesAsync();
                 var timeline = session.GetTimelineProperties();
                 var playbackInfo = session.GetPlaybackInfo();
-
+                Logger.LogTrace($"[{sourceApp}] 正在播放: {mediaProperties.Title} - {mediaProperties.Artist} ({playbackInfo.PlaybackStatus}) [{timeline.Position.TotalSeconds} / {timeline.EndTime.TotalSeconds}]");
                 await Dispatcher.InvokeAsync(new Action(async () =>
                 {
                     InfoStackPanel.Visibility = Visibility.Visible;
@@ -175,6 +177,7 @@ namespace MediaIsland.Components
         /// <param name="args">事件参数</param>
         private async void CurrentSession_MediaPropertiesChanged(GlobalSystemMediaTransportControlsSession sender, object args)
         {
+            Logger.LogDebug("SMTC 媒体属性发生改变");
             await RefreshMediaInfo(sender);
         }
 
@@ -185,6 +188,7 @@ namespace MediaIsland.Components
         /// <param name="args">事件参数</param>
         private async void CurrentSession_PlaybackInfoChanged(GlobalSystemMediaTransportControlsSession sender, object args)
         {
+            Logger.LogDebug("SMTC 播放信息发生改变");
             //var timeline = sender.GetTimelineProperties();
             //Dispatcher.Invoke((Action)(() => UpdateProgressUI(timeline.Position, timeline.EndTime)));
             await RefreshMediaInfo(sender);
