@@ -20,7 +20,8 @@ namespace MediaIsland.Helpers
                 ["1F8B0F94.122165AE053F"] = "网易云音乐 UWP",
                 ["qqmusic"] = "QQ 音乐",
                 ["spotify"] = "Spotify",
-                ["sim-music"] = "SimMusic"
+                ["sim-music"] = "SimMusic",
+                ["PotPlayer"] = "PotPlayer"
             };
 
             // 多级匹配策略
