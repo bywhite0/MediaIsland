@@ -16,7 +16,6 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 
 - [x] 显示播放器图标
 - [ ] 【正在播放】组件设置页面
-- [ ] 优化代码
 - [ ] 与 [LyricsIsland](https://github.com/jiangyin14/LyricsIsland) 联动（？
 
 ## 致谢
@@ -26,7 +25,10 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 - [ClassIsland.PluginSdk](https://www.nuget.org/packages/ClassIsland.PluginSdk)
 - [Microsoft-WindowsAPICodePack-Core](https://www.nuget.org/packages/Microsoft-WindowsAPICodePack-Core/)
 - [WindowsAPICodePackShell](https://www.nuget.org/packages/WindowsAPICodePackShell)
+- [Dubya.WindowsMediaController](https://www.nuget.org/packages/Dubya.WindowsMediaController)
 
 ## 许可
 
 本项目基于 GNU Affero General Public License v3.0 许可。
+
+本项目部分使用了 [DubyaDude/WindowsMediaController] 的代码，其内容仍基于 MIT 许可。
