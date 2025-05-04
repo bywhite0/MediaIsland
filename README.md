@@ -15,7 +15,8 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 ## TODO
 
 - [x] 显示播放器图标
-- [ ] 【正在播放】组件设置页面
+- [x] 【正在播放】组件设置页面
+- [ ] 完善【正在播放】组件设置（隐藏专辑封面、播放器等）
 - [ ] 与 [LyricsIsland](https://github.com/jiangyin14/LyricsIsland) 联动（？
 
 ## 致谢
