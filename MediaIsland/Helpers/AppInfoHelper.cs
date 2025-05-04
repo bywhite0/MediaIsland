@@ -21,7 +21,8 @@ namespace MediaIsland.Helpers
                 ["QQMusic"] = "QQ 音乐",
                 ["spotify"] = "Spotify",
                 ["sim-music"] = "SimMusic",
-                ["PotPlayer"] = "PotPlayer"
+                ["PotPlayer"] = "PotPlayer",
+                ["lx-music"] = "LX Music"
             };
 
             // 多级匹配策略
