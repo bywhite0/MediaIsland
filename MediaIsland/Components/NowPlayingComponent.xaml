@@ -23,7 +23,7 @@
         </Grid.ColumnDefinitions>
         <StackPanel Name="CoverStackPanel" Grid.Column="0" Margin="0" Orientation="Horizontal">
             <Border Name="CoverBorder" CornerRadius="3" Margin="0" ClipToBounds="True" Width="28" Height="28">
-                <md:PackIcon Kind="MusicNoteWhole" VerticalAlignment="Center" Margin="0" Visibility="Collapsed" />
+                <md:PackIcon Name="CoverPlaceholder" Kind="MusicNote" VerticalAlignment="Center" Margin="0" Visibility="Collapsed" Width="22" Height="22"/>
                 <Border.Background>
                     <ImageBrush x:Name="AlbumArt" Stretch="UniformToFill" />
                 </Border.Background>
@@ -35,7 +35,7 @@
         </StackPanel>
         <StackPanel Name="SourceStackPanel" Grid.Column="2" Margin="4 0 0 0" Orientation="Vertical" VerticalAlignment="Center">
             <Border Name="SourceIconBorder" VerticalAlignment="Center" CornerRadius="16"  Margin="0" ClipToBounds="True" Width="22" Height="22">
-                <md:PackIcon Kind="MusicNoteWhole" VerticalAlignment="Center" Margin="0" Visibility="Collapsed" />
+                <md:PackIcon Kind="MusicNote" VerticalAlignment="Center" Margin="0" Visibility="Collapsed" />
                 <Border.Background>
                     <ImageBrush x:Name="sourceIcon" Stretch="UniformToFill" />
                 </Border.Background>

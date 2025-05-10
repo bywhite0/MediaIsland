@@ -144,10 +144,12 @@ namespace MediaIsland.Components
                                 if (thumb != null)
                                 {
                                     AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
+                                    CoverPlaceholder.Visibility = Visibility.Collapsed;
                                 }
                                 else
                                 {
                                     AlbumArt.ImageSource = null;
+                                    CoverPlaceholder.Visibility = Visibility.Visible;
                                 }
 
                                 // 更新播放器信息
