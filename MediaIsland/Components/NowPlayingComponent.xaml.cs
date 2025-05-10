@@ -143,7 +143,7 @@ namespace MediaIsland.Components
                                 var thumb = mediaProperties.Thumbnail;
                                 if (thumb != null)
                                 {
-                                    AlbumArt.ImageSource = ThumbnailHelper.GetThumbnail(thumb, false);
+                                    AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
                                 }
                                 else
                                 {
