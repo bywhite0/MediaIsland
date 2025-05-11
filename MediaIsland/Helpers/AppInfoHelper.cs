@@ -22,7 +22,8 @@ namespace MediaIsland.Helpers
                 ["spotify"] = "Spotify",
                 ["sim-music"] = "SimMusic",
                 ["PotPlayer"] = "PotPlayer",
-                ["lx-music"] = "LX Music"
+                ["lx-music"] = "LX Music",
+                ["amll-player"] = "AMLL Player"
             };
 
             // 多级匹配策略
