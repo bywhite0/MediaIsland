@@ -1,0 +1,62 @@
+﻿<ci:SettingsPageBase x:Class="MediaIsland.SettingsPages.IntegrationSettingsPage"
+                     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                     xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                     xmlns:md="http://materialdesigninxaml.net/winfx/xaml/themes"
+                     xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+                     xmlns:local="clr-namespace:MediaIsland.SettingsPages"
+                     mc:Ignorable="d" 
+                     d:DesignHeight="450" d:DesignWidth="800"
+                     Title="IntegrationSettingsPage"
+                     TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+                     Background="{DynamicResource MaterialDesignPaper}"
+                     FontFamily="{StaticResource HarmonyOsSans}"
+                     TextElement.FontWeight="Regular"
+                     TextElement.FontSize="14"
+                     TextOptions.TextFormattingMode="Ideal"
+                     TextOptions.TextRenderingMode="Auto">
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:IntegrationSettingsPage}}">
+        <StackPanel Style="{StaticResource SettingsPageStackPanelStyle}">
+            <ci:InfoCard IconKind="Alert"
+                     Title="实验性功能提示"
+                     Content="本页面功能尚未开发完毕，设置不会保存，请谨慎使用。"/>
+            <ci:IconText Kind="CogOutline" Text="与其他应用集成" Margin="0 0 0 8" />
+            <md:Card x:Name="LXMusicsLyricForwarderCard">
+                <Expander Background="Transparent"
+                          IsExpanded="{Binding Settings.IsLXMusicLyricForwarderEnabled, Mode=TwoWay}"
+                          TextBlock.Foreground="{DynamicResource MaterialDesignBody}"
+                          Margin="-12 0">
+                    <Expander.Header>
+                        <ci:SettingsControl Header="LX Music 歌词转发"
+                                            IconGlyph="BuildOutline"
+                                            Description="将 LX Music 的歌词转发到 LyricsIsland 接口。"
+                                            HasSwitcher="True"
+                                            x:Name="LXMusicsLyricForwarderSwitcher"
+                                            IsOn="{Binding Settings.IsLXMusicLyricForwarderEnabled, Mode=TwoWay}"
+                                             />
+                    </Expander.Header>
+                    <StackPanel Orientation="Vertical" Style="{StaticResource SettingsPageStackPanelStyle}" Margin="24 0 48 12">
+                        
+                        <ci:SettingsControl Header="LX Music API 端口"
+                                            IconGlyph="DirectionsBoat"
+                                            Description="设置 LX Music API 端口。"
+                                            HasSwitcher="True">
+                            <ci:SettingsControl.Switcher>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBox Text="{Binding Settings.LXMusicAPIPort, Mode=TwoWay}"
+                                             Foreground="{DynamicResource MaterialDesignBody}"
+                                             Margin="3,0,3,0"/>
+                                    <Button Content="应用"
+                                            Click="StartLXMusicLyricsForwarder_OnClick"
+                                            Style="{StaticResource MaterialDesignFlatButton}"
+                                            Margin="12,0,0,0"/>
+                                </StackPanel>
+                            </ci:SettingsControl.Switcher>
+                        </ci:SettingsControl>
+                    </StackPanel>
+                </Expander>
+            </md:Card>
+        </StackPanel>
+    </ScrollViewer>
+</ci:SettingsPageBase>
