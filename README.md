@@ -9,6 +9,9 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
     <img src="Assets/screenshot_with_ei.png" alt="搭配ei使用截图" />
   </details>
 
+> [!IMPORTANT]
+>
+> 本插件的内存占用较大，低性能设备请谨慎使用。
 
 > [!NOTE]
 >
