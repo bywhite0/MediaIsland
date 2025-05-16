@@ -36,6 +36,8 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 
 ## 许可
 
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fbywhite0%2FMediaIsland.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fbywhite0%2FMediaIsland?ref=badge_shield&issueType=license)
+
 本项目基于 GNU Affero General Public License v3.0 许可。
 
 本项目部分使用了 [DubyaDude/WindowsMediaController](https://github.com/DubyaDude/WindowsMediaController) 的代码，其内容仍基于 MIT 许可。
