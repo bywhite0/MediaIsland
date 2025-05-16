@@ -31,7 +31,6 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 本项目使用了以下第三方库：
 
 - [ClassIsland.PluginSdk](https://www.nuget.org/packages/ClassIsland.PluginSdk)
-- [Microsoft-WindowsAPICodePack-Core](https://www.nuget.org/packages/Microsoft-WindowsAPICodePack-Core/)
 - [WindowsAPICodePackShell](https://www.nuget.org/packages/WindowsAPICodePackShell)
 - [Dubya.WindowsMediaController](https://www.nuget.org/packages/Dubya.WindowsMediaController)
 
