@@ -5,6 +5,7 @@ using ClassIsland.Core.Attributes;
 using MahApps.Metro.Controls;
 using MaterialDesignThemes.Wpf;
 using MediaIsland.Helpers;
+using MediaIsland.Services;
 using Microsoft.Extensions.Logging;
 using Windows.Media.Control;
 using WindowsMediaController;
@@ -21,23 +22,30 @@ namespace MediaIsland.Components
     public partial class NowPlayingComponent : ComponentBase<NowPlayingComponentConfig>
     {
         //private string titleLabel, artistLabel, albumLabel, timeLabel, sourceLabel;
-        static MediaManager? mediaManager;
+        //static MediaManager? mediaManager;
+        readonly IMediaSessionService _mediaSessionService;
         //TimeSpan currentDuration;
         //TimeSpan currentPosition;
-        private ILogger<NowPlayingComponent> Logger { get; }
+        private ILogger<NowPlayingComponent> ComponentLogger { get; }
+        private ILogger<MediaSessionService> ServiceLogger { get; }
 
         private static MediaSession? currentSession = null;
 
-        public NowPlayingComponent(ILogger<NowPlayingComponent> logger)
+        public NowPlayingComponent(ILogger<NowPlayingComponent> clogger, ILogger<MediaSessionService> slogger)
         {
             InitializeComponent();
-            Logger = logger;
+            ComponentLogger = clogger;
+            ServiceLogger = slogger;
+            _mediaSessionService = new MediaSessionService(slogger);
+            _mediaSessionService.StartAsync();
+            _mediaSessionService.MediaSessionChanged += MediaSessionChanged;
+            Task.Run(async () => await RefreshMediaInfo(_mediaSessionService.CurrentSession));
         }
 
         void NowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
         {
             Settings.PropertyChanged += OnSettingsPropertyChanged;
-            LoadCurrentPlayingInfoAsync();
+            //LoadCurrentPlayingInfoAsync();
         }
 
         void NowPlayingComponent_OnUnloaded(object sender, RoutedEventArgs e)
@@ -62,45 +70,45 @@ namespace MediaIsland.Components
         /// <summary>
         /// 获取 SMTC 信息并更新 UI
         /// </summary>
-        async void LoadCurrentPlayingInfoAsync()
-        {
-            mediaManager = new MediaManager();
-            mediaManager.OnAnySessionOpened += MediaManager_OnAnySessionOpened;
-            mediaManager.OnAnySessionClosed += MediaManager_OnAnySessionClosed;
-            mediaManager.OnFocusedSessionChanged += MediaManager_OnFocusedSessionChanged;
-            mediaManager.OnAnyPlaybackStateChanged += MediaManager_OnAnyPlaybackStateChanged;
-            mediaManager.OnAnyMediaPropertyChanged += MediaManager_OnAnyMediaPropertyChanged;
-            mediaManager.OnAnyTimelinePropertyChanged += MediaManager_OnAnyTimelinePropertyChanged;
+        //async void LoadCurrentPlayingInfoAsync()
+        //{
+            //mediaManager = new MediaManager();
+            //mediaManager.OnAnySessionOpened += MediaManager_OnAnySessionOpened;
+            //mediaManager.OnAnySessionClosed += MediaManager_OnAnySessionClosed;
+            //mediaManager.OnFocusedSessionChanged += MediaManager_OnFocusedSessionChanged;
+            //mediaManager.OnAnyPlaybackStateChanged += MediaManager_OnAnyPlaybackStateChanged;
+            //mediaManager.OnAnyMediaPropertyChanged += MediaManager_OnAnyMediaPropertyChanged;
+            //mediaManager.OnAnyTimelinePropertyChanged += MediaManager_OnAnyTimelinePropertyChanged;
 
-            await mediaManager.StartAsync();
-            try
-            {
-                var currentSession = mediaManager.GetFocusedSession();
-                Logger!.LogInformation("尝试获取 SMTC 会话信息");
-                if (currentSession != null)
-                {
-                    Logger!.LogInformation("存在 SMTC 会话信息");
-                    Logger!.LogDebug("刷新【正在播放】组件内容");
-                    await RefreshMediaInfo(currentSession);
-                }
-                else
-                {
-                    Logger!.LogInformation("不存在 SMTC 会话信息，隐藏组件 UI");
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        MediaGrid.Visibility = Visibility.Collapsed;
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger!.LogError($"获取 SMTC 会话时发生错误: {ex.Message}");
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    MediaGrid.Visibility = Visibility.Collapsed;
-                });
-            }
-        }
+            //await mediaManager.StartAsync();
+        //    try
+        //    {
+        //        var currentSession = mediaManager.GetFocusedSession();
+        //        ComponentLogger!.LogInformation("尝试获取 SMTC 会话信息");
+        //        if (currentSession != null)
+        //        {
+        //            ComponentLogger!.LogInformation("存在 SMTC 会话信息");
+        //            ComponentLogger!.LogDebug("刷新【正在播放】组件内容");
+        //            await RefreshMediaInfo(currentSession);
+        //        }
+        //        else
+        //        {
+        //            ComponentLogger!.LogInformation("不存在 SMTC 会话信息，隐藏组件 UI");
+        //            await Dispatcher.InvokeAsync(() =>
+        //            {
+        //                MediaGrid.Visibility = Visibility.Collapsed;
+        //            });
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        ComponentLogger!.LogError($"获取 SMTC 会话时发生错误: {ex.Message}");
+        //        await Dispatcher.InvokeAsync(() =>
+        //        {
+        //            MediaGrid.Visibility = Visibility.Collapsed;
+        //        });
+        //    }
+        //}
 
 
         /// <summary>
@@ -123,7 +131,7 @@ namespace MediaIsland.Components
                             var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
                             var timeline = session.ControlSession.GetTimelineProperties();
                             var playbackInfo = session.ControlSession.GetPlaybackInfo();
-                            Logger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
+                            ComponentLogger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
 
                             await Dispatcher.InvokeAsync(new Action(async () =>
                             {
@@ -154,7 +162,7 @@ namespace MediaIsland.Components
 
                                 // 更新播放器信息
                                 sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(session.Id);
-                                sourceIcon.ImageSource = IconHelper.IconToImageSourceConverter(IconHelper.GetAppIcon(session.Id));
+                                sourceIcon.ImageSource = IconHelper.IconToImageSourceConverter(await IconHelper.GetAppIcon(session.Id));
 
                                 // 进度处理
                                 //UpdateProgressUI(timeline.Position, timeline.EndTime);
@@ -165,12 +173,16 @@ namespace MediaIsland.Components
                         }
                         catch
                         {
-                            return;
+                            ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                MediaGrid.Visibility = Visibility.Collapsed;
+                            });
                         }
                     }
                     else
                     {
-                        Logger!.LogWarning("SMTC 会话为空，无法获取信息");
+                        ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
                         await Dispatcher.InvokeAsync(() =>
                         {
                             MediaGrid.Visibility = Visibility.Collapsed;
@@ -179,12 +191,15 @@ namespace MediaIsland.Components
                 }
                 else
                 {
-                    return;
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        MediaGrid.Visibility = Visibility.Collapsed;
+                    });
                 }
             }
             catch (Exception ex)
             {
-                Logger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
+                ComponentLogger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
             }
         }
 
@@ -199,13 +214,18 @@ namespace MediaIsland.Components
         //    }
         //}
 
+        async void MediaSessionChanged(Object? sender, MediaSession? session)
+        {
+            await RefreshMediaInfo(session);
+        }
+
         /// <summary>
         /// SMTC 会话打开事件
         /// </summary>
         /// <param name="sender">发出事件的 SMTC 会话</param>
         void MediaManager_OnAnySessionOpened(MediaManager.MediaSession sender)
         {
-            Logger.LogDebug($"新 SMTC 会话：{sender.Id}");
+            ComponentLogger.LogDebug($"新 SMTC 会话：{sender.Id}");
             //await RefreshMediaInfo(sender);
         }
 
@@ -215,7 +235,7 @@ namespace MediaIsland.Components
         /// <param name="sender">发出事件的 SMTC 会话</param>
         void MediaManager_OnAnySessionClosed(MediaManager.MediaSession sender)
         {
-            Logger!.LogDebug($"SMTC 会话关闭：{sender.Id}");
+            ComponentLogger!.LogDebug($"SMTC 会话关闭：{sender.Id}");
             //await RefreshMediaInfo(sender);
         }
         /// <summary>
@@ -224,7 +244,7 @@ namespace MediaIsland.Components
         /// <param name="sender">发出事件的 SMTC 会话</param>
         async void MediaManager_OnFocusedSessionChanged(MediaManager.MediaSession sender)
         {
-            Logger!.LogDebug($"SMTC 会话焦点改变：{sender?.ControlSession?.SourceAppUserModelId}");
+            ComponentLogger!.LogDebug($"SMTC 会话焦点改变：{sender?.ControlSession?.SourceAppUserModelId}");
             if (sender?.ControlSession == null)
             {
                 // 无会话时隐藏 UI
@@ -255,7 +275,7 @@ namespace MediaIsland.Components
         /// <param name="sender">发出事件的 SMTC 会话</param>
         async void MediaManager_OnAnyPlaybackStateChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
         {
-            Logger!.LogDebug($"SMTC 播放状态改变：{sender.Id} is now {args.PlaybackStatus}");
+            ComponentLogger!.LogDebug($"SMTC 播放状态改变：{sender.Id} is now {args.PlaybackStatus}");
             if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
             {
                 Dispatcher.Invoke(() =>
@@ -274,7 +294,7 @@ namespace MediaIsland.Components
         /// <param name="sender">发出事件的 SMTC 会话</param>
         async void MediaManager_OnAnyMediaPropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
         {
-            Logger!.LogDebug($"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
+            ComponentLogger!.LogDebug($"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
             await RefreshMediaInfo(sender);
         }
         /// <summary>
@@ -283,7 +303,7 @@ namespace MediaIsland.Components
         /// <param name="sender">发出事件的 SMTC 会话</param>
         async void MediaManager_OnAnyTimelinePropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
         {
-            //Logger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
+            //ComponentLogger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
             //await RefreshMediaInfo(sender);
         }
     }
