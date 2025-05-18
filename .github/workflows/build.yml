@@ -30,7 +30,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           path: |
-            ./cipx/*.cipx
+            ./MediaIsland/cipx/*.cipx
       
       - name: Upload APP to release
         uses: ncipollo/release-action@v1
