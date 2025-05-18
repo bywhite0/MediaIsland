@@ -40,7 +40,7 @@ namespace MediaIsland.Helpers
             {
                 // 优先处理UWP应用
                 // 较新 Windows 11 版本下 SourceAppUserModelId 可能返回 AppID，尝试当作 UWP 应用处理
-                if (userModelId.Contains("!") && userModelId.Contains("_") && userModelId.Contains("."))
+                if (userModelId.Contains("!") && userModelId.Contains("_") && userModelId[..^4].Contains("."))
                 {
                     try
                     {
