@@ -2,6 +2,8 @@ name: Build
 
 on:
   push:
+    paths:
+      - 'MediaIsland/**'
 
 jobs:
   build_app:
