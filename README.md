@@ -26,7 +26,7 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 - [x] 显示播放器图标
 - [x] 【正在播放】组件设置页面
 - [ ] 完善【正在播放】组件设置（隐藏专辑封面、播放器等）
-- [ ] 拆分 SMTC 事件处理到外部服务便于其他功能使用
+- [x] 拆分 SMTC 事件处理到外部服务便于其他功能使用
 - [ ] 播放控制及配套自动化功能（求大佬 PR）
 - [ ] ~~与 [LyricsIsland](https://github.com/jiangyin14/LyricsIsland) 联动（？~~ 根据当前媒体信息获取并显示歌词（画大饼ing）
 
