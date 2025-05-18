@@ -45,7 +45,7 @@ namespace MediaIsland.Components
         void NowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
         {
             Settings.PropertyChanged += OnSettingsPropertyChanged;
-            //LoadCurrentPlayingInfoAsync();
+            LoadCurrentPlayingInfoAsync();
         }
 
         void NowPlayingComponent_OnUnloaded(object sender, RoutedEventArgs e)
@@ -70,8 +70,8 @@ namespace MediaIsland.Components
         /// <summary>
         /// 获取 SMTC 信息并更新 UI
         /// </summary>
-        //async void LoadCurrentPlayingInfoAsync()
-        //{
+        async void LoadCurrentPlayingInfoAsync()
+        {
             //mediaManager = new MediaManager();
             //mediaManager.OnAnySessionOpened += MediaManager_OnAnySessionOpened;
             //mediaManager.OnAnySessionClosed += MediaManager_OnAnySessionClosed;
@@ -81,34 +81,34 @@ namespace MediaIsland.Components
             //mediaManager.OnAnyTimelinePropertyChanged += MediaManager_OnAnyTimelinePropertyChanged;
 
             //await mediaManager.StartAsync();
-        //    try
-        //    {
-        //        var currentSession = mediaManager.GetFocusedSession();
-        //        ComponentLogger!.LogInformation("尝试获取 SMTC 会话信息");
-        //        if (currentSession != null)
-        //        {
-        //            ComponentLogger!.LogInformation("存在 SMTC 会话信息");
-        //            ComponentLogger!.LogDebug("刷新【正在播放】组件内容");
-        //            await RefreshMediaInfo(currentSession);
-        //        }
-        //        else
-        //        {
-        //            ComponentLogger!.LogInformation("不存在 SMTC 会话信息，隐藏组件 UI");
-        //            await Dispatcher.InvokeAsync(() =>
-        //            {
-        //                MediaGrid.Visibility = Visibility.Collapsed;
-        //            });
-        //        }
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        ComponentLogger!.LogError($"获取 SMTC 会话时发生错误: {ex.Message}");
-        //        await Dispatcher.InvokeAsync(() =>
-        //        {
-        //            MediaGrid.Visibility = Visibility.Collapsed;
-        //        });
-        //    }
-        //}
+            try
+            {
+                    var currentSession = _mediaSessionService.CurrentSession;
+                    ComponentLogger!.LogInformation("尝试获取 SMTC 会话信息");
+                if (currentSession != null)
+                {
+                    ComponentLogger!.LogInformation("存在 SMTC 会话信息");
+                    ComponentLogger!.LogDebug("刷新【正在播放】组件内容");
+                    await RefreshMediaInfo(currentSession);
+                }
+                else
+                {
+                    ComponentLogger!.LogInformation("不存在 SMTC 会话信息，隐藏组件 UI");
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        MediaGrid.Visibility = Visibility.Collapsed;
+                    });
+                }
+            }
+                catch (Exception ex)
+            {
+                ComponentLogger!.LogError($"获取 SMTC 会话时发生错误: {ex.Message}");
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    MediaGrid.Visibility = Visibility.Collapsed;
+                });
+            }
+        }
 
 
         /// <summary>

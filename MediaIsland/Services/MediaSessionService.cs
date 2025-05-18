@@ -1,7 +1,4 @@
-using System;
-using System.Linq;
 using Microsoft.Extensions.Logging;
-using System.Windows.Threading;
 using Windows.Media.Control;
 using WindowsMediaController;
 using static WindowsMediaController.MediaManager;
@@ -58,7 +55,7 @@ namespace MediaIsland.Services
         void OnAnySessionClosed(MediaSession sender)
         {
             Logger!.LogDebug($"SMTC 会话关闭：{sender.Id}");
-            MediaSessionChanged?.Invoke(this, sender);
+            MediaSessionChanged?.Invoke(this, null);
             //await RefreshMediaInfo(sender);
         }
         /// <summary>
@@ -68,7 +65,7 @@ namespace MediaIsland.Services
         void OnFocusedSessionChanged(MediaSession sender)
         {
             Logger!.LogDebug($"SMTC 会话焦点改变：{sender?.ControlSession?.SourceAppUserModelId}");
-            if (sender?.ControlSession == null)
+            if (sender == null)
             {
                 CurrentSession = null;
                 MediaSessionChanged?.Invoke(this, null);
@@ -86,7 +83,7 @@ namespace MediaIsland.Services
             Logger!.LogDebug($"SMTC 播放状态改变：{sender.Id} is now {args.PlaybackStatus}");
             CurrentSession = sender;
             MediaSessionChanged?.Invoke(this, sender);
-            
+
         }
         /// <summary>
         /// SMTC 媒体属性改变事件
