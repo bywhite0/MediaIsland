@@ -65,6 +65,23 @@ namespace MediaIsland.Components
                     });
                 }
             }
+            if (e.PropertyName == "SubInfoType")
+            {
+            	switch (Settings.SubInfoType)
+            	{
+            		case 0:
+            			artistText.Visibility = Visibility.Visible;
+            			timeText.Visibility = Visibility.Collapsed;
+            			break;
+            		case 1:
+            			if (timeText.Text != "00:00 / 00:00")
+            			{
+            				artistText.Visibility = Visibility.Collapsed;
+            				timeText.Visibility = Visibility.Visible;
+            			}
+            			break;
+            	}
+            }	
         }
 
         /// <summary>
@@ -168,7 +185,7 @@ namespace MediaIsland.Components
                                 //UpdateProgressUI(timeline.Position, timeline.EndTime);
                                 //progressBar.Maximum = (int)timeline.EndTime.TotalSeconds;
                                 //progressBar.Value = (int)timeline.Position.TotalSeconds;
-                                //timeLabel.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
+                                timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
                             }));
                         }
                         catch

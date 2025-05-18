@@ -11,8 +11,20 @@
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:NowPlayingComponentSettings}}">
         <StackPanel Style="{StaticResource SettingsPageStackPanelStyle}">
             <ci:SettingsCard IconGlyph="Hide" Header="暂停时隐藏组件" Description="当当前媒体暂停时隐藏组件" IsOn="{Binding Settings.IsHideWhenPaused, Mode=TwoWay}" />
+            <ci:SettingsCard
+                    Margin="0,0,0,6"
+                    Description="切换标题下方的信息显示"
+                    Header="次要信息"
+                    IconGlyph="ThermostatBox">
+              <ci:SettingsCard.Switcher>
+              	<ComboBox MinWidth="110" SelectedIndex="{Binding Settings.SubInfoType}">
+              		<ComboBoxItem>艺术家</ComboBoxItem>
+              		<ComboBoxItem>时间轴（如果可用）</ComboBoxItem>
+                        </ComboBox>
+                    </ci:SettingsCard.Switcher>
+                </ci:SettingsCard>
             <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
-                Added by MediaIsland
+                Powered by MediaIsland
             </Label>
         </StackPanel>
     </ScrollViewer>
