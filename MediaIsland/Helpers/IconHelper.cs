@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.WindowsAPICodePack.Shell;
@@ -34,7 +35,7 @@ namespace MediaIsland.Helpers
         [DllImport("user32.dll")]
         private static extern bool DestroyIcon(IntPtr hIcon);
 
-        public static Icon? GetAppIcon(string userModelId)
+        public static async Task<Icon?> GetAppIcon(string userModelId)
         {
             try
             {
@@ -110,6 +111,12 @@ namespace MediaIsland.Helpers
                     {
                         return GetIconFromPath(files[0], SHGFI_LARGEICON);
                     }
+                }
+
+                var AppIDPath = AppPathFindHelper.FindExecutablePathByAppUserModelID(userModelId);
+                if (AppIDPath != null)
+                {
+                    return GetIconFromPath(AppIDPath, SHGFI_LARGEICON);
                 }
 
                 // 最终回退方案
