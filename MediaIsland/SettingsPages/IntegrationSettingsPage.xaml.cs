@@ -27,9 +27,9 @@ namespace MediaIsland.SettingsPages
     [SettingsPageInfo(
         "mediaisland.integration",
         "MediaIsland 集成",
-        PackIconKind.BlurOn,
-        PackIconKind.BlurCircular,
-        SettingsPageCategory.External)]
+        PackIconKind.Select,
+        PackIconKind.SelectAll,
+        SettingsPageCategory.Debug)]
     public partial class IntegrationSettingsPage : SettingsPageBase
     {
         public Plugin Plugin { get; }
