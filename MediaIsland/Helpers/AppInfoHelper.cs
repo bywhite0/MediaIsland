@@ -25,7 +25,9 @@ namespace MediaIsland.Helpers
                 //  ["sim-music"] = "SimMusic",
                 //  ["PotPlayer"] = "PotPlayer",
                 ["lx-music"] = "LX Music",
-                //  ["amll-player"] = "AMLL Player"
+                ["cn.toside.music.desktop"] = "LX Music",
+                //  ["amll-player"] = "AMLL Player",
+                ["net.stevexmh.amllplayer"] = "AMLL Player"
             };
 
             // 多级匹配策略
