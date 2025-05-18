@@ -6,6 +6,22 @@ namespace MediaIsland.Components
     {
 
         bool _isHideWhenPaused = false;
+        int _subInfoType = 0;
+
+        /// <Summary>
+        /// 0: 艺术家<br/>
+        /// 1: 时间轴(如果可用)<br/>
+        ///</Summary>
+        public int SubInfoType
+        {
+            get => _subInfoType;
+            set
+            {
+                if (_subInfoType == value) return;
+                _subInfoType = value;
+                OnPropertyChanged();
+            }
+        }
         public bool IsHideWhenPaused
         {
             get => _isHideWhenPaused;
