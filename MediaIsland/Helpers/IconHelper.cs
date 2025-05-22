@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using ClassIsland.Core;
 using Microsoft.WindowsAPICodePack.Shell;
 using PixelFormat = System.Drawing.Imaging.PixelFormat;
 
@@ -119,6 +120,12 @@ namespace MediaIsland.Helpers
                     return GetIconFromPath(AppIDPath, SHGFI_LARGEICON);
                 }
 
+                // 尝试获取内部资源
+                var internalIcon = GetInternalIcon(userModelId);
+                if (internalIcon != null)
+                {
+                    return internalIcon;
+                }
                 // 最终回退方案
                 return SystemIcons.Application;
             }
@@ -143,6 +150,17 @@ namespace MediaIsland.Helpers
             return null;
         }
 
+        private static Icon? GetInternalIcon(string AppUserModelId)
+        {
+            try
+            {
+                return new Icon( $"/MediaIsland;component/Assets/SourceAppIcons/{AppUserModelId}.ico");
+            }
+            catch
+            {
+                return null;
+            }
+        }
         public static ImageSource IconToImageSourceConverter(Icon icon)
         {
             try
