@@ -171,7 +171,7 @@ namespace MediaIsland.Components
 
                                 // 更新播放器信息
                                 sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(session.Id);
-                                sourceIcon.ImageSource = IconHelper.IconToImageSourceConverter(IconHelper.GetAppIcon(session.Id));
+                                sourceIcon.ImageSource = IconHelper.GetAppIcon(session.Id);
 
                                 // 进度处理
                                 //UpdateProgressUI(timeline.Position, timeline.EndTime);

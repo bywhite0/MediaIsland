@@ -35,7 +35,7 @@ namespace MediaIsland.Helpers
         [DllImport("user32.dll")]
         private static extern bool DestroyIcon(IntPtr hIcon);
 
-        public static async Task<Icon?> GetAppIcon(string userModelId)
+        public static ImageSource? GetAppIcon(string userModelId)
         {
             try
             {
@@ -48,7 +48,7 @@ namespace MediaIsland.Helpers
                         var shellObj = ShellObject.FromParsingName($"shell:appsFolder\\{userModelId}");
                         if (shellObj?.Thumbnail != null)
                         {
-                            return shellObj.Thumbnail.LargeIcon;
+                            return IconToImageSourceConverter(shellObj.Thumbnail.LargeIcon);
                         }
                     }
                     catch
@@ -71,7 +71,7 @@ namespace MediaIsland.Helpers
                                 string logoPath = Path.Combine(
                                     Path.GetDirectoryName(manifestPath),
                                     logoNode.InnerText);
-                                return new Icon(logoPath);
+                                return IconToImageSourceConverter(new Icon(logoPath));
                             }
                         }
                     }
@@ -87,7 +87,7 @@ namespace MediaIsland.Helpers
                 if (processes.Length > 0)
                 {
                     string exePath = processes[0].MainModule.FileName;
-                    return GetIconFromPath(exePath, SHGFI_LARGEICON);
+                    return IconToImageSourceConverter(GetIconFromPath(exePath, SHGFI_LARGEICON));
                 }
 
                 // 通过常见安装路径搜索
@@ -101,7 +101,7 @@ namespace MediaIsland.Helpers
                     string possibleExe = Path.Combine(path, $"{processName}.exe");
                     if (File.Exists(possibleExe))
                     {
-                        return GetIconFromPath(possibleExe, SHGFI_LARGEICON);
+                        return IconToImageSourceConverter(GetIconFromPath(possibleExe, SHGFI_LARGEICON));
                     }
 
                     // 处理带空格的文件名
@@ -109,22 +109,22 @@ namespace MediaIsland.Helpers
                     var files = Directory.GetFiles(path, $"{processName}*.exe");
                     if (files.Length > 0)
                     {
-                        return GetIconFromPath(files[0], SHGFI_LARGEICON);
+                        return IconToImageSourceConverter(GetIconFromPath(files[0], SHGFI_LARGEICON));
                     }
                 }
 
                 var AppIDPath = AppPathFindHelper.FindExecutablePathByAppUserModelID(userModelId);
                 if (AppIDPath != null)
                 {
-                    return GetIconFromPath(AppIDPath, SHGFI_LARGEICON);
+                    return IconToImageSourceConverter(GetIconFromPath(AppIDPath, SHGFI_LARGEICON));
                 }
 
                 // 最终回退方案
-                return SystemIcons.Application;
+                return IconToImageSourceConverter(SystemIcons.Application);
             }
             catch
             {
-                return SystemIcons.Application;
+                return IconToImageSourceConverter(SystemIcons.Application);
             }
         }
 
@@ -143,6 +143,17 @@ namespace MediaIsland.Helpers
             return null;
         }
 
+        private static ImageSource? GetInternalIcon(string AppUserModelId)
+        {
+            try
+            {
+                return new BitmapImage(new Uri($"/MediaIsland;component/Assets/SourceAppIcons/{AppUserModelId}.png", UriKind.RelativeOrAbsolute));
+            }
+            catch
+            {
+                return null;
+            }
+        }
         public static ImageSource IconToImageSourceConverter(Icon icon)
         {
             try
