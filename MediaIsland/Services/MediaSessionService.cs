@@ -107,13 +107,13 @@ namespace MediaIsland.Services
         }
         public void Dispose()
         {
-            StopAsync();
             _mediaManager.OnAnySessionOpened -= OnAnySessionOpened;
             _mediaManager.OnAnySessionClosed -= OnAnySessionClosed;
             _mediaManager.OnAnyPlaybackStateChanged -= OnAnyPlaybackStateChanged;
             _mediaManager.OnAnyMediaPropertyChanged -= OnAnyMediaPropertyChanged;
             _mediaManager.OnAnyTimelinePropertyChanged -= OnAnyTimelinePropertyChanged;
             _mediaManager.OnFocusedSessionChanged -= OnFocusedSessionChanged;
+            StopAsync();
         }
 
         public Task StartAsync(CancellationToken cancellationToken)

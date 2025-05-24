@@ -37,9 +37,9 @@ namespace MediaIsland.Components
             ComponentLogger = clogger;
             ServiceLogger = slogger;
             _mediaSessionService = new MediaSessionService(slogger);
-            _mediaSessionService.StartAsync();
             _mediaSessionService.MediaSessionChanged += MediaSessionChanged;
-            Task.Run(async () => await RefreshMediaInfo(_mediaSessionService.CurrentSession));
+            _mediaSessionService.StartAsync();
+            //Task.Run(async () => await RefreshMediaInfo(_mediaSessionService.CurrentSession));
         }
 
         void NowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
@@ -51,6 +51,8 @@ namespace MediaIsland.Components
         void NowPlayingComponent_OnUnloaded(object sender, RoutedEventArgs e)
         {
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
+            _mediaSessionService.MediaSessionChanged -= MediaSessionChanged;
+            _mediaSessionService.StopAsync();
         }
 
         private async void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -234,94 +236,6 @@ namespace MediaIsland.Components
         async void MediaSessionChanged(Object? sender, MediaSession? session)
         {
             await RefreshMediaInfo(session);
-        }
-
-        /// <summary>
-        /// SMTC 会话打开事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        void MediaManager_OnAnySessionOpened(MediaManager.MediaSession sender)
-        {
-            ComponentLogger.LogDebug($"新 SMTC 会话：{sender.Id}");
-            //await RefreshMediaInfo(sender);
-        }
-
-        /// <summary>
-        /// SMTC 会话关闭事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        void MediaManager_OnAnySessionClosed(MediaManager.MediaSession sender)
-        {
-            ComponentLogger!.LogDebug($"SMTC 会话关闭：{sender.Id}");
-            //await RefreshMediaInfo(sender);
-        }
-        /// <summary>
-        /// SMTC 会话焦点改变事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnFocusedSessionChanged(MediaManager.MediaSession sender)
-        {
-            ComponentLogger!.LogDebug($"SMTC 会话焦点改变：{sender?.ControlSession?.SourceAppUserModelId}");
-            if (sender?.ControlSession == null)
-            {
-                // 无会话时隐藏 UI
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    MediaGrid.Visibility = Visibility.Collapsed;
-                });
-            }
-            else
-            {
-                try
-                {
-                    await RefreshMediaInfo(sender);
-                }
-                catch
-                {
-                    // 刷新失败时隐藏 UI
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        MediaGrid.Visibility = Visibility.Collapsed;
-                    });
-                }
-            }
-        }
-        /// <summary>
-        /// SMTC 播放状态改变事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnAnyPlaybackStateChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
-        {
-            ComponentLogger!.LogDebug($"SMTC 播放状态改变：{sender.Id} is now {args.PlaybackStatus}");
-            if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
-                });
-            }
-            else
-            {
-                await RefreshMediaInfo(sender);
-            }
-        }
-        /// <summary>
-        /// SMTC 媒体属性改变事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnAnyMediaPropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
-        {
-            ComponentLogger!.LogDebug($"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
-            await RefreshMediaInfo(sender);
-        }
-        /// <summary>
-        /// SMTC 时间属性改变事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnAnyTimelinePropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
-        {
-            //ComponentLogger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
-            //await RefreshMediaInfo(sender);
         }
     }
 }
