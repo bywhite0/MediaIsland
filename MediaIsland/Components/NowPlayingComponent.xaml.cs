@@ -170,7 +170,14 @@ namespace MediaIsland.Components
                                 var thumb = mediaProperties.Thumbnail;
                                 if (thumb != null)
                                 {
-                                    AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
+                                    if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
+                                    {
+                                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
+                                    }
+                                    else
+                                    {
+                                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
+                                    }
                                     CoverPlaceholder.Visibility = Visibility.Collapsed;
                                 }
                                 else
