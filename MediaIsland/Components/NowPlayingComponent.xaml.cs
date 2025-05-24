@@ -182,7 +182,11 @@ namespace MediaIsland.Components
                         }
                         catch
                         {
-                            return;
+                            ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                MediaGrid.Visibility = Visibility.Collapsed;
+                            });
                         }
                     }
                     else
@@ -196,7 +200,10 @@ namespace MediaIsland.Components
                 }
                 else
                 {
-                    return;
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        MediaGrid.Visibility = Visibility.Collapsed;
+                    });
                 }
             }
             catch (Exception ex)
