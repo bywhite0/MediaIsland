@@ -22,6 +22,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<Resource Include="Assets\**" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<None Update="Assets\ThirdPartyLicenses.txt">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
