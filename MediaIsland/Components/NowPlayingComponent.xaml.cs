@@ -247,6 +247,20 @@ namespace MediaIsland.Components
                                 //progressBar.Maximum = (int)timeline.EndTime.TotalSeconds;
                                 //progressBar.Value = (int)timeline.Position.TotalSeconds;
                                 timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
+                                // 更新 UI 时处理时间轴
+                                if (Settings.SubInfoType == 1)
+                                {
+                                    if (timeline.Position != timeline.EndTime)
+                                    {
+                                        artistText.Visibility = Visibility.Collapsed;
+                                        timeText.Visibility = Visibility.Visible;
+                                    }
+                                    else
+                                    {
+                                        artistText.Visibility = Visibility.Visible;
+                                        timeText.Visibility = Visibility.Collapsed;
+                                    }
+                                }
                             }));
                         }
                         catch
