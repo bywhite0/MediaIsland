@@ -74,39 +74,6 @@ namespace MediaIsland.Components
             			break;
             	}
             }
-            if (e.PropertyName == "IsShowAlbumArt")
-            {
-                if (Settings.IsShowAlbumArt)
-                {
-                    CoverBorder.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    CoverBorder.Visibility = Visibility.Collapsed;
-                }
-            }
-            if (e.PropertyName == "IsShowSource")
-            {
-                if (Settings.IsShowSource)
-                {
-                    SourceStackPanel.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    SourceStackPanel.Visibility = Visibility.Collapsed;
-                }
-            }
-            if (e.PropertyName == "IsShowPlaybackStatus")
-            {
-                if (Settings.IsShowPlaybackStatus)
-                {
-                    StatusStackPanel.Visibility = Visibility.Visible;
-                }
-                else
-                {
-                    StatusStackPanel.Visibility = Visibility.Collapsed;
-                }
-            }
         }
 
         /// <summary>
