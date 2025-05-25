@@ -15,7 +15,7 @@ namespace MediaIsland.Components
     [ComponentInfo(
             "6E9C7C44-59EB-499C-A637-2C6C9253BF2B",
             "正在播放",
-            PackIconKind.MusicBox,
+            PackIconKind.MusicBoxOutline,
             "显示当前播放的媒体信息。"
         )]
     public partial class NowPlayingComponent : ComponentBase<NowPlayingComponentConfig>
