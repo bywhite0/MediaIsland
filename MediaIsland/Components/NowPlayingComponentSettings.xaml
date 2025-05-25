@@ -11,6 +11,7 @@
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:NowPlayingComponentSettings}}">
         <StackPanel Style="{StaticResource SettingsPageStackPanelStyle}">
             <ci:SettingsCard IconGlyph="Hide" Header="暂停时隐藏组件" Description="当当前媒体暂停时隐藏组件" IsOn="{Binding Settings.IsHideWhenPaused, Mode=TwoWay}" />
+            <ci:SettingsCard IconGlyph="Music" Header="显示当前播放状态" Description="显示当前媒体的播放状态。" IsOn="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
             <ci:SettingsCard
                     Margin="0,0,0,6"
                     Description="切换标题下方的信息显示"

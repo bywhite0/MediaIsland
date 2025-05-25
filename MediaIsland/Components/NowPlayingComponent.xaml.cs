@@ -74,6 +74,17 @@ namespace MediaIsland.Components
             			break;
             	}
             }	
+            if (e.PropertyName == "IsShowPlaybackStatus")
+            {
+                if (Settings.IsShowPlaybackStatus)
+                {
+                    StatusStackPanel.Visibility = Visibility.Visible;
+                }
+                else
+                {
+                    StatusStackPanel.Visibility = Visibility.Collapsed;
+                }
+            }
         }
 
         /// <summary>
@@ -151,8 +162,27 @@ namespace MediaIsland.Components
                                 else
                                 {
                                     MediaGrid.Visibility = Visibility.Visible;
+                                    StatusIcon.Kind = PackIconKind.Pause;
                                 }
-                                // 强制更新UI元素
+                                // 更新播放状态
+                                if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                                {
+                                    StatusIcon.Kind = PackIconKind.Play;
+                                }
+                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                                {
+                                    StatusIcon.Kind = PackIconKind.Pause;
+                                }
+                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
+                                {
+                                    StatusIcon.Kind = PackIconKind.Stop;
+                                }
+                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
+                                {
+                                    StatusIcon.Kind = PackIconKind.RefreshCircle;
+                                }
+
+                                // 更新 UI 内容
                                 titleText.Text = mediaProperties.Title ?? "未知标题";
                                 artistText.Text = mediaProperties.Artist ?? "未知艺术家";
                                 //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
