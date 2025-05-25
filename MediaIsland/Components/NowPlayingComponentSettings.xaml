@@ -10,7 +10,7 @@
                   d:DesignHeight="450" d:DesignWidth="800">
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:NowPlayingComponentSettings}}">
         <StackPanel Style="{StaticResource SettingsPageStackPanelStyle}">
-            <ci:SettingsCard IconGlyph="Hide" Header="暂停时隐藏组件" Description="当当前媒体暂停时隐藏组件" IsOn="{Binding Settings.IsHideWhenPaused, Mode=TwoWay}" />
+            <ci:SettingsCard IconGlyph="HideOutline" Header="暂停时隐藏组件" Description="当当前媒体暂停时，隐藏本组件。由于 ClassIsland 的设计特性，隐藏后仍存在一段空白。" IsOn="{Binding Settings.IsHideWhenPaused, Mode=TwoWay}" />
             <ci:SettingsCard IconGlyph="Album" Header="显示专辑封面" Description="显示当前播放的专辑封面。" IsOn="{Binding Settings.IsShowAlbumArt, Mode=TwoWay}" />
             <ci:SettingsCard IconGlyph="LibraryMusicOutline" Header="显示当前播放源" Description="显示当前媒体的播放源。" IsOn="{Binding Settings.IsShowSource, Mode=TwoWay}" />
             <ci:SettingsCard IconGlyph="Music" Header="显示当前播放状态" Description="显示当前媒体的播放状态。" IsOn="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
@@ -18,7 +18,7 @@
                     Margin="0,0,0,6"
                     Description="切换标题下方的信息显示"
                     Header="次要信息"
-                    IconGlyph="ThermostatBox">
+                    IconGlyph="InfoCircleOutline">
               <ci:SettingsCard.Switcher>
               	<ComboBox MinWidth="110" SelectedIndex="{Binding Settings.SubInfoType}">
               		<ComboBoxItem>艺术家</ComboBoxItem>
