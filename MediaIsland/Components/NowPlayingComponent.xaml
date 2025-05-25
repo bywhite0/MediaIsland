@@ -15,17 +15,17 @@
         <ci:BooleanToVisibilityReConverter x:Key="BooleanToVisibilityReConverter" />
         <md:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </ci:ComponentBase.Resources>
-    <Grid x:Name="MediaGrid" HorizontalAlignment="Center" DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:NowPlayingComponent}}">
+    <Grid x:Name="MediaGrid" HorizontalAlignment="Center" DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:NowPlayingComponent}}" Visibility="{Binding Settings.IsHideWhenPaused, Converter={StaticResource BooleanToVisibilityReConverter}}">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
-        <StackPanel Name="StatusStackPanel" Grid.Column="0" Margin="0" Orientation="Horizontal">
+        <StackPanel Name="StatusStackPanel" Grid.Column="0" Margin="0" Orientation="Horizontal" Visibility="{Binding Settings.IsShowPlaybackStatus, Converter={StaticResource BooleanToVisibilityConverter}}">
             <md:PackIcon x:Name="StatusIcon" Kind="Play" VerticalAlignment="Center" Margin="0 0 4 0" />
         </StackPanel>
-        <StackPanel Name="CoverStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal">
+        <StackPanel Name="CoverStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" Visibility="{Binding Settings.IsShowAlbumArt, Converter={StaticResource BooleanToVisibilityConverter}}">
             <Border Name="CoverBorder" CornerRadius="3" Margin="0" ClipToBounds="True" Width="28" Height="28">
                 <md:PackIcon Name="CoverPlaceholder" Kind="MusicNote" VerticalAlignment="Center" Margin="0" Visibility="Collapsed" Width="22" Height="22"/>
                 <Border.Background>
@@ -38,7 +38,7 @@
             <TextBlock x:Name="artistText" HorizontalAlignment="Left" VerticalAlignment="Center" FontSize="10" Margin="0" />
             <TextBlock x:Name="timeText" HorizontalAlignment="Left" VerticalAlignment="Center"  FontSize="10" Margin="0" Visibility="Collapsed"/>
         </StackPanel>
-        <StackPanel Name="SourceStackPanel" Grid.Column="3" Margin="4 0 0 0" Orientation="Vertical" VerticalAlignment="Center">
+        <StackPanel Name="SourceStackPanel" Grid.Column="3" Margin="4 0 0 0" Orientation="Vertical" VerticalAlignment="Center" Visibility="{Binding Settings.IsShowSource, Converter={StaticResource BooleanToVisibilityConverter}}">
             <Border Name="SourceIconBorder" VerticalAlignment="Center" CornerRadius="16"  Margin="0" ClipToBounds="True" Width="22" Height="22">
                 <md:PackIcon Kind="MusicNote" VerticalAlignment="Center" Margin="0" Visibility="Collapsed" />
                 <Border.Background>
