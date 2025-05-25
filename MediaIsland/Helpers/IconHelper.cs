@@ -119,6 +119,20 @@ namespace MediaIsland.Helpers
                     return IconToImageSourceConverter(GetIconFromPath(AppIDPath, SHGFI_LARGEICON));
                 }
 
+                // 尝试获取内部资源
+                try
+                {
+                    var internalIcon = GetInternalIcon(userModelId);
+                    if (internalIcon != null)
+                    {
+                        return internalIcon;
+                    }
+                }
+                catch
+                {
+                    // 忽略内部资源获取失败
+                }
+
                 // 最终回退方案
                 return IconToImageSourceConverter(SystemIcons.Application);
             }
