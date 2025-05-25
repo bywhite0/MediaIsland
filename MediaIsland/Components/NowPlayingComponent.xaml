@@ -23,7 +23,7 @@
             <ColumnDefinition Width="Auto" />
         </Grid.ColumnDefinitions>
         <StackPanel Name="StatusStackPanel" Grid.Column="0" Margin="0" Orientation="Horizontal">
-            <md:PackIcon x:Name="StatusIcon" Kind="Play" VerticalAlignment="Center" Margin="4 0" />
+            <md:PackIcon x:Name="StatusIcon" Kind="Play" VerticalAlignment="Center" Margin="0 0 4 0" />
         </StackPanel>
         <StackPanel Name="CoverStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal">
             <Border Name="CoverBorder" CornerRadius="3" Margin="0" ClipToBounds="True" Width="28" Height="28">
