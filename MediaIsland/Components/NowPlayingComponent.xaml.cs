@@ -275,18 +275,14 @@ namespace MediaIsland.Components
 
         async void MediaSessionChanged(Object? sender, MediaSession? session)
         {
-            if (session != null)
-            {
-                await RefreshMediaInfo(session);
-
-            }
-            else
+            if (session == null)
             {
                 await Dispatcher.InvokeAsync(() =>
                 {
                     MediaGrid.Visibility = Visibility.Collapsed;
                 });
             }
+            await RefreshMediaInfo(session);
         }
     }
 }
