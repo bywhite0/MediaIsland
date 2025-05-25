@@ -5,6 +5,7 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 ## 组件
 
 **正在播放**
+
 ![截图](./Assets/screenshot.png)
 
 显示正在播放的媒体信息，可按需调整显示内容。
