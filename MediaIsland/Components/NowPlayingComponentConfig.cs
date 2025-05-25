@@ -6,6 +6,7 @@ namespace MediaIsland.Components
     {
 
         bool _isHideWhenPaused = false;
+        bool _isShowPlaybackStatus = false;
         int _subInfoType = 0;
 
         /// <Summary>
@@ -31,6 +32,16 @@ namespace MediaIsland.Components
                 _isHideWhenPaused = value;
                 OnPropertyChanged();
                 
+            }
+        }
+        public bool IsShowPlaybackStatus
+        {
+            get => _isShowPlaybackStatus;
+            set
+            {                   
+                if (_isShowPlaybackStatus == value) return;
+                _isShowPlaybackStatus = value;
+                OnPropertyChanged();
             }
         }
     }
