@@ -211,7 +211,7 @@ namespace MediaIsland.Components
                                 }
                                 else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
                                 {
-                                    StatusIcon.Kind = PackIconKind.RefreshCircle;
+                                    StatusIcon.Kind = PackIconKind.Refresh;
                                 }
 
                                 // 更新 UI 内容
