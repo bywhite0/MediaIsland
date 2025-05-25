@@ -130,7 +130,7 @@ namespace MediaIsland.Helpers
                 }
                 catch
                 {
-                    // 忽略内部资源获取失败
+                    return IconToImageSourceConverter(SystemIcons.Application);
                 }
 
                 // 最终回退方案
@@ -161,7 +161,7 @@ namespace MediaIsland.Helpers
         {
             try
             {
-                return new BitmapImage(new Uri($"/MediaIsland;component/Assets/SourceAppIcons/{AppUserModelId}.png", UriKind.RelativeOrAbsolute));
+                return new BitmapImage(new Uri($"pack://application:,,,/MediaIsland;;;component/Assets/SourceAppIcons/{AppUserModelId}.png", UriKind.RelativeOrAbsolute));
             }
             catch
             {
