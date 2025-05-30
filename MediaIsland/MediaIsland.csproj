@@ -24,9 +24,9 @@
 	<ItemGroup>
 		<Resource Include="Assets\**" />
 	</ItemGroup>
-
+	
 	<ItemGroup>
-		<None Update="Assets\ThirdPartyLicenses.txt">
+		<None Update="ThirdPartyLicenses.txt">
 		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
 		<None Update="manifest.yml">
