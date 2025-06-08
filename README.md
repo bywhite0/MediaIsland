@@ -30,6 +30,10 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 
 本插件需要 Windows 10 Build 17763 (1809) 或以上版本。
 
+## 开发计划 & 已知问题
+
+请移步 [Discussion](https://github.com/bywhite0/MediaIsland/discussions/10)
+
 ## 致谢
 
 本项目使用了以下第三方库：
