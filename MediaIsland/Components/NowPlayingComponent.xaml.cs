@@ -37,8 +37,8 @@ namespace MediaIsland.Components
             ComponentLogger = clogger;
             ServiceLogger = slogger;
             _mediaSessionService = new MediaSessionService(slogger);
-            _mediaSessionService.MediaSessionChanged += MediaSessionChanged;
             _mediaSessionService.StartAsync();
+            _mediaSessionService.MediaSessionChanged += MediaSessionChanged;
             //Task.Run(async () => await RefreshMediaInfo(_mediaSessionService.CurrentSession));
         }
 
@@ -52,7 +52,7 @@ namespace MediaIsland.Components
         {
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
             _mediaSessionService.MediaSessionChanged -= MediaSessionChanged;
-            _mediaSessionService.StopAsync();
+            //_mediaSessionService.StopAsync();
         }
 
         private async void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
