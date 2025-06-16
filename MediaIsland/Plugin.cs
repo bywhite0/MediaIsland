@@ -20,6 +20,7 @@ namespace MediaIsland
         {
             Console.WriteLine("[MI]正在加载 MediaIsland...");
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
+            services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
             Settings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"));
             Settings.PropertyChanged += (sender, args) =>
             {
