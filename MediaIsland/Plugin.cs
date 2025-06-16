@@ -20,7 +20,7 @@ namespace MediaIsland
         public override void Initialize(HostBuilderContext context, IServiceCollection services)
         {
             Console.WriteLine("[MI]正在加载 MediaIsland...");
-            services.AddHostedService<MediaSessionService>();
+            services.AddSingleton<IMediaSessionService, MediaSessionService>();
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             Settings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"));
             Settings.PropertyChanged += (sender, args) =>

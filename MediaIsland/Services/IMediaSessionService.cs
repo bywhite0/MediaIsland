@@ -5,7 +5,7 @@ using static WindowsMediaController.MediaManager;
 
 namespace MediaIsland.Services
 {
-    public interface IMediaSessionService : IHostedService
+    public interface IMediaSessionService : IDisposable
     {
         /// <summary>
         /// 活跃媒体会话发生变化（标题、状态、封面等）

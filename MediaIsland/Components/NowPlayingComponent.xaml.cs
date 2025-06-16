@@ -23,23 +23,20 @@ namespace MediaIsland.Components
     {
         //private string titleLabel, artistLabel, albumLabel, timeLabel, sourceLabel;
         //static MediaManager? mediaManager;
-        readonly IMediaSessionService _mediaSessionService;
+        public IMediaSessionService MediaSessionService;
         //TimeSpan currentDuration;
         //TimeSpan currentPosition;
         private ILogger<NowPlayingComponent> ComponentLogger { get; }
-        private ILogger<MediaSessionService> ServiceLogger { get; }
 
         private static MediaSession? currentSession = null;
 
-        public NowPlayingComponent(ILogger<NowPlayingComponent> clogger, ILogger<MediaSessionService> slogger)
+        public NowPlayingComponent(ILogger<NowPlayingComponent> clogger, IMediaSessionService mediaSessionService)
         {
-            InitializeComponent();
             ComponentLogger = clogger;
-            ServiceLogger = slogger;
-            _mediaSessionService = new MediaSessionService(slogger);
-            _mediaSessionService.StartAsync();
-            _mediaSessionService.MediaSessionChanged += MediaSessionChanged;
-            //Task.Run(async () => await RefreshMediaInfo(_mediaSessionService.CurrentSession));
+            MediaSessionService = mediaSessionService;
+            MediaSessionService.StartAsync();
+            MediaSessionService.MediaSessionChanged += MediaSessionChanged;
+            InitializeComponent();
         }
 
         void NowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
@@ -51,8 +48,8 @@ namespace MediaIsland.Components
         void NowPlayingComponent_OnUnloaded(object sender, RoutedEventArgs e)
         {
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
-            _mediaSessionService.MediaSessionChanged -= MediaSessionChanged;
-            //_mediaSessionService.StopAsync();
+            MediaSessionService.MediaSessionChanged -= MediaSessionChanged;
+            //MediaSessionService.StopAsync();
         }
 
         private async void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -102,7 +99,7 @@ namespace MediaIsland.Components
             //await mediaManager.StartAsync();
             try
             {
-                    var currentSession = _mediaSessionService.CurrentSession;
+                    var currentSession = MediaSessionService.CurrentSession;
                     ComponentLogger!.LogInformation("尝试获取 SMTC 会话信息");
                 if (currentSession != null)
                 {
