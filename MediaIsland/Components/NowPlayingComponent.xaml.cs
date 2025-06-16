@@ -222,7 +222,7 @@ namespace MediaIsland.Components
                         }
                         catch
                         {
-                            ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
+                            Logger!.LogWarning("SMTC 会话为空，无法获取信息");
                             await Dispatcher.InvokeAsync(() =>
                             {
                                 MediaGrid.Visibility = Visibility.Collapsed;
