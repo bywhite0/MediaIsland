@@ -267,10 +267,10 @@ namespace MediaIsland.Components
         /// SMTC 会话打开事件
         /// </summary>
         /// <param name="sender">发出事件的 SMTC 会话</param>
-        void MediaManager_OnAnySessionOpened(MediaManager.MediaSession sender)
+        async void MediaManager_OnAnySessionOpened(MediaManager.MediaSession sender)
         {
             Logger.LogDebug($"新 SMTC 会话：{sender.Id}");
-            //await RefreshMediaInfo(sender);
+            await RefreshMediaInfo(sender);
         }
 
         /// <summary>
