@@ -2,7 +2,6 @@ using System.Windows;
 using System.Windows.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
-using MahApps.Metro.Controls;
 using MaterialDesignThemes.Wpf;
 using MediaIsland.Helpers;
 using Microsoft.Extensions.Logging;
@@ -125,7 +124,7 @@ namespace MediaIsland.Components
         /// </summary>
         /// <param name="session">SMTC 会话</param>
         /// <returns></returns>
-        private async Task RefreshMediaInfo(MediaManager.MediaSession session)
+        private async Task RefreshMediaInfo(MediaSession session)
         {
             if (Settings == null || session?.ControlSession == null) return;
             try
@@ -267,7 +266,7 @@ namespace MediaIsland.Components
         /// SMTC 会话打开事件
         /// </summary>
         /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnAnySessionOpened(MediaManager.MediaSession sender)
+        async void MediaManager_OnAnySessionOpened(MediaSession sender)
         {
             Logger.LogDebug($"新 SMTC 会话：{sender.Id}");
             await RefreshMediaInfo(sender);
@@ -286,7 +285,7 @@ namespace MediaIsland.Components
         /// SMTC 会话焦点改变事件
         /// </summary>
         /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnFocusedSessionChanged(MediaManager.MediaSession sender)
+        async void MediaManager_OnFocusedSessionChanged(MediaSession sender)
         {
             Logger!.LogDebug($"SMTC 会话焦点改变：{sender?.ControlSession?.SourceAppUserModelId}");
             if (sender?.ControlSession == null)
@@ -317,7 +316,7 @@ namespace MediaIsland.Components
         /// SMTC 播放状态改变事件
         /// </summary>
         /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnAnyPlaybackStateChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
+        async void MediaManager_OnAnyPlaybackStateChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
         {
             Logger!.LogDebug($"SMTC 播放状态改变：{sender.Id} is now {args.PlaybackStatus}");
             if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
@@ -336,7 +335,7 @@ namespace MediaIsland.Components
         /// SMTC 媒体属性改变事件
         /// </summary>
         /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnAnyMediaPropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
+        async void MediaManager_OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
         {
             Logger!.LogDebug($"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
             await RefreshMediaInfo(sender);
@@ -345,7 +344,7 @@ namespace MediaIsland.Components
         /// SMTC 时间属性改变事件
         /// </summary>
         /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnAnyTimelinePropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
+        async void MediaManager_OnAnyTimelinePropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
         {
             //Logger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
             //await RefreshMediaInfo(sender);

@@ -139,13 +139,12 @@ namespace MediaIsland.Components
                     {
                         try
                         {
-                            string sourceApp = session.ControlSession.SourceAppUserModelId;
                             var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
                             var timeline = session.ControlSession.GetTimelineProperties();
                             var playbackInfo = session.ControlSession.GetPlaybackInfo();
-                            Logger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
+                            Logger!.LogTrace($"当前 SMTC 信息：{mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
 
-                            await Dispatcher.InvokeAsync(new Action(async () =>
+                            await Dispatcher.InvokeAsync(new Action(() =>
                             {
                                 if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
                                 {
@@ -154,7 +153,6 @@ namespace MediaIsland.Components
                                 else
                                 {
                                     MediaGrid.Visibility = Visibility.Visible;
-                                    StatusIcon.Kind = PackIconKind.Pause;
                                 }
                                 // 更新播放状态
                                 if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
@@ -178,11 +176,6 @@ namespace MediaIsland.Components
                                 titleText.Text = mediaProperties.Title ?? "未知标题";
                                 artistText.Text = mediaProperties.Artist ?? "未知艺术家";
                                 //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-
-                                // 进度处理
-                                //UpdateProgressUI(timeline.Position, timeline.EndTime);
-                                //progressBar.Maximum = (int)timeline.EndTime.TotalSeconds;
-                                //progressBar.Value = (int)timeline.Position.TotalSeconds;
                             }));
                         }
                         catch
@@ -216,18 +209,6 @@ namespace MediaIsland.Components
                 Logger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
             }
         }
-
-        //private void UpdateProgressUI(TimeSpan position, TimeSpan duration)
-        //{
-        //    currentProgressBar.Value = (int)Math.Min(position.TotalSeconds, progressBar.Maximum);
-        //    timeText.Text = $"{position:mm\\:ss} / {duration:mm\\:ss}";
-
-        //    if (duration.TotalSeconds > 0)
-        //    {
-        //        double ratio = position.TotalSeconds / duration.TotalSeconds;
-        //    }
-        //}
-
         /// <summary>
         /// SMTC 会话打开事件
         /// </summary>
@@ -306,14 +287,5 @@ namespace MediaIsland.Components
             Logger!.LogDebug($"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
             await RefreshMediaInfo(sender);
         }
-        /// <summary>
-        /// SMTC 时间属性改变事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        //async void MediaManager_OnAnyTimelinePropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
-        //{
-            //Logger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
-            //await RefreshMediaInfo(sender);
-        //}
     }
 }
