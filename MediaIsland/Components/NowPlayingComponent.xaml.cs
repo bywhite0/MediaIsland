@@ -292,6 +292,7 @@ namespace MediaIsland.Components
         void MediaManager_OnAnySessionClosed(MediaManager.MediaSession sender)
         {
             Logger!.LogDebug($"SMTC 会话关闭：{sender.Id}");
+            sender.MediaManagerInstance.ForceUpdate();
             //await RefreshMediaInfo(sender);
         }
         /// <summary>
