@@ -3,9 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
-using MahApps.Metro.Controls;
 using MaterialDesignThemes.Wpf;
-using MediaIsland.Helpers;
 using Microsoft.Extensions.Logging;
 using Windows.Media.Control;
 using WindowsMediaController;
@@ -93,7 +91,6 @@ namespace MediaIsland.Components
             mediaManager.OnFocusedSessionChanged += MediaManager_OnFocusedSessionChanged;
             mediaManager.OnAnyPlaybackStateChanged += MediaManager_OnAnyPlaybackStateChanged;
             mediaManager.OnAnyMediaPropertyChanged += MediaManager_OnAnyMediaPropertyChanged;
-            mediaManager.OnAnyTimelinePropertyChanged += MediaManager_OnAnyTimelinePropertyChanged;
 
             await mediaManager.StartAsync();
             try
@@ -313,10 +310,10 @@ namespace MediaIsland.Components
         /// SMTC 时间属性改变事件
         /// </summary>
         /// <param name="sender">发出事件的 SMTC 会话</param>
-        async void MediaManager_OnAnyTimelinePropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
-        {
+        //async void MediaManager_OnAnyTimelinePropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
+        //{
             //Logger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
             //await RefreshMediaInfo(sender);
-        }
+        //}
     }
 }
