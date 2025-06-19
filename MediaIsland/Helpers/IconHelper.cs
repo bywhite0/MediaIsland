@@ -4,8 +4,6 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.WindowsAPICodePack.Shell;
@@ -36,9 +34,6 @@ namespace MediaIsland.Helpers
 
         [DllImport("user32.dll")]
         private static extern bool DestroyIcon(IntPtr hIcon);
-
-        [DllImport("gdi32.dll")]
-        private static extern bool DeleteObject(IntPtr hObject);
 
         public static ImageSource? GetAppIcon(string userModelId)
         {
@@ -175,38 +170,32 @@ namespace MediaIsland.Helpers
         }
         public static ImageSource IconToImageSourceConverter(Icon icon)
         {
-            if (icon == null) return null;
-
-            Bitmap bitmap = icon.ToBitmap(); // Icon 转换为 Bitmap
-            IntPtr hBitmap = bitmap.GetHbitmap(); // 获取 Bitmap 的 GDI 句柄
-
-            ImageSource imageSource = null;
             try
             {
-                // 使用 CreateBitmapSourceFromHBitmap 从 HBITMAP 创建 BitmapSource
-                // Int32Rect.Empty 表示使用整个位图
-                // BitmapSizeOptions.FromEmptyOptions() 表示不进行任何缩放或像素格式转换
-                imageSource = Imaging.CreateBitmapSourceFromHBitmap(
-                    hBitmap,
-                    IntPtr.Zero,
-                    Int32Rect.Empty,
-                    BitmapSizeOptions.FromEmptyOptions());
-            }
-            finally
-            {
-                // 释放 GDI 句柄，避免GDI资源泄露
-                DeleteObject(hBitmap);
-                // 释放 Bitmap 对象
-                bitmap.Dispose();
-            }
+                using (Bitmap bitmap = icon.ToBitmap())
+                {
+                    using (Bitmap argbBitmap = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb))
+                    {
+                        using (Graphics g = Graphics.FromImage(argbBitmap))
+                        {
+                            g.DrawImage(bitmap, new Rectangle(0, 0, argbBitmap.Width, argbBitmap.Height));
+                        }
 
-            // 冻结 ImageSource，使其可以在非 UI 线程访问，并提高性能
-            if (imageSource.CanFreeze)
-            {
-                imageSource.Freeze();
-            }
+                        using (MemoryStream stream = new MemoryStream())
+                        {
+                            argbBitmap.Save(stream, ImageFormat.Png);
+                            stream.Seek(0, SeekOrigin.Begin);
 
-            return imageSource;
+                            PngBitmapDecoder decoder = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                            return decoder.Frames[0];
+                        }
+                    }
+                }
+            }
+            catch (ArgumentNullException)
+            {
+                throw new ArgumentNullException(nameof(icon));
+            }
         }
     }
 }
