@@ -140,84 +140,15 @@ namespace MediaIsland.Components
                             var timeline = session.ControlSession.GetTimelineProperties();
                             var playbackInfo = session.ControlSession.GetPlaybackInfo();
                             Logger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
-
-                            await Dispatcher.InvokeAsync(new Action(async () =>
+                            await Dispatcher.InvokeAsync(async () =>
                             {
-                                if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
-                                {
-                                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
-                                }
-                                else
-                                {
-                                    MediaGrid.Visibility = Visibility.Visible;
-                                    StatusIcon.Kind = PackIconKind.Pause;
-                                }
-                                // 更新播放状态
-                                if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
-                                {
-                                    StatusIcon.Kind = PackIconKind.Play;
-                                }
-                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
-                                {
-                                    StatusIcon.Kind = PackIconKind.Pause;
-                                }
-                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
-                                {
-                                    StatusIcon.Kind = PackIconKind.Stop;
-                                }
-                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
-                                {
-                                    StatusIcon.Kind = PackIconKind.Refresh;
-                                }
-
-                                // 更新 UI 内容
-                                titleText.Text = mediaProperties.Title ?? "未知标题";
-                                artistText.Text = mediaProperties.Artist ?? "未知艺术家";
-                                //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-
-                                var thumb = mediaProperties.Thumbnail;
-                                if (thumb != null)
-                                {
-                                    if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
-                                    {
-                                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
-                                    }
-                                    else
-                                    {
-                                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
-                                    }
-                                    CoverPlaceholder.Visibility = Visibility.Collapsed;
-                                }
-                                else
-                                {
-                                    AlbumArt.ImageSource = null;
-                                    CoverPlaceholder.Visibility = Visibility.Visible;
-                                }
-
-                                // 更新播放器信息
-                                sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(session.Id);
-                                sourceIcon.ImageSource = IconHelper.GetAppIcon(session.Id);
-
-                                // 进度处理
-                                //UpdateProgressUI(timeline.Position, timeline.EndTime);
-                                //progressBar.Maximum = (int)timeline.EndTime.TotalSeconds;
-                                //progressBar.Value = (int)timeline.Position.TotalSeconds;
-                                timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
-                                // 更新 UI 时处理时间轴
-                                if (Settings.SubInfoType == 1)
-                                {
-                                    if (timeline.Position != timeline.EndTime)
-                                    {
-                                        artistText.Visibility = Visibility.Collapsed;
-                                        timeText.Visibility = Visibility.Visible;
-                                    }
-                                    else
-                                    {
-                                        artistText.Visibility = Visibility.Visible;
-                                        timeText.Visibility = Visibility.Collapsed;
-                                    }
-                                }
-                            }));
+                                sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
+                                sourceIcon.ImageSource = IconHelper.GetAppIcon(sourceApp);
+                                await RefreshMediaProperties(session);
+                                await RefreshPlaybackInfo(session);
+                                await RefreshTimelineProperties(session);
+                            });
+                            
                         }
                         catch
                         {
@@ -249,6 +180,88 @@ namespace MediaIsland.Components
             {
                 Logger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
             }
+        }
+
+        async Task RefreshMediaProperties(MediaSession session)
+        {
+            string sourceApp = session.ControlSession.SourceAppUserModelId;
+            var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
+            var thumb = mediaProperties.Thumbnail;
+            await Dispatcher.InvokeAsync(new Action(async () =>
+            {
+                // 更新 UI 内容
+                titleText.Text = mediaProperties.Title ?? "未知标题";
+                artistText.Text = mediaProperties.Artist ?? "未知艺术家";
+                //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
+
+                if (thumb != null)
+                {
+                    if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
+                    {
+                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
+                    }
+                    else
+                    {
+                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
+                    }
+                    CoverPlaceholder.Visibility = Visibility.Collapsed;
+                }
+                else
+                {
+                    AlbumArt.ImageSource = null;
+                    CoverPlaceholder.Visibility = Visibility.Visible;
+                }
+            }));
+        }
+
+        async Task RefreshPlaybackInfo(MediaSession session)
+        {
+            var playbackInfo = session.ControlSession.GetPlaybackInfo();
+            await Dispatcher.InvokeAsync(new Action(() =>
+            {
+                // 更新播放状态
+                if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                {
+                    MediaGrid.Visibility = Visibility.Visible;
+                    StatusIcon.Kind = PackIconKind.Play;
+                }
+                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                {
+                    StatusIcon.Kind = PackIconKind.Pause;
+                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Visible : Visibility.Collapsed;
+                }
+                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
+                {
+                    StatusIcon.Kind = PackIconKind.Stop;
+                }
+                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
+                {
+                    StatusIcon.Kind = PackIconKind.Refresh;
+                }
+            }));
+        }
+
+        async Task RefreshTimelineProperties(MediaSession session)
+        {
+            var timeline = session.ControlSession.GetTimelineProperties();
+            await Dispatcher.InvokeAsync(new Action(() =>
+            {
+                // 更新 UI 时处理时间轴
+                if (Settings.SubInfoType == 1)
+                {
+                    if (timeline.Position != timeline.EndTime)
+                    {
+                        artistText.Visibility = Visibility.Collapsed;
+                        timeText.Visibility = Visibility.Visible;
+                    }
+                    else
+                    {
+                        artistText.Visibility = Visibility.Visible;
+                        timeText.Visibility = Visibility.Collapsed;
+                    }
+                }
+                timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
+            }));
         }
 
         //private void UpdateProgressUI(TimeSpan position, TimeSpan duration)
@@ -328,7 +341,7 @@ namespace MediaIsland.Components
             }
             else
             {
-                await RefreshMediaInfo(sender);
+                await RefreshPlaybackInfo(sender);
             }
         }
         /// <summary>
@@ -338,7 +351,7 @@ namespace MediaIsland.Components
         async void MediaManager_OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
         {
             Logger!.LogDebug($"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
-            await RefreshMediaInfo(sender);
+            await RefreshMediaProperties(sender);
         }
         /// <summary>
         /// SMTC 时间属性改变事件
@@ -347,7 +360,7 @@ namespace MediaIsland.Components
         async void MediaManager_OnAnyTimelinePropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
         {
             //Logger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
-            //await RefreshMediaInfo(sender);
+            await RefreshTimelineProperties(sender);
         }
     }
 }
