@@ -7,6 +7,7 @@ namespace MediaIsland.Components
 
         bool _isHideWhenPaused = false;
         bool _isShowSource = true;
+        bool _isShowSourceName = true;
         bool _isShowAlbumArt = true;
         bool _isShowPlaybackStatus = false;
         int _subInfoType = 0;
@@ -43,6 +44,16 @@ namespace MediaIsland.Components
             {
                 if (_isShowSource == value) return;
                 _isShowSource = value;
+                OnPropertyChanged();
+            }
+        }
+        public bool IsShowSourceName
+        {
+            get => _isShowSourceName;
+            set
+            {
+                if (_isShowSourceName == value) return;
+                _isShowSourceName = value;
                 OnPropertyChanged();
             }
         }

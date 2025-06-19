@@ -45,7 +45,7 @@
                     <ImageBrush x:Name="sourceIcon" Stretch="UniformToFill" />
                 </Border.Background>
             </Border>
-            <TextBlock x:Name="sourceText" HorizontalAlignment="Center" VerticalAlignment="Bottom" FontSize="8" />
+            <TextBlock x:Name="sourceText" HorizontalAlignment="Center" VerticalAlignment="Bottom" FontSize="8" Visibility="{Binding Settings.IsShowSourceName, Converter={StaticResource BooleanToVisibilityConverter}}"/>
         </StackPanel>
         
 

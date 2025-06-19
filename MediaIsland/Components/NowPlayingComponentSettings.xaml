@@ -13,6 +13,7 @@
             <ci:SettingsCard IconGlyph="HideOutline" Header="暂停时隐藏组件" Description="当当前媒体暂停时，隐藏本组件。由于 ClassIsland 的设计特性，隐藏后仍存在一段空白。" IsOn="{Binding Settings.IsHideWhenPaused, Mode=TwoWay}" />
             <ci:SettingsCard IconGlyph="Album" Header="显示专辑封面" Description="显示当前播放的专辑封面。" IsOn="{Binding Settings.IsShowAlbumArt, Mode=TwoWay}" />
             <ci:SettingsCard IconGlyph="LibraryMusicOutline" Header="显示当前播放源" Description="显示当前媒体的播放源。" IsOn="{Binding Settings.IsShowSource, Mode=TwoWay}" />
+            <ci:SettingsCard IconGlyph="PlaylistMusicOutline" Header="显示当前播放源名称" Description="显示当前媒体的播放源名称。" IsOn="{Binding Settings.IsShowSourceName, Mode=TwoWay}" />
             <ci:SettingsCard IconGlyph="Music" Header="显示当前播放状态" Description="显示当前媒体的播放状态。" IsOn="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
             <ci:SettingsCard
                     Margin="0,0,0,6"
