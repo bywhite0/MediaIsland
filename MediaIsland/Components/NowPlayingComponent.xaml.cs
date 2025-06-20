@@ -202,11 +202,15 @@ namespace MediaIsland.Components
             var thumb = mediaProperties.Thumbnail;
             await Dispatcher.InvokeAsync(new Action(async () =>
             {
-                // 更新 UI 内容
+                // 更新标题、艺术家
                 titleText.Text = mediaProperties.Title ?? "未知标题";
                 artistText.Text = mediaProperties.Artist ?? "未知艺术家";
                 //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-
+            }));
+           
+            await Dispatcher.InvokeAsync(new Action(async () =>
+            {
+                // 更新封面
                 if (thumb != null)
                 {
                     if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
