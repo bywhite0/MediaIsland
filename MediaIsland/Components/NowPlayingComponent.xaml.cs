@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Threading;
 using ClassIsland.Core.Abstractions.Controls;
@@ -88,7 +89,19 @@ namespace MediaIsland.Components
             mediaManager.OnAnyMediaPropertyChanged += MediaManager_OnAnyMediaPropertyChanged;
             mediaManager.OnAnyTimelinePropertyChanged += MediaManager_OnAnyTimelinePropertyChanged;
 
-            await mediaManager.StartAsync();
+            try
+            {
+                await mediaManager.StartAsync();
+            }
+            catch (COMException)
+            {
+                Logger!.LogWarning("无法获取 SMTC 会话管理器。");
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    MediaGrid.Visibility = Visibility.Collapsed;
+                });
+                return;
+            }
             try
             {
                 var currentSession = mediaManager.GetFocusedSession();
