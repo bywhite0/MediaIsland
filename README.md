@@ -18,6 +18,14 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
     <img src="Assets/screenshot_with_ei.png" alt="搭配ei使用截图" />
   </details>
 
+**正在播放(简)**
+
+![截图](./Assets/screenshot_snpc.png)
+
+简略显示正在播放的媒体信息，可调整显示样式。
+
+![设置截图](./Assets/snpc_settings.png)
+
 > [!IMPORTANT]
 >
 > 本插件的内存占用较大，低性能设备请谨慎使用。
