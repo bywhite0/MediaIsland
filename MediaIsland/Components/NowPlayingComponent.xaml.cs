@@ -96,19 +96,6 @@ namespace MediaIsland.Components
             //mediaManager.OnAnyMediaPropertyChanged += MediaManager_OnAnyMediaPropertyChanged;
             //mediaManager.OnAnyTimelinePropertyChanged += MediaManager_OnAnyTimelinePropertyChanged;
 
-            try
-            {
-                await mediaManager.StartAsync();
-            }
-            catch (COMException)
-            {
-                Logger!.LogWarning("无法获取 SMTC 会话管理器。");
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    MediaGrid.Visibility = Visibility.Collapsed;
-                });
-                return;
-            }
             //await mediaManager.StartAsync();
             try
             {
@@ -160,7 +147,7 @@ namespace MediaIsland.Components
                             var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
                             var timeline = session.ControlSession.GetTimelineProperties();
                             var playbackInfo = session.ControlSession.GetPlaybackInfo();
-                            Logger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
+                            ComponentLogger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
                             await Dispatcher.InvokeAsync(async () =>
                             {
                                 sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
@@ -173,7 +160,7 @@ namespace MediaIsland.Components
                         }
                         catch
                         {
-                            Logger!.LogWarning("SMTC 会话为空，无法获取信息");
+                            ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
                             await Dispatcher.InvokeAsync(() =>
                             {
                                 MediaGrid.Visibility = Visibility.Collapsed;
@@ -182,7 +169,7 @@ namespace MediaIsland.Components
                     }
                     else
                     {
-                        Logger!.LogWarning("SMTC 会话为空，无法获取信息");
+                        ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
                         await Dispatcher.InvokeAsync(() =>
                         {
                             MediaGrid.Visibility = Visibility.Collapsed;
@@ -199,7 +186,7 @@ namespace MediaIsland.Components
             }
             catch (Exception ex)
             {
-                Logger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
+                ComponentLogger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
             }
         }
 
@@ -287,116 +274,6 @@ namespace MediaIsland.Components
                 }
                 timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
             }));
-                            ComponentLogger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
-
-                            await Dispatcher.InvokeAsync(new Action(async () =>
-                            {
-                                if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
-                                {
-                                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
-                                }
-                                else
-                                {
-                                    MediaGrid.Visibility = Visibility.Visible;
-                                    StatusIcon.Kind = PackIconKind.Pause;
-                                }
-                                // 更新播放状态
-                                if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
-                                {
-                                    StatusIcon.Kind = PackIconKind.Play;
-                                }
-                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
-                                {
-                                    StatusIcon.Kind = PackIconKind.Pause;
-                                }
-                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
-                                {
-                                    StatusIcon.Kind = PackIconKind.Stop;
-                                }
-                                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
-                                {
-                                    StatusIcon.Kind = PackIconKind.Refresh;
-                                }
-
-                                // 更新 UI 内容
-                                titleText.Text = mediaProperties.Title ?? "未知标题";
-                                artistText.Text = mediaProperties.Artist ?? "未知艺术家";
-                                //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-
-                                var thumb = mediaProperties.Thumbnail;
-                                if (thumb != null)
-                                {
-                                    if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
-                                    {
-                                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
-                                    }
-                                    else
-                                    {
-                                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
-                                    }
-                                    CoverPlaceholder.Visibility = Visibility.Collapsed;
-                                }
-                                else
-                                {
-                                    AlbumArt.ImageSource = null;
-                                    CoverPlaceholder.Visibility = Visibility.Visible;
-                                }
-
-                                // 更新播放器信息
-                                sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(session.Id);
-                                sourceIcon.ImageSource = IconHelper.GetAppIcon(session.Id);
-
-                                // 进度处理
-                                //UpdateProgressUI(timeline.Position, timeline.EndTime);
-                                //progressBar.Maximum = (int)timeline.EndTime.TotalSeconds;
-                                //progressBar.Value = (int)timeline.Position.TotalSeconds;
-                                timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
-                                // 更新 UI 时处理时间轴
-                                if (Settings.SubInfoType == 1)
-                                {
-                                    if (timeline.Position != timeline.EndTime)
-                                    {
-                                        artistText.Visibility = Visibility.Collapsed;
-                                        timeText.Visibility = Visibility.Visible;
-                                    }
-                                    else
-                                    {
-                                        artistText.Visibility = Visibility.Visible;
-                                        timeText.Visibility = Visibility.Collapsed;
-                                    }
-                                }
-                            }));
-                        }
-                        catch
-                        {
-                            ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
-                            await Dispatcher.InvokeAsync(() =>
-                            {
-                                MediaGrid.Visibility = Visibility.Collapsed;
-                            });
-                        }
-                    }
-                    else
-                    {
-                        ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
-                        await Dispatcher.InvokeAsync(() =>
-                        {
-                            MediaGrid.Visibility = Visibility.Collapsed;
-                        });
-                    }
-                }
-                else
-                {
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        MediaGrid.Visibility = Visibility.Collapsed;
-                    });
-                }
-            }
-            catch (Exception ex)
-            {
-                ComponentLogger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
-            }
         }
 
         //private void UpdateProgressUI(TimeSpan position, TimeSpan duration)
