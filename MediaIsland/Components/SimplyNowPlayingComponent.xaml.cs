@@ -105,7 +105,8 @@ namespace MediaIsland.Components
                     MediaGrid.Visibility = Visibility.Collapsed;
                 });
                 return;
-                try
+            }
+            try
             {
                 var currentSession = mediaManager.GetFocusedSession();
                 Logger!.LogInformation("尝试获取 SMTC 会话信息");
