@@ -1,0 +1,33 @@
+﻿<ci:ComponentBase x:Class="MediaIsland.Components.SimplyNowPlayingComponentSettings"
+                  x:TypeArguments="local:SimplyNowPlayingComponentConfig"
+                  xmlns:ci="http://classisland.tech/schemas/xaml/core" 
+                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+                  xmlns:local="clr-namespace:MediaIsland.Components"
+                  mc:Ignorable="d" 
+                  d:DesignHeight="450" d:DesignWidth="800">
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:SimplyNowPlayingComponentSettings}}">
+        <StackPanel Style="{StaticResource SettingsPageStackPanelStyle}">
+            <ci:SettingsCard IconGlyph="HideOutline" Header="暂停时隐藏组件" Description="当当前媒体暂停时，隐藏本组件。由于 ClassIsland 的设计特性，隐藏后仍存在一段空白。" IsOn="{Binding Settings.IsHideWhenPaused, Mode=TwoWay}" />
+            <ci:SettingsCard IconGlyph="Music" Header="显示当前播放状态" Description="显示当前媒体的播放状态，关闭则显示音符图标。" IsOn="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
+            <ci:SettingsCard
+                    Margin="0,0,0,6"
+                    Description="切换信息显示样式。"
+                    Header="显示样式"
+                    IconGlyph="InfoCircleOutline">
+                <ci:SettingsCard.Switcher>
+              	    <ComboBox MinWidth="110" SelectedIndex="{Binding Settings.InfoType}">
+              		    <ComboBoxItem>艺术家 - 歌曲名</ComboBoxItem>
+                        <ComboBoxItem>歌曲名 - 艺术家</ComboBoxItem>
+                        <ComboBoxItem>歌曲名</ComboBoxItem>
+                    </ComboBox>
+                </ci:SettingsCard.Switcher>
+            </ci:SettingsCard>
+            <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
+                Powered by MediaIsland
+            </Label>
+        </StackPanel>
+    </ScrollViewer>
+</ci:ComponentBase>
