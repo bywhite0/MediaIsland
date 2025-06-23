@@ -350,17 +350,21 @@ namespace MediaIsland.Components
         async void MediaManager_OnAnyPlaybackStateChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
         {
             Logger!.LogDebug($"SMTC 播放状态改变：{sender.Id} is now {args.PlaybackStatus}");
-            if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+            try
             {
-                Dispatcher.Invoke(() =>
+                if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
                 {
-                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
-                });
+                    Dispatcher.Invoke(() =>
+                    {
+                        MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
+                    });
+                }
+                else
+                {
+                    await RefreshPlaybackInfo(sender);
+                }
             }
-            else
-            {
-                await RefreshPlaybackInfo(sender);
-            }
+            catch { }
         }
         /// <summary>
         /// SMTC 媒体属性改变事件
@@ -369,7 +373,8 @@ namespace MediaIsland.Components
         async void MediaManager_OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
         {
             Logger!.LogDebug($"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
-            await RefreshMediaProperties(sender);
+            try { await RefreshMediaProperties(sender); }
+            catch { }
         }
         /// <summary>
         /// SMTC 时间属性改变事件
