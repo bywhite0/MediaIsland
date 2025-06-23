@@ -378,7 +378,11 @@ namespace MediaIsland.Components
         async void MediaManager_OnAnyTimelinePropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
         {
             //Logger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
-            await RefreshTimelineProperties(sender);
+            try
+            {
+                await RefreshTimelineProperties(sender);
+            }
+            catch { }
         }
     }
 }
