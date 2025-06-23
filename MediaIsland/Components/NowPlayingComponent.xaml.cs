@@ -373,7 +373,10 @@ namespace MediaIsland.Components
         async void MediaManager_OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
         {
             Logger!.LogDebug($"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
-            try { await RefreshMediaProperties(sender); }
+            try
+            {
+                await Dispatcher.InvokeAsync(async () => await RefreshMediaProperties(sender));
+            }
             catch { }
         }
         /// <summary>
@@ -385,7 +388,7 @@ namespace MediaIsland.Components
             //Logger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
             try
             {
-                await RefreshTimelineProperties(sender);
+                await Dispatcher.InvokeAsync(async () => await RefreshTimelineProperties(sender));
             }
             catch { }
         }
