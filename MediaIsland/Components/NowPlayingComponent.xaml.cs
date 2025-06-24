@@ -245,7 +245,7 @@ namespace MediaIsland.Components
                 else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
                 {
                     StatusIcon.Kind = PackIconKind.Pause;
-                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Visible : Visibility.Collapsed;
+                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
                 }
                 else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
                 {
