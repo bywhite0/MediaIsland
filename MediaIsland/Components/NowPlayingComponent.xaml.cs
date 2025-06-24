@@ -200,13 +200,13 @@ namespace MediaIsland.Components
             string sourceApp = session.ControlSession.SourceAppUserModelId;
             var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
             var thumb = mediaProperties.Thumbnail;
-            await Dispatcher.InvokeAsync(new Action(async () =>
+            Dispatcher.Invoke(() =>
             {
                 // 更新标题、艺术家
                 titleText.Text = mediaProperties.Title ?? "未知标题";
                 artistText.Text = mediaProperties.Artist ?? "未知艺术家";
                 //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-            }));
+            });
            
             await Dispatcher.InvokeAsync(new Action(async () =>
             {
@@ -358,10 +358,11 @@ namespace MediaIsland.Components
                     {
                         MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
                     });
+                    await Dispatcher.InvokeAsync(async () => await RefreshPlaybackInfo(sender));
                 }
                 else
                 {
-                    await RefreshPlaybackInfo(sender);
+                    await Dispatcher.InvokeAsync(async () => await RefreshPlaybackInfo(sender));
                 }
             }
             catch { }
