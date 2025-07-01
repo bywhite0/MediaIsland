@@ -197,65 +197,113 @@ namespace MediaIsland.Components
 
         async Task RefreshMediaProperties(MediaSession session)
         {
-            string sourceApp = session.ControlSession.SourceAppUserModelId;
-            var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
-            var thumb = mediaProperties.Thumbnail;
-            Dispatcher.Invoke(() =>
+            if (session != null)
             {
-                // 更新标题、艺术家
-                titleText.Text = mediaProperties.Title ?? "未知标题";
-                artistText.Text = mediaProperties.Artist ?? "未知艺术家";
-                //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-            });
-           
-            await Dispatcher.InvokeAsync(new Action(async () =>
-            {
-                // 更新封面
-                if (thumb != null)
+                if (session.ControlSession != null)
                 {
-                    if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
+                    try
                     {
-                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
+                        string sourceApp = session.ControlSession.SourceAppUserModelId;
+                        var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
+                        var thumb = mediaProperties.Thumbnail;
+                        Dispatcher.Invoke(() =>
+                        {
+                            // 更新标题、艺术家
+                            titleText.Text = mediaProperties.Title ?? "未知标题";
+                            artistText.Text = mediaProperties.Artist ?? "未知艺术家";
+                            //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
+                        });
+
+                        await Dispatcher.InvokeAsync(new Action(async () =>
+                        {
+                            // 更新封面
+                            if (thumb != null)
+                            {
+                                if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
+                                {
+                                    AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
+                                }
+                                else
+                                {
+                                    AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
+                                }
+                                CoverPlaceholder.Visibility = Visibility.Collapsed;
+                            }
+                            else
+                            {
+                                AlbumArt.ImageSource = null;
+                                CoverPlaceholder.Visibility = Visibility.Visible;
+                            }
+                        }));
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
+                        Logger!.LogWarning($"无法获取媒体属性：{ex.Message}");
+                        return;
                     }
-                    CoverPlaceholder.Visibility = Visibility.Collapsed;
                 }
                 else
                 {
-                    AlbumArt.ImageSource = null;
-                    CoverPlaceholder.Visibility = Visibility.Visible;
+                    Logger!.LogWarning("SMTC 会话为空，无法获取媒体属性");
+                    return;
                 }
-            }));
+            }
+            else
+            {
+                Logger!.LogWarning("SMTC 会话为空，无法获取媒体属性");
+                return;
+            }
         }
 
         async Task RefreshPlaybackInfo(MediaSession session)
         {
-            var playbackInfo = session.ControlSession.GetPlaybackInfo();
-            await Dispatcher.InvokeAsync(new Action(() =>
+            if (session != null)
             {
-                // 更新播放状态
-                if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                if (session.ControlSession != null)
                 {
-                    MediaGrid.Visibility = Visibility.Visible;
-                    StatusIcon.Kind = PackIconKind.Play;
+                    try
+                    {
+                        var playbackInfo = session.ControlSession.GetPlaybackInfo();
+                        await Dispatcher.InvokeAsync(new Action(() =>
+                        {
+                            // 更新播放状态
+                            if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                            {
+                                MediaGrid.Visibility = Visibility.Visible;
+                                StatusIcon.Kind = PackIconKind.Play;
+                            }
+                            else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                            {
+                                StatusIcon.Kind = PackIconKind.Pause;
+                                MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
+                            }
+                            else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
+                            {
+                                StatusIcon.Kind = PackIconKind.Stop;
+                            }
+                            else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
+                            {
+                                StatusIcon.Kind = PackIconKind.Refresh;
+                            }
+                        }));
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger!.LogWarning($"无法获取播放状态：{ex.Message}");
+                        return;
+                    }
                 }
-                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                else
                 {
-                    StatusIcon.Kind = PackIconKind.Pause;
-                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
+                    Logger!.LogWarning("SMTC 会话为空，无法获取播放状态");
+                    return;
                 }
-                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
-                {
-                    StatusIcon.Kind = PackIconKind.Stop;
-                }
-                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
-                {
-                    StatusIcon.Kind = PackIconKind.Refresh;
-                }
-            }));
+            }
+            else
+            {
+                Logger!.LogWarning("SMTC 会话为空，无法获取播放状态");
+                return;
+            }
         }
 
         async Task RefreshTimelineProperties(MediaSession session)
