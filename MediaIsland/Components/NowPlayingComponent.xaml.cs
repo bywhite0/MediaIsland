@@ -308,25 +308,49 @@ namespace MediaIsland.Components
 
         async Task RefreshTimelineProperties(MediaSession session)
         {
-            var timeline = session.ControlSession.GetTimelineProperties();
-            await Dispatcher.InvokeAsync(new Action(() =>
+            if (session != null)
             {
-                // 更新 UI 时处理时间轴
-                if (Settings.SubInfoType == 1)
+                if (session.ControlSession != null)
                 {
-                    if (timeline.Position != timeline.EndTime)
+                    try
                     {
-                        artistText.Visibility = Visibility.Collapsed;
-                        timeText.Visibility = Visibility.Visible;
+                        var timeline = session.ControlSession.GetTimelineProperties();
+                        await Dispatcher.InvokeAsync(new Action(() =>
+                        {
+                            // 更新 UI 时处理时间轴
+                            if (Settings.SubInfoType == 1)
+                            {
+                                if (timeline.Position != timeline.EndTime)
+                                {
+                                    artistText.Visibility = Visibility.Collapsed;
+                                    timeText.Visibility = Visibility.Visible;
+                                }
+                                else
+                                {
+                                    artistText.Visibility = Visibility.Visible;
+                                    timeText.Visibility = Visibility.Collapsed;
+                                }
+                            }
+                            timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
+                        }));
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        artistText.Visibility = Visibility.Visible;
-                        timeText.Visibility = Visibility.Collapsed;
+                        Logger!.LogWarning($"无法获取时间轴信息：{ex.Message}");
+                        return;
                     }
                 }
-                timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
-            }));
+                else
+                {
+                    Logger!.LogWarning("SMTC 会话为空，无法获取时间轴信息");
+                    return;
+                }
+            }
+            else
+            {
+                Logger!.LogWarning("SMTC 会话为空，无法获取时间轴信息");
+                return;
+            }
         }
 
         //private void UpdateProgressUI(TimeSpan position, TimeSpan duration)
