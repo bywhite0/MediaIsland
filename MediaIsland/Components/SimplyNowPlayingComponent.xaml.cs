@@ -59,25 +59,30 @@ namespace MediaIsland.Components
             }
             if (e.PropertyName == "InfoType")
             {
-            	switch (Settings.InfoType)
-            	{
-            		case 0:
+                switch (Settings.InfoType)
+                {
+                    case 0:
                         dividerText.Visibility = Visibility.Visible;
                         artistText.Visibility = Visibility.Visible;
+                        Grid.SetRow(titleText, 0);
+                        Grid.SetRow(artistText, 0);
                         Grid.SetColumn(titleText, 2);
                         Grid.SetColumn(artistText, 0);
-            			break;
-            		case 1:
+                        break;
+                    case 1:
                         dividerText.Visibility = Visibility.Visible;
                         artistText.Visibility = Visibility.Visible;
+                        Grid.SetRow(titleText, 0);
+                        Grid.SetRow(artistText, 0);
                         Grid.SetColumn(titleText, 0);
                         Grid.SetColumn(artistText, 2);
-            			break;
-            		case 2:
+                        break;
+                    case 2:
                         dividerText.Visibility = Visibility.Collapsed;
                         artistText.Visibility = Visibility.Collapsed;
-            			break;
-            	}
+                        break;
+                }
+                Settings.IsDualLineStyle = (Settings.InfoType == 3);
             }
         }
 
@@ -189,6 +194,9 @@ namespace MediaIsland.Components
                                 titleText.Text = mediaProperties.Title ?? "未知标题";
                                 artistText.Text = mediaProperties.Artist ?? "未知艺术家";
                                 //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
+
+                                dualTitleText.Text = mediaProperties.Title ?? "未知标题";
+                                dualArtistText.Text = mediaProperties.Artist ?? "未知艺术家";
 
                                 switch (Settings.InfoType)
                                 {

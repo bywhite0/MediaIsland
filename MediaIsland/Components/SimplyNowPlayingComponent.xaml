@@ -24,7 +24,7 @@
             <md:PackIcon x:Name="StatusIcon" Kind="Play" Visibility="{Binding Settings.IsShowPlaybackStatus, Converter={StaticResource BooleanToVisibilityConverter}}" VerticalAlignment="Center" Margin="0 4 4 0" />
             <md:PackIcon x:Name="NoteIcon" Kind="MusicNote" Visibility="{Binding Settings.IsShowPlaybackStatus, Converter={StaticResource BooleanToVisibilityReConverter}}" VerticalAlignment="Center" Margin="0 4 4 0" />
         </StackPanel>
-        <StackPanel Name="InfoStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" VerticalAlignment="Center">
+        <StackPanel Name="InfoStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" VerticalAlignment="Center" Visibility="{Binding Settings.IsDualLineStyle, Converter={StaticResource BooleanToVisibilityReConverter}}">
             <Grid TextElement.FontSize="{DynamicResource MainWindowBodyFontSize}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -34,6 +34,16 @@
                 <TextBlock x:Name="titleText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0" Grid.Column="0" />
                 <TextBlock x:Name="dividerText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4 0" Grid.Column="1">-</TextBlock>
                 <TextBlock x:Name="artistText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0" Grid.Column="2" />
+            </Grid>
+        </StackPanel>
+        <StackPanel Name="DualLineInfoStackPanel" Grid.Column="2" Margin="0" Orientation="Horizontal" VerticalAlignment="Center" Visibility="{Binding Settings.IsDualLineStyle, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <TextBlock x:Name="dualTitleText" VerticalAlignment="Center" Margin="0" Grid.Row="0" FontSize="14" />
+                <TextBlock x:Name="dualArtistText" VerticalAlignment="Center" Margin="0" Grid.Row="1" FontSize="10" />
             </Grid>
         </StackPanel>
     </Grid>

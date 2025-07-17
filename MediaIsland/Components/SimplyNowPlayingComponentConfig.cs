@@ -8,6 +8,7 @@ namespace MediaIsland.Components
         bool _isHideWhenPaused = false;
         bool _isShowPlaybackStatus = false;
         int _infoType = 1;
+        bool _isDualLineStyle = false;
 
         /// <Summary>
         /// 0: 艺术家 - 歌曲名<br/>
@@ -42,6 +43,17 @@ namespace MediaIsland.Components
             {                   
                 if (_isShowPlaybackStatus == value) return;
                 _isShowPlaybackStatus = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsDualLineStyle
+        {
+            get => _isDualLineStyle;
+            set
+            {
+                if (_isDualLineStyle == value) return;
+                _isDualLineStyle = value;
                 OnPropertyChanged();
             }
         }

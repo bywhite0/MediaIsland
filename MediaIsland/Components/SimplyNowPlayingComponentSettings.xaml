@@ -18,10 +18,16 @@
                     Header="显示样式"
                     IconGlyph="InfoCircleOutline">
                 <ci:SettingsCard.Switcher>
-              	    <ComboBox MinWidth="110" SelectedIndex="{Binding Settings.InfoType}">
-              		    <ComboBoxItem>艺术家 - 歌曲名</ComboBoxItem>
+                    <ComboBox MinWidth="110" SelectedIndex="{Binding Settings.InfoType}">
+                        <ComboBoxItem>艺术家 - 歌曲名</ComboBoxItem>
                         <ComboBoxItem>歌曲名 - 艺术家</ComboBoxItem>
                         <ComboBoxItem>歌曲名</ComboBoxItem>
+                        <ComboBoxItem>
+                            <StackPanel>
+                                <TextBlock Text="歌曲名" TextWrapping="Wrap"/>
+                                <TextBlock Text="艺术家" TextWrapping="Wrap" FontSize="10"/>
+                            </StackPanel>
+                        </ComboBoxItem>
                     </ComboBox>
                 </ci:SettingsCard.Switcher>
             </ci:SettingsCard>
