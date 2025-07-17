@@ -49,15 +49,21 @@ namespace MediaIsland.Components
         {
             if (e.PropertyName == "IsHideWhenPaused")
             {
-                if (currentSession?.ControlSession?.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                try
                 {
-                    await Dispatcher.InvokeAsync(() =>
+                    GlobalSystemMediaTransportControlsSessionManager _sessionManager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+                    var playbackInfo = _sessionManager.GetCurrentSession().GetPlaybackInfo();
+                    if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
                     {
-                        MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
-                    });
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
+                        });
+                    }
                 }
+                catch { }
             }
-            if (e.PropertyName == "InfoType")
+                if (e.PropertyName == "InfoType")
             {
                 switch (Settings.InfoType)
                 {
