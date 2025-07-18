@@ -94,7 +94,6 @@ namespace MediaIsland.Components
         /// </summary>
         async void LoadCurrentPlayingInfoAsync()
         {
-            mediaManager = new MediaManager();
             mediaManager.OnAnySessionOpened += MediaManager_OnAnySessionOpened;
             mediaManager.OnAnySessionClosed += MediaManager_OnAnySessionClosed;
             mediaManager.OnFocusedSessionChanged += MediaManager_OnFocusedSessionChanged;
