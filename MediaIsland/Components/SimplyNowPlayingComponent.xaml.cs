@@ -70,16 +70,12 @@ namespace MediaIsland.Components
                     case 0:
                         dividerText.Visibility = Visibility.Visible;
                         artistText.Visibility = Visibility.Visible;
-                        Grid.SetRow(titleText, 0);
-                        Grid.SetRow(artistText, 0);
                         Grid.SetColumn(titleText, 2);
                         Grid.SetColumn(artistText, 0);
                         break;
                     case 1:
                         dividerText.Visibility = Visibility.Visible;
                         artistText.Visibility = Visibility.Visible;
-                        Grid.SetRow(titleText, 0);
-                        Grid.SetRow(artistText, 0);
                         Grid.SetColumn(titleText, 0);
                         Grid.SetColumn(artistText, 2);
                         break;
