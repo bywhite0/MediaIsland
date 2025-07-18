@@ -8,6 +8,7 @@ namespace MediaIsland.Components
         bool _isHideWhenPaused = false;
         bool _isShowSource = true;
         bool _isShowSourceName = true;
+        int _sourceIconRadius = 16;
         bool _isShowAlbumArt = true;
         bool _isShowPlaybackStatus = false;
         int _subInfoType = 0;
@@ -54,6 +55,16 @@ namespace MediaIsland.Components
             {
                 if (_isShowSourceName == value) return;
                 _isShowSourceName = value;
+                OnPropertyChanged();
+            }
+        }
+        public int SourceIconRadius
+        {
+            get => _sourceIconRadius;
+            set
+            {
+                if (_sourceIconRadius == value) return;
+                _sourceIconRadius = value;
                 OnPropertyChanged();
             }
         }

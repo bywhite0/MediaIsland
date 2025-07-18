@@ -4,6 +4,7 @@
                   xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
                   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+                  xmlns:md="http://materialdesigninxaml.net/winfx/xaml/themes"
                   xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
                   xmlns:local="clr-namespace:MediaIsland.Components"
                   mc:Ignorable="d" 
@@ -24,6 +25,16 @@
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <ci:SettingsControl Grid.Row="0" IconGlyph="PlaylistMusicOutline" Header="显示当前播放源名称" Description="显示当前媒体的播放源名称。" IsOn="{Binding Settings.IsShowSourceName, Mode=TwoWay}" Margin="0 0 0 12"/>
+                        <ci:SettingsControl Grid.Row="1" IconGlyph="BorderRoundCorners" Header="图标圆角半径" Description="播放源图标的圆角半径，默认为圆形。" >
+                            <ci:SettingsControl.Switcher>
+                                <Slider Width="160" Minimum="0" Maximum="16" 
+                                        Value="{Binding Settings.SourceIconRadius, Mode=TwoWay}"
+                                        TickFrequency="0.5"
+                                        IsSnapToTickEnabled="True"
+                                        AutoToolTipPlacement="BottomRight"
+                                        AutoToolTipPrecision="1" />
+                            </ci:SettingsControl.Switcher>
+                        </ci:SettingsControl>
                     </Grid>
                 </Expander>
             </md:Card>
@@ -33,13 +44,13 @@
                     Description="切换标题下方的信息显示。"
                     Header="次要信息"
                     IconGlyph="InfoCircleOutline">
-              <ci:SettingsCard.Switcher>
-              	<ComboBox MinWidth="110" SelectedIndex="{Binding Settings.SubInfoType}">
-              		<ComboBoxItem>艺术家</ComboBoxItem>
-              		<ComboBoxItem>时间轴（如果可用）</ComboBoxItem>
-                        </ComboBox>
-                    </ci:SettingsCard.Switcher>
-                </ci:SettingsCard>
+                <ci:SettingsCard.Switcher>
+                    <ComboBox MinWidth="110" SelectedIndex="{Binding Settings.SubInfoType}">
+                        <ComboBoxItem>艺术家</ComboBoxItem>
+                        <ComboBoxItem>时间轴（如果可用）</ComboBoxItem>
+                    </ComboBox>
+                </ci:SettingsCard.Switcher>
+            </ci:SettingsCard>
             <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
                 Powered by MediaIsland
             </Label>
