@@ -21,7 +21,7 @@ namespace MediaIsland.Components
     public partial class NowPlayingComponent : ComponentBase<NowPlayingComponentConfig>
     {
         //private string titleLabel, artistLabel, albumLabel, timeLabel, sourceLabel;
-        static MediaManager? mediaManager;
+        static MediaManager mediaManager = new();
         //TimeSpan currentDuration;
         //TimeSpan currentPosition;
         private ILogger<NowPlayingComponent> Logger { get; }
@@ -43,6 +43,7 @@ namespace MediaIsland.Components
         void NowPlayingComponent_OnUnloaded(object sender, RoutedEventArgs e)
         {
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
+            mediaManager.Dispose();
         }
 
         private async void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
