@@ -1,0 +1,46 @@
+﻿<ci:ComponentBase x:Class="MediaIsland.Components.NowPlayingComponent"
+                  x:TypeArguments="local:NowPlayingComponentConfig"
+                  xmlns="https://github.com/avaloniaui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                  xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+                  xmlns:converters="using:MediaIsland.Converters"
+                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+                  xmlns:local="clr-namespace:MediaIsland.Components"
+                  mc:Ignorable="d" 
+                  d:DesignHeight="450" d:DesignWidth="800"
+                  Loaded="NowPlayingComponent_OnLoaded"
+                  Unloaded="NowPlayingComponent_OnUnloaded">
+    <ci:ComponentBase.Resources>
+        <converters:DoubleToCornerRadiusConverter x:Key="DoubleToCornerRadiusConverter" />
+    </ci:ComponentBase.Resources>
+    <Grid x:Name="MediaGrid" ColumnDefinitions="Auto,Auto,Auto,Auto" Margin="0" HorizontalAlignment="Center" VerticalAlignment="Center" DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:NowPlayingComponent}}">
+        <StackPanel Name="StatusStackPanel" Grid.Column="0" Margin="0" Orientation="Horizontal" IsVisible="{Binding Settings.IsShowPlaybackStatus}">
+            <ci:FluentIcon x:Name="StatusIcon" Glyph="&#xEDB8;" VerticalAlignment="Center" Margin="0 0 4 4" />
+        </StackPanel>
+        <StackPanel Name="CoverStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" IsVisible="{Binding Settings.IsShowAlbumArt}">
+            <Grid Name="CoverGrid" Margin="0" ClipToBounds="True" Width="28" Height="28">
+                <ci:FluentIcon Name="CoverPlaceholder" Glyph="&#xEBC9;" VerticalAlignment="Center" Margin="0" IsVisible="false" FontSize="22" />
+                <Border CornerRadius="3" ClipToBounds="True">
+                    <Image x:Name="AlbumArt" Stretch="UniformToFill" />
+                </Border>
+            </Grid>
+        </StackPanel>
+        <StackPanel Name="InfoStackPanel" Grid.Column="2" Margin="4 0 0 0" Orientation="Vertical" VerticalAlignment="Center">
+            <TextBlock x:Name="TitleText" HorizontalAlignment="Left" VerticalAlignment="Center"  FontSize="14" Margin="0" d:LayoutOverrides="TopPosition, BottomPosition" />
+            <TextBlock x:Name="ArtistText" HorizontalAlignment="Left" VerticalAlignment="Center" FontSize="10" Margin="0" />
+            <TextBlock x:Name="TimeText" HorizontalAlignment="Left" VerticalAlignment="Center"  FontSize="10" Margin="0" IsVisible="false"/>
+        </StackPanel>
+        <StackPanel Name="SourceStackPanel" Grid.Column="3" Margin="4 0 0 0" Orientation="Vertical" VerticalAlignment="Center" IsVisible="{Binding Settings.IsShowSource}">
+            <!-- <Border Name="SourceIconBorder" VerticalAlignment="Center" CornerRadius="{Binding Settings.SourceIconRadius, Converter={StaticResource DoubleToCornerRadiusConverter}}"  Margin="0" ClipToBounds="True" Width="22" Height="22"> -->
+            <!--     <Image x:Name="SourceIcon" Stretch="UniformToFill" /> -->
+            <!-- </Border> -->
+            <TextBlock x:Name="SourceText" HorizontalAlignment="Center" VerticalAlignment="Bottom" FontSize="8" IsVisible="{Binding Settings.IsShowSourceName}"/>
+        </StackPanel>
+        
+
+        <!--<Grid>
+            <TextBlock x:Name="albumText" HorizontalAlignment="Center" VerticalAlignment="Center"  Grid.Column="2" FontSize="8" />
+        </Grid>-->
+    </Grid>
+</ci:ComponentBase>

@@ -1,0 +1,74 @@
+﻿<ci:ComponentBase x:Class="MediaIsland.Components.NowPlayingComponentSettings"
+                  x:TypeArguments="local:NowPlayingComponentConfig"
+                  xmlns:ci="http://classisland.tech/schemas/xaml/core" 
+                  xmlns="https://github.com/avaloniaui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+                  xmlns:controls="using:FluentAvalonia.UI.Controls"
+                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+                  xmlns:local="clr-namespace:MediaIsland.Components"
+                  mc:Ignorable="d" 
+                  d:DesignHeight="450" d:DesignWidth="800">
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:NowPlayingComponentSettings}}">
+        <StackPanel>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE817;}" Header="暂停时隐藏组件" Description="当当前媒体暂停时，隐藏本组件。由于 ClassIsland 的设计特性，隐藏后仍存在一段空白。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsHideWhenPaused, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE9B2;}" Header="显示专辑封面" Description="显示当前播放的专辑封面。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowAlbumArt, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander Foreground="{DynamicResource MaterialDesignBody}"
+                                       IsExpanded="{Binding Settings.IsShowSource, Mode=OneWay}"
+                                       Header="显示当前播放源"
+                                       Description="显示当前媒体的播放源。"
+                                       IconSource="{ci:FluentIconSource &#xF4B6;}"
+                                       IsEnabled="False">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowSource, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+                <controls:SettingsExpanderItem Content="显示当前播放源名称" 
+                                               Description="显示当前媒体的播放源名称。"
+                                               IconSource="{ci:FluentIconSource &#xEBDB;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <ToggleSwitch IsChecked="{Binding Settings.IsShowSourceName, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+                <controls:SettingsExpanderItem Content="图标圆角半径" 
+                                               Description="播放源图标的圆角半径，默认为圆形。"
+                                               IconSource="{ci:FluentIconSource &#xF031;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <Slider Width="160" Minimum="0" Maximum="16" 
+                                Value="{Binding Settings.SourceIconRadius, Mode=TwoWay}"
+                                TickFrequency="0.5"
+                                IsSnapToTickEnabled="True"
+                                Classes="auto-tooltip"
+                                IsEnabled="false"/>
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBCB;}" Header="显示当前播放状态" Description="显示当前媒体的播放状态，关闭则显示音符图标。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander Margin="0,0,0,6"
+                                       Description="切换标题下方的信息显示。"
+                                       Header="次要信息"
+                                       IconSource="{ci:FluentIconSource &#xE9E4;}">
+                <controls:SettingsExpander.Footer>
+                    <ComboBox MinWidth="110" SelectedIndex="{Binding Settings.SubInfoType}">
+                        <ComboBoxItem>艺术家</ComboBoxItem>
+                        <ComboBoxItem>时间轴（如果可用）</ComboBoxItem>
+                    </ComboBox>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
+                Powered by MediaIsland
+            </Label>
+        </StackPanel>
+    </ScrollViewer>
+</ci:ComponentBase>

@@ -9,26 +9,20 @@
 		<EnableDynamicLoading>True</EnableDynamicLoading>
 	</PropertyGroup>
 
-	<PropertyGroup>
-		<ClassIslandPluginSdkVersion>1.6.0.5</ClassIslandPluginSdkVersion>
-	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="ClassIsland.PluginSdk" Version="$(ClassIslandPluginSdkVersion)">
+		<PackageReference Include="ClassIsland.PluginSdk" Version="1.7.103-dev-v2">
 			<ExcludeAssets>runtime; native</ExcludeAssets>
 		</PackageReference>
 		<PackageReference Include="Sentry" Version="5.8.1" />
-		<!--<PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.18362.2007" />-->
 		<PackageReference Include="WindowsAPICodePackShell" Version="8.0.8" />
 	</ItemGroup>
+	
+
 
 	<ItemGroup>
-		<Resource Include="Assets\**" />
-	</ItemGroup>
-	
-	<ItemGroup>
 		<None Update="ThirdPartyLicenses.txt">
-		  <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
 		<None Update="manifest.yml">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -40,4 +34,10 @@
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
+
+
+	<ItemGroup>
+	  <AvaloniaResource Include="Assets\**" />
+	</ItemGroup>
+
 </Project>

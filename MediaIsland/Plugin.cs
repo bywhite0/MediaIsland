@@ -6,7 +6,6 @@ using ClassIsland.Core.Extensions.Registry;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
-using MediaIsland.SettingsPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -26,7 +25,6 @@ namespace MediaIsland
             {
                 ConfigureFileHelper.SaveConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"), Settings);
             };
-            services.AddSettingsPage<IntegrationSettingsPage>();
 #if !DEBUG
             SentrySdk.Init(o =>
             {

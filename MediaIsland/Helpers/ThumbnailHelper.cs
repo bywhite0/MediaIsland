@@ -1,21 +1,20 @@
 ﻿// Modified from https://github.com/DubyaDude/WindowsMediaController/blob/master/Sample.UI/MainWindow.xaml.cs#L174-L215
 // Copyright (c) 2020 DubyaDude
 // Licensed under the MIT License.
-using System.Drawing;
+// using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using Windows.Storage.Streams;
+using Avalonia.Media.Imaging;
 using Microsoft.Extensions.Logging;
-using System.Windows;
+using SkiaSharp;
 
 namespace MediaIsland.Helpers
 {
     internal static class ThumbnailHelper
     {
         static ILogger<Plugin>? logger;
-        internal static async Task<ImageSource?> GetThumbnail(IRandomAccessStreamReference? thumbnail, bool convertToPng = true, bool isSourceAppSpotify = false)
+        internal static async Task<Bitmap?> GetThumbnail(IRandomAccessStreamReference? thumbnail, bool convertToPng = true, bool isSourceAppSpotify = false)
         {
             if (thumbnail == null)
                 return null;
@@ -35,76 +34,15 @@ namespace MediaIsland.Helpers
 
                 byte[] imageBytes = thumbnailBytes;
 
-                if (convertToPng)
-                {
-                    try
-                    {
-                        using var fileMemoryStream = new MemoryStream(thumbnailBytes);
-                        using var thumbnailBitmap = (Bitmap)Bitmap.FromStream(fileMemoryStream);
-
-                        if (!thumbnailBitmap.RawFormat.Equals(System.Drawing.Imaging.ImageFormat.Png))
-                        {
-                            using var pngMemoryStream = new MemoryStream();
-                            thumbnailBitmap.Save(pngMemoryStream, System.Drawing.Imaging.ImageFormat.Png);
-                            imageBytes = pngMemoryStream.ToArray();
-                        }
-                    }
-                    catch (Exception ex) when (ex is ArgumentException or IOException)
-                    {
-                        logger?.LogError($"将封面转换为 PNG 失败: {ex.Message}");
-                    }
-                }
-
-                var image = new BitmapImage();
-                using (var ms = new MemoryStream(imageBytes))
-                {
-                    image.BeginInit();
-                    image.CacheOption = BitmapCacheOption.OnLoad;
-                    image.StreamSource = ms;
-                    try
-                    {
-                        image.EndInit();
-                    }
-                    catch (NotSupportedException ex)
-                    {
-                        logger?.LogError($"加载图片失败: {ex.Message}");
-                        return null;
-                    }
-                }
+                var ms = new MemoryStream(imageBytes);
+                var image = new Bitmap(ms);
                 // 裁剪 Spotify 封面
                 if (isSourceAppSpotify)
                 {
-                    CroppedBitmap croppedBitmap = new(image, new Int32Rect(33, 0, 234, 234));
-                    // 创建一个新的BitmapImage对象
-                    var croppedImage = new BitmapImage();
-
-                    // 将CroppedBitmap保存到MemoryStream
-                    PngBitmapEncoder encoder = new();
-                    encoder.Frames.Add(BitmapFrame.Create(croppedBitmap));
-                    using (var croppedMs = new MemoryStream())
-                    {
-                        encoder.Save(croppedMs);
-                        croppedMs.Position = 0; // 重置流位置到开头
-                        croppedImage.BeginInit();
-                        croppedImage.CacheOption = BitmapCacheOption.OnLoad;
-                        croppedImage.StreamSource = croppedMs;
-                        try
-                        {
-                            croppedImage.EndInit();
-                        }
-                        catch (NotSupportedException ex)
-                        {
-                            logger?.LogError($"加载图片失败: {ex.Message}");
-                            return null;
-                        }
-                    }
-
-                    // 使用裁剪后的图片
-                    image = croppedImage;
+                    var cropRect = new SKRectI(33, 0, 234, 234);
+                    return CropBitmap(ms, cropRect);
                 }
 
-
-                image.Freeze();
                 return image;
             }
             catch (Exception ex) when (ex is IOException or COMException)
@@ -112,6 +50,38 @@ namespace MediaIsland.Helpers
                 logger?.LogError($"处理封面时发生错误: {ex.Message}");
                 return null;
             }
+        }
+
+
+        /// <summary>
+        /// 将图像从流中加载，并裁剪指定区域。
+        /// </summary>
+        /// <param name="inputStream">原始图像流</param>
+        /// <param name="cropRect">裁剪区域（单位像素）</param>
+        internal static Bitmap CropBitmap(Stream inputStream, SKRectI cropRect)
+        {
+            inputStream.Seek(0, SeekOrigin.Begin);
+            using var skStream = new SKManagedStream(inputStream);
+            using var codec = SKCodec.Create(skStream);
+            using var originalBitmap = SKBitmap.Decode(codec);
+
+            using var croppedBitmap = new SKBitmap(cropRect.Width, cropRect.Height);
+            using (var canvas = new SKCanvas(croppedBitmap))
+            {
+                var srcRect = cropRect;
+                var dstRect = new SKRect(0, 0, cropRect.Width, cropRect.Height);
+                canvas.DrawBitmap(originalBitmap, srcRect, dstRect);
+            }
+
+            using var croppedStream = new MemoryStream();
+            using (var skImage = SKImage.FromBitmap(croppedBitmap))
+            using (var data = skImage.Encode(SKEncodedImageFormat.Png, 100))
+            {
+                data.SaveTo(croppedStream);
+            }
+
+            croppedStream.Seek(0, SeekOrigin.Begin);
+            return new Bitmap(croppedStream);
         }
     }
 }

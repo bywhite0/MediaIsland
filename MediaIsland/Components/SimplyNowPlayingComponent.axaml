@@ -1,0 +1,32 @@
+﻿<ci:ComponentBase x:Class="MediaIsland.Components.SimplyNowPlayingComponent"
+                  x:TypeArguments="local:SimplyNowPlayingComponentConfig"
+                  xmlns="https://github.com/avaloniaui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                  xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+                  xmlns:local="clr-namespace:MediaIsland.Components"
+                  mc:Ignorable="d" 
+                  d:DesignHeight="450" d:DesignWidth="800"
+                  Loaded="SimplyNowPlayingComponent_OnLoaded"
+                  Unloaded="SimplyNowPlayingComponent_OnUnloaded">
+    <Grid x:Name="MediaGrid" ColumnDefinitions="Auto,Auto" HorizontalAlignment="Center" DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:SimplyNowPlayingComponent}}" IsVisible="{Binding !Settings.IsHideWhenPaused}">
+        <StackPanel Name="StatusStackPanel" Grid.Column="0" Margin="0" Orientation="Horizontal">
+            <ci:FluentIcon x:Name="StatusIcon" Glyph="&#xEDB8;" IsVisible="{Binding Settings.IsShowPlaybackStatus}" VerticalAlignment="Center" Margin="0 0 4 0" />
+            <ci:FluentIcon x:Name="NoteIcon" Glyph="&#xEBC9;" IsVisible="{Binding !Settings.IsShowPlaybackStatus}" VerticalAlignment="Center" Margin="0 0 4 0" />
+        </StackPanel>
+        <StackPanel Name="InfoStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" VerticalAlignment="Center" IsVisible="{Binding !Settings.IsDualLineStyle}">
+            <Grid TextElement.FontSize="{DynamicResource MainWindowBodyFontSize}" ColumnDefinitions="Auto,Auto,Auto">
+                <TextBlock x:Name="TitleText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0" Grid.Column="0" />
+                <TextBlock x:Name="DividerText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4 0" Grid.Column="1">-</TextBlock>
+                <TextBlock x:Name="ArtistText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0" Grid.Column="2" />
+            </Grid>
+        </StackPanel>
+        <StackPanel Name="DualLineInfoStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" VerticalAlignment="Center" IsVisible="{Binding Settings.IsDualLineStyle}">
+            <Grid RowDefinitions="Auto,Auto">
+                <TextBlock x:Name="DualTitleText" VerticalAlignment="Center" Margin="0" Grid.Row="0" FontSize="14" />
+                <TextBlock x:Name="DualArtistText" VerticalAlignment="Center" Margin="0" Grid.Row="1" FontSize="10" />
+            </Grid>
+        </StackPanel>
+    </Grid>
+</ci:ComponentBase>

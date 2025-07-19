@@ -1,4 +1,6 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using Avalonia;
+using CommunityToolkit.Mvvm.ComponentModel;
+using Avalonia.Media;
 
 namespace MediaIsland.Components
 {
@@ -6,9 +8,9 @@ namespace MediaIsland.Components
     {
 
         bool _isHideWhenPaused = false;
-        bool _isShowSource = true;
+        bool _isShowSource = false;
         bool _isShowSourceName = true;
-        int _sourceIconRadius = 16;
+        double _sourceIconRadius = 16.0;
         bool _isShowAlbumArt = true;
         bool _isShowPlaybackStatus = false;
         int _subInfoType = 0;
@@ -58,12 +60,12 @@ namespace MediaIsland.Components
                 OnPropertyChanged();
             }
         }
-        public int SourceIconRadius
+        public double SourceIconRadius
         {
             get => _sourceIconRadius;
             set
             {
-                if (_sourceIconRadius == value) return;
+                if (value.Equals(_sourceIconRadius)) return;
                 _sourceIconRadius = value;
                 OnPropertyChanged();
             }

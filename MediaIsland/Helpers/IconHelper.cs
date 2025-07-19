@@ -3,9 +3,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
+using Avalonia.Platform;
 using Microsoft.WindowsAPICodePack.Shell;
 using PixelFormat = System.Drawing.Imaging.PixelFormat;
 
@@ -35,7 +33,7 @@ namespace MediaIsland.Helpers
         [DllImport("user32.dll")]
         private static extern bool DestroyIcon(IntPtr hIcon);
 
-        public static ImageSource? GetAppIcon(string userModelId)
+        public static Avalonia.Media.Imaging.Bitmap? GetAppIcon(string userModelId)
         {
             try
             {
@@ -48,7 +46,7 @@ namespace MediaIsland.Helpers
                         var shellObj = ShellObject.FromParsingName($"shell:appsFolder\\{userModelId}");
                         if (shellObj?.Thumbnail != null)
                         {
-                            return IconToImageSourceConverter(shellObj.Thumbnail.LargeIcon);
+                            return IconToBitmapConverter(shellObj.Thumbnail.LargeIcon);
                         }
                     }
                     catch
@@ -71,7 +69,7 @@ namespace MediaIsland.Helpers
                                 string logoPath = Path.Combine(
                                     Path.GetDirectoryName(manifestPath),
                                     logoNode.InnerText);
-                                return IconToImageSourceConverter(new Icon(logoPath));
+                                return IconToBitmapConverter(new Icon(logoPath));
                             }
                         }
                     }
@@ -87,7 +85,7 @@ namespace MediaIsland.Helpers
                 if (processes.Length > 0)
                 {
                     string exePath = processes[0].MainModule.FileName;
-                    return IconToImageSourceConverter(GetIconFromPath(exePath, SHGFI_LARGEICON));
+                    return IconToBitmapConverter(GetIconFromPath(exePath, SHGFI_LARGEICON));
                 }
 
                 // 通过常见安装路径搜索
@@ -101,7 +99,7 @@ namespace MediaIsland.Helpers
                     string possibleExe = Path.Combine(path, $"{processName}.exe");
                     if (File.Exists(possibleExe))
                     {
-                        return IconToImageSourceConverter(GetIconFromPath(possibleExe, SHGFI_LARGEICON));
+                        return IconToBitmapConverter(GetIconFromPath(possibleExe, SHGFI_LARGEICON));
                     }
 
                     // 处理带空格的文件名
@@ -109,14 +107,14 @@ namespace MediaIsland.Helpers
                     var files = Directory.GetFiles(path, $"{processName}*.exe");
                     if (files.Length > 0)
                     {
-                        return IconToImageSourceConverter(GetIconFromPath(files[0], SHGFI_LARGEICON));
+                        return IconToBitmapConverter(GetIconFromPath(files[0], SHGFI_LARGEICON));
                     }
                 }
 
                 var AppIDPath = AppPathFindHelper.FindExecutablePathByAppUserModelID(userModelId);
                 if (AppIDPath != null)
                 {
-                    return IconToImageSourceConverter(GetIconFromPath(AppIDPath, SHGFI_LARGEICON));
+                    return IconToBitmapConverter(GetIconFromPath(AppIDPath, SHGFI_LARGEICON));
                 }
 
                 // 尝试获取内部资源
@@ -130,15 +128,15 @@ namespace MediaIsland.Helpers
                 }
                 catch
                 {
-                    return IconToImageSourceConverter(SystemIcons.Application);
+                    return IconToBitmapConverter(SystemIcons.Application);
                 }
 
                 // 最终回退方案
-                return IconToImageSourceConverter(SystemIcons.Application);
+                return IconToBitmapConverter(SystemIcons.Application);
             }
             catch
             {
-                return IconToImageSourceConverter(SystemIcons.Application);
+                return IconToBitmapConverter(SystemIcons.Application);
             }
         }
 
@@ -157,39 +155,33 @@ namespace MediaIsland.Helpers
             return null;
         }
 
-        private static ImageSource? GetInternalIcon(string AppUserModelId)
+        private static Avalonia.Media.Imaging.Bitmap? GetInternalIcon(string AppUserModelId)
         {
             try
             {
-                return new BitmapImage(new Uri($"pack://application:,,,/MediaIsland;;;component/Assets/SourceAppIcons/{AppUserModelId}.png", UriKind.RelativeOrAbsolute));
+                return new Avalonia.Media.Imaging.Bitmap(AssetLoader.Open(new Uri($"avares://MediaIsland/Assets/SourceAppIcons/{AppUserModelId}.png", UriKind.RelativeOrAbsolute)));
             }
             catch
             {
                 return null;
             }
         }
-        public static ImageSource IconToImageSourceConverter(Icon icon)
+        public static Avalonia.Media.Imaging.Bitmap IconToBitmapConverter(Icon icon)
         {
             try
             {
-                using (Bitmap bitmap = icon.ToBitmap())
+                using var bitmap = icon.ToBitmap();
+                using var argbBitmap = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb);
+                using (var g = Graphics.FromImage(argbBitmap))
                 {
-                    using (Bitmap argbBitmap = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb))
-                    {
-                        using (Graphics g = Graphics.FromImage(argbBitmap))
-                        {
-                            g.DrawImage(bitmap, new Rectangle(0, 0, argbBitmap.Width, argbBitmap.Height));
-                        }
+                    g.DrawImage(bitmap, new Rectangle(0, 0, argbBitmap.Width, argbBitmap.Height));
+                }
 
-                        using (MemoryStream stream = new MemoryStream())
-                        {
-                            argbBitmap.Save(stream, ImageFormat.Png);
-                            stream.Seek(0, SeekOrigin.Begin);
-
-                            PngBitmapDecoder decoder = new PngBitmapDecoder(stream, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-                            return decoder.Frames[0];
-                        }
-                    }
+                using (var stream = new MemoryStream())
+                {
+                    argbBitmap.Save(stream, ImageFormat.Png);
+                    stream.Seek(0, SeekOrigin.Begin);
+                    return new Avalonia.Media.Imaging.Bitmap(stream);
                 }
             }
             catch (ArgumentNullException)
