@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'MediaIsland/**'
+  workflow_dispatch: 
 
 jobs:
   build_app:
@@ -11,19 +12,21 @@ jobs:
     name: Build
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: List files
-        run: ls
+        uses: actions/checkout@v4
 
       # Install the .NET Core workload
       - name: Install .NET Core
-        uses: actions/setup-dotnet@v3
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 8.x
+          
+      - name: Cache NuGet Packages
+        uses: actions/cache@v4
+        with: 
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**.*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
 
       - name: Build
         run: pwsh -ep bypass ./Tools/Publish.ps1
