@@ -40,6 +40,7 @@ namespace MediaIsland.SettingsPages
             Settings = new PluginSettings();
             InitializeComponent();
             DataContext = this;
+            // TODO: Remove after ExtraIsland's new version release
             if (Settings.IsLXMusicLyricForwarderEnabled)
             {
                 if (IsLyricsIslandInstalled() || IsExtraIslandInstalled())
@@ -62,6 +63,7 @@ namespace MediaIsland.SettingsPages
         {
             return IsLyricsIslandInstalled() || IsExtraIslandInstalled();
         }
+        // TODO: Remove after ExtraIsland's new version release
         void LXMLFSwitcher_Click(object sender, RoutedEventArgs e)
         {
 

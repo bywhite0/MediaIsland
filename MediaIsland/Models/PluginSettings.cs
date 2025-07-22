@@ -4,6 +4,7 @@ namespace MediaIsland.Models
 {
     public class PluginSettings : ObservableRecipient
     {
+        // TODO: Remove after ExtraIsland's new version release
         private bool _IsLXMusicLyricForwarderEnabled = false;
         int _LXMusicAPIPort = 23330;
 
