@@ -26,7 +26,7 @@ namespace MediaIsland
             {
                 ConfigureFileHelper.SaveConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"), Settings);
             };
-            services.AddSettingsPage<IntegrationSettingsPage>();
+            services.AddSettingsPage<GeneralSettingsPage>();
 #if !DEBUG
             SentrySdk.Init(o =>
             {

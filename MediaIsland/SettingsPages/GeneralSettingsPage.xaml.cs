@@ -22,19 +22,19 @@ using MediaIsland.Models;
 namespace MediaIsland.SettingsPages
 {
     /// <summary>
-    /// IntegrationSettingsPage.xaml 的交互逻辑
+    /// GeneralSettingsPage.xaml 的交互逻辑
     /// </summary>
     [SettingsPageInfo(
-        "mediaisland.integration",
-        "MediaIsland 集成",
-        PackIconKind.Select,
-        PackIconKind.SelectAll,
+        "mediaisland.general",
+        "MediaIsland",
+        PackIconKind.MusicBoxOutline,
+        PackIconKind.MusicBox,
         SettingsPageCategory.External)]
-    public partial class IntegrationSettingsPage : SettingsPageBase
+    public partial class GeneralSettingsPage
     {
         public Plugin Plugin { get; }
         public PluginSettings Settings { get; }
-        public IntegrationSettingsPage(Plugin plugin)
+        public GeneralSettingsPage(Plugin plugin)
         {
             Plugin = plugin;
             Settings = new PluginSettings();
