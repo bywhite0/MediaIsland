@@ -37,6 +37,7 @@ namespace MediaIsland
                     o.Dsn = "https://b86194d67d9ae75813f08deff24ce4f2@o4503936977666048.ingest.us.sentry.io/4509413290606592";
                     o.TracesSampleRate = 1.0;
                     o.Release = Info.Manifest.Version;
+                    o.AutoSessionTracking = true;
                 });
                 ClassIsland.Core.AppBase.Current.DispatcherUnhandledException += (_,e) => {
                     if (e.Exception.StackTrace == null) SentrySdk.CaptureException(e.Exception);
