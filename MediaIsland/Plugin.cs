@@ -16,11 +16,13 @@ namespace MediaIsland
     public class Plugin : PluginBase
     {
         public PluginSettings Settings { get; set; } = new();
+        public static string? globalConfigFolder;
         public override void Initialize(HostBuilderContext context, IServiceCollection services)
         {
             Console.WriteLine("[MI]正在加载 MediaIsland...");
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
+            globalConfigFolder = PluginConfigFolder; 
             Settings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"));
             Settings.PropertyChanged += (sender, args) =>
             {
