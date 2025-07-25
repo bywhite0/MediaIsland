@@ -37,7 +37,7 @@ namespace MediaIsland.SettingsPages
         public GeneralSettingsPage(Plugin plugin)
         {
             Plugin = plugin;
-            Settings = new PluginSettings();
+            Settings = Plugin.Settings;
             InitializeComponent();
             DataContext = this;
             // TODO: Remove after ExtraIsland's new version release

@@ -20,7 +20,6 @@
         <StackPanel Style="{StaticResource SettingsPageStackPanelStyle}">
             <ci:InfoCard IconKind="Alert"
                      Title="实验性功能提示"
-                     Content="本页面功能尚未开发完毕，设置不会保存，请谨慎使用。"/>
                      Content="本页面部分功能尚未开发完毕，请谨慎使用。"/>
             <ci:IconText Kind="CogOutline" Text="与其他应用集成" Margin="0 0 0 8" />
             <DockPanel Margin="8 4">
