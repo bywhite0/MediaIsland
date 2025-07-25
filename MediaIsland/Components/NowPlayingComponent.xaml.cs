@@ -1,12 +1,14 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
 using MaterialDesignThemes.Wpf;
 using MediaIsland.Helpers;
 using Microsoft.Extensions.Logging;
 using Windows.Media.Control;
+using ClassIsland.Shared.Helpers;
+using MediaIsland.Models;
 using WindowsMediaController;
 using static WindowsMediaController.MediaManager;
 
@@ -28,10 +30,13 @@ namespace MediaIsland.Components
 
         private static MediaSession? currentSession = null;
 
+        private PluginSettings globalSettings;
+
         public NowPlayingComponent(ILogger<NowPlayingComponent> logger)
         {
             InitializeComponent();
             Logger = logger;
+            globalSettings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
         }
 
         void NowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
@@ -155,19 +160,30 @@ namespace MediaIsland.Components
                         try
                         {
                             string sourceApp = session.ControlSession.SourceAppUserModelId;
-                            var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
-                            var timeline = session.ControlSession.GetTimelineProperties();
-                            var playbackInfo = session.ControlSession.GetPlaybackInfo();
-                            Logger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
-                            await Dispatcher.InvokeAsync(async () =>
+                            if (IsSourceEnabled(sourceApp, globalSettings.MediaSourceList))
                             {
-                                sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
-                                sourceIcon.ImageSource = IconHelper.GetAppIcon(sourceApp);
-                                await RefreshMediaProperties(session);
-                                await RefreshPlaybackInfo(session);
-                                await RefreshTimelineProperties(session);
-                            });
-                            
+                                var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
+                                var timeline = session.ControlSession.GetTimelineProperties();
+                                var playbackInfo = session.ControlSession.GetPlaybackInfo();
+                                Logger!.LogTrace(
+                                    $"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
+                                await Dispatcher.InvokeAsync(async () =>
+                                {
+                                    sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
+                                    sourceIcon.ImageSource = IconHelper.GetAppIcon(sourceApp);
+                                    await RefreshMediaProperties(session);
+                                    await RefreshPlaybackInfo(session);
+                                    await RefreshTimelineProperties(session);
+                                });
+                            }
+                            else
+                            {
+                                Logger!.LogInformation("当前 SMTC 会话 [{sourceApp}] 已禁用，自动隐藏", sourceApp);
+                                await Dispatcher.InvokeAsync(() =>
+                                {
+                                    MediaGrid.Visibility = Visibility.Collapsed;
+                                });
+                            }
                         }
                         catch
                         {
@@ -470,6 +486,25 @@ namespace MediaIsland.Components
                 await Dispatcher.InvokeAsync(async () => await RefreshTimelineProperties(sender));
             }
             catch { }
+        }
+
+        private bool IsSourceEnabled(string appUserModelId, IEnumerable<MediaSource> sources)
+        {
+            foreach (var source in sources)
+            {
+                try
+                {
+                    if (appUserModelId.Equals(source.Source))
+                    {
+                        return source.IsEnabled;
+                    }
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+            return true;
         }
     }
 }
