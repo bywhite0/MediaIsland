@@ -106,6 +106,10 @@
                     </StackPanel>
                 </Expander>
             </md:Card>
+            <ci:SettingsCard Header="匿名使用情况分析"
+                             IconGlyph="Antenna"
+                             Description="本插件使用 Sentry 收集与本插件相关的使用情况与错误信息，以帮助改善本插件，相关信息将被匿名上传。此功能不会收集您的个人信息。"
+                             IsOn="{Binding Settings.IsTodayEatSentry, Mode=TwoWay}" />
             <Separator Margin="0 16 0 8"/>
             <ci:IconText Kind="CogOutline" Text="与其他应用集成" Margin="0 0 0 8" />
             <DockPanel Margin="8 4">

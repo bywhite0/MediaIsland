@@ -32,6 +32,19 @@ namespace MediaIsland.Models
 
         public ObservableCollection<MediaSource> MediaSourceList { get; set; } = [];
         
+        private bool _isTodayEatSentry = true;
+
+        public bool IsTodayEatSentry
+        {
+            get => _isTodayEatSentry;
+            set
+            {
+                if (_isTodayEatSentry == value) return;
+                _isTodayEatSentry = value;
+                OnPropertyChanged();
+            }
+        }
+
     }
     public class MediaSource : ObservableObject
     {
