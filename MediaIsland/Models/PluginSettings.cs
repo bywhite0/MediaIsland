@@ -1,4 +1,5 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace MediaIsland.Models
 {
@@ -25,6 +26,36 @@ namespace MediaIsland.Models
             {
                 if (_LXMusicAPIPort == value) return;
                 _LXMusicAPIPort = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public ObservableCollection<MediaSource> MediaSourceList { get; set; } = [];
+        
+    }
+    public class MediaSource : ObservableObject
+    {
+        private string _source = string.Empty;
+        private bool _isEnabled = true;
+
+        public string Source
+        {
+            get => _source;
+            set
+            {
+                if (_source == value) return;
+                _source = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set
+            {
+                if (_isEnabled == value) return;
+                _isEnabled = value;
                 OnPropertyChanged();
             }
         }

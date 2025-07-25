@@ -1,20 +1,12 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
-using ClassIsland.Core.Abstractions.Controls;
+using Windows.Media.Control;
 using ClassIsland.Core.Attributes;
+using ClassIsland.Core.Controls.CommonDialog;
 using ClassIsland.Core.Enums.SettingsWindow;
+using ClassIsland.Shared.Helpers;
 using MaterialDesignThemes.Wpf;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
@@ -34,12 +26,15 @@ namespace MediaIsland.SettingsPages
     {
         public Plugin Plugin { get; }
         public PluginSettings Settings { get; }
+        private GlobalSystemMediaTransportControlsSessionManager sessionManager;
         public GeneralSettingsPage(Plugin plugin)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
             InitializeComponent();
             DataContext = this;
+            sessionManager = GlobalSystemMediaTransportControlsSessionManager.RequestAsync().GetAwaiter().GetResult();
+            sessionManager.SessionsChanged += OnSessionsChanged;
             // TODO: Remove after ExtraIsland's new version release
             if (Settings.IsLXMusicLyricForwarderEnabled)
             {
@@ -48,6 +43,22 @@ namespace MediaIsland.SettingsPages
                     LXMusicsLyricForwarderSwitcher.IsEnabled = true;
                 }
             }
+        }
+
+        private void OnSessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)
+        {
+            if (sessionManager.GetCurrentSession() == null)
+            {
+                return;
+            }
+            var currentSource = sessionManager.GetCurrentSession().SourceAppUserModelId;
+            var sourceItem = new MediaSource
+            {
+                Source = currentSource
+            };
+            if (Settings.MediaSourceList.Any(source => source.Source == currentSource)) return;
+            Settings.MediaSourceList.Add(sourceItem);
+            SaveSettings();
         }
 
         static bool IsLyricsIslandInstalled()
@@ -72,6 +83,49 @@ namespace MediaIsland.SettingsPages
         {
             var LyricsForwarder = new LXMusicLyricsHelper(Settings);
             Task.Run(async () => await LyricsForwarder.LyricsForwarderAsync());
+        }
+
+        private void AddButtonOnClick(object sender,RoutedEventArgs e)
+        {
+            if (sessionManager.GetCurrentSession() == null)
+            {
+                CommonDialog.ShowError("未检测到正在播放的媒体，请播放媒体后再试。");
+                return;
+            }
+            var currentSource = sessionManager.GetCurrentSession().SourceAppUserModelId;
+            var sourceItem = new MediaSource
+            {
+                Source = currentSource
+            };
+            if (Settings.MediaSourceList.All(source => source.Source != currentSource))
+            {
+                Settings.MediaSourceList.Add(sourceItem);
+                SaveSettings();
+            }   
+            else
+            {
+                CommonDialog.ShowError("列表已存在该媒体源，");
+            }
+        }
+
+        private void DeleteButtonOnClick(object sender,RoutedEventArgs e)
+        {
+            Button button = (sender as Button)!;
+            if (button.DataContext is MediaSource item)
+            {
+                Settings.MediaSourceList.Remove(item);
+                SaveSettings();
+            }
+        }
+        
+        private void SaveSettings()
+        {
+            ConfigureFileHelper.SaveConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"), Settings);
+        }
+
+        private void SaveButtonOnClick(object sender, RoutedEventArgs e)
+        {
+            SaveSettings();
         }
     }
 }

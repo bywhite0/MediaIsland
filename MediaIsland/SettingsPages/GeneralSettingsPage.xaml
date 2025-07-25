@@ -21,6 +21,92 @@
             <ci:InfoCard IconKind="Alert"
                      Title="实验性功能提示"
                      Content="本页面部分功能尚未开发完毕，请谨慎使用。"/>
+            <ci:IconText Kind="CogOutline" Text="通用" Margin="0 0 0 8" />
+            <md:Card>
+                <Expander Background="Transparent"
+                          IsExpanded="False"
+                          TextBlock.Foreground="{DynamicResource MaterialDesignBody}">
+                    <Expander.Header>
+                        <ci:SettingsControl IconGlyph="Album"
+                                            Margin="-12 -2 -12 -2"
+                                            Foreground="{DynamicResource MaterialDesignBody}"
+                                            Header="播放源列表"
+                                            Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息，需要重载组件才能生效。"
+                                            HasSwitcher="True">
+                            <ci:SettingsControl.Switcher>
+                                <md:PackIcon
+                                    Kind="ListBox"
+                                    Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                    VerticalAlignment="Center" />
+                            </ci:SettingsControl.Switcher>
+                        </ci:SettingsControl>
+                    </Expander.Header>
+                    <StackPanel Orientation="Vertical">
+                        <!--<ListView Margin="12 6 12 6"
+                                  ItemsSource="{Binding Settings.MediaSourceList, Mode=OneWay}">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Margin" Value="0" />
+                                    <Setter Property="Padding" Value="0" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <ci:SettingsControl IconGlyph="PlayCircleFilled" Header="{Binding Source, Mode=OneWay}">
+                                        <ci:SettingsControl.Switcher>
+                                            <ToggleButton IsChecked="{Binding IsEnabled, Mode=TwoWay}" Checked="ToggleButton_OnChecked" Unchecked="ToggleButton_OnChecked"/>
+                                        </ci:SettingsControl.Switcher>
+                                    </ci:SettingsControl>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>-->
+                        <DataGrid Margin="12,6,70,6"
+                                  IsReadOnly="False"
+                                  AutoGenerateColumns="False"
+                                  CanUserResizeColumns="False"
+                                  CanUserReorderColumns="False"
+                                  CanUserAddRows="False"
+                                  Height="240"
+                                  ItemsSource="{Binding Settings.MediaSourceList, Mode=TwoWay}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="播放源" Width="Auto" MinWidth="60" MaxWidth="400" Binding="{Binding Source}" />
+                                <DataGridCheckBoxColumn Header="启用" Width="60" Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged, NotifyOnSourceUpdated=True}" />
+                                <DataGridTemplateColumn Header="操作" Width="60">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Width="20"
+                                                    Height="20"
+                                                    Margin="0"
+                                                    Padding="4 0"
+                                                    Background="Transparent"
+                                                    BorderBrush="Transparent"
+                                                    Click="DeleteButtonOnClick">
+                                                <md:PackIcon Kind="Delete" Foreground="Red" />
+                                            </Button>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <StackPanel Orientation="Horizontal" Margin="12,0,12,6">
+                            <Button HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource MaterialDesignFlatButton}"
+                                    Click="AddButtonOnClick">
+                                <ci:IconText Text="添加当前播放源" Kind="Add" />
+                            </Button>
+                            <Button HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    Style="{StaticResource MaterialDesignFlatButton}"
+                                    Click="SaveButtonOnClick">
+                                <ci:IconText Text="保存" Kind="ContentSave" />
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </Expander>
+            </md:Card>
+            <Separator Margin="0 16 0 8"/>
             <ci:IconText Kind="CogOutline" Text="与其他应用集成" Margin="0 0 0 8" />
             <DockPanel Margin="8 4">
                 <md:PackIcon Kind="WarningCircleOutline" Height="16" Width="16" />
