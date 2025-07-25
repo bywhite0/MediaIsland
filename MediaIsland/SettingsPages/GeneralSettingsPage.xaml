@@ -22,7 +22,7 @@
                      Title="实验性功能提示"
                      Content="本页面部分功能尚未开发完毕，请谨慎使用。"/>
             <ci:IconText Kind="CogOutline" Text="通用" Margin="0 0 0 8" />
-            <md:Card>
+            <md:Card Margin="0 0 0 8">
                 <Expander Background="Transparent"
                           IsExpanded="False"
                           TextBlock.Foreground="{DynamicResource MaterialDesignBody}">
