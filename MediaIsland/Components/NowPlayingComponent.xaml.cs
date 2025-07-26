@@ -353,7 +353,7 @@ namespace MediaIsland.Components
                                     timeText.Visibility = Visibility.Collapsed;
                                 }
                             }
-                            timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
+                            timeText.Text = (timeline.EndTime.Hours == 0) ? $@"{timeline.Position:mm\:ss} / {timeline.EndTime:mm\:ss}" : $@"{timeline.Position} / {timeline.EndTime}";
                         }));
                     }
                     catch (Exception ex)
