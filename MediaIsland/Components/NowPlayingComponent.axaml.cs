@@ -1,9 +1,12 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using Windows.Media.Control;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
+using ClassIsland.Shared.Helpers;
 using MediaIsland.Helpers;
+using MediaIsland.Models;
 using Microsoft.Extensions.Logging;
 using WindowsMediaController;
 using static WindowsMediaController.MediaManager;
@@ -28,11 +31,13 @@ namespace MediaIsland.Components
         //TimeSpan currentPosition;
         private ILogger<NowPlayingComponent> Logger { get; }
 
+        private PluginSettings globalSettings;
 
         public NowPlayingComponent(ILogger<NowPlayingComponent> logger)
         {
             InitializeComponent();
             Logger = logger;
+            globalSettings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
         }
 
         private void NowPlayingComponent_OnLoaded(object? sender, RoutedEventArgs routedEventArgs)
@@ -164,20 +169,30 @@ namespace MediaIsland.Components
                         try
                         {
                             var sourceApp = session.ControlSession.SourceAppUserModelId;
-                            var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
-                            var timeline = session.ControlSession.GetTimelineProperties();
-                            var playbackInfo = session.ControlSession.GetPlaybackInfo();
-                            Logger.LogTrace("当前 SMTC 信息：[{SourceApp}] {Artist} - {Title} ({PlaybackStatus}) [{TimelinePosition} / {TimelineEndTime}]", sourceApp, mediaProperties.Artist, mediaProperties.Title, playbackInfo.PlaybackStatus, timeline.Position, timeline.EndTime);
-                            // ReSharper disable once AsyncVoidMethod
-                            await Dispatcher.UIThread.InvokeAsync(async void () =>
+                            if (IsSourceEnabled(sourceApp, globalSettings.MediaSourceList))
                             {
-                                SourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
-                                // SourceIcon.Source = IconHelper.GetAppIcon(sourceApp);
-                                await RefreshMediaProperties(session);
-                                await RefreshPlaybackInfo(session);
-                                await RefreshTimelineProperties(session);
-                            });
-                            
+                                var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
+                                var timeline = session.ControlSession.GetTimelineProperties();
+                                var playbackInfo = session.ControlSession.GetPlaybackInfo();
+                                Logger.LogTrace("当前 SMTC 信息：[{SourceApp}] {Artist} - {Title} ({PlaybackStatus}) [{TimelinePosition} / {TimelineEndTime}]", sourceApp, mediaProperties.Artist, mediaProperties.Title, playbackInfo.PlaybackStatus, timeline.Position, timeline.EndTime);
+                                // ReSharper disable once AsyncVoidMethod
+                                await Dispatcher.UIThread.InvokeAsync(async void () =>
+                                {
+                                    SourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
+                                    // SourceIcon.Source = IconHelper.GetAppIcon(sourceApp);
+                                    await RefreshMediaProperties(session);
+                                    await RefreshPlaybackInfo(session);
+                                    await RefreshTimelineProperties(session);
+                                });
+                            }
+                            else
+                            {
+                                Logger.LogInformation("当前 SMTC 会话 [{sourceApp}] 已禁用，自动隐藏", sourceApp);
+                                await Dispatcher.UIThread.InvokeAsync(() =>
+                                {
+                                    MediaGrid.IsVisible = false;
+                                });
+                            }
                         }
                         catch
                         {
@@ -487,6 +502,24 @@ namespace MediaIsland.Components
             {
                 // ignored
             }
+        }
+        private bool IsSourceEnabled(string appUserModelId, IEnumerable<MediaSource> sources)
+        {
+            foreach (var source in sources)
+            {
+                try
+                {
+                    if (appUserModelId.Equals(source.Source))
+                    {
+                        return source.IsEnabled;
+                    }
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+            return true;
         }
     }
 }
