@@ -295,7 +295,7 @@ namespace MediaIsland.Components
                                     StatusIcon.Glyph = "\uF086";
                                     break;
                                 case GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing:
-                                    StatusIcon.Glyph = "&#xE0B4;";
+                                    StatusIcon.Glyph = "\uE0B4";
                                     break;
                             }
                         });
