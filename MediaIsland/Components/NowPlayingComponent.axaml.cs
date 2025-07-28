@@ -341,7 +341,7 @@ namespace MediaIsland.Components
                                     TimeText.IsVisible = false;
                                 }
                             }
-                            TimeText.Text = $@"{timeline.Position:mm\:ss} / {timeline.EndTime:mm\:ss}";
+                            TimeText.Text = (timeline.EndTime.Hours == 0) ? $@"{timeline.Position:mm\:ss} / {timeline.EndTime:mm\:ss}" : $@"{timeline.Position} / {timeline.EndTime}";
                         });
                     }
                     catch (Exception ex)
