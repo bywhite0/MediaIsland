@@ -42,7 +42,8 @@ namespace MediaIsland
                 // ClassIsland.Core.AppBase.Current.DispatcherUnhandledException += (_,e) => {
             //     if (e.Exception.StackTrace == null) SentrySdk.CaptureException(e.Exception);
             //     else if (e.Exception.StackTrace.Contains("MediaIsland")) SentrySdk.CaptureException(e.Exception);
-            // };}
+            // };
+            }
 #endif
             Console.WriteLine("[MI]MediaIsland 加载成功");
         }
