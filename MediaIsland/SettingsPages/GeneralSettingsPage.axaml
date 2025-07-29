@@ -15,33 +15,14 @@
                      TextElement.FontSize="14">
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:GeneralSettingsPage}}">
         <StackPanel Classes="settings-container animated-intro">
-            <ci:IconText Glyph="&#xEF26;" Text="通用" Margin="0 0 0 8" />
-            <controls:SettingsExpander IconSource="&#xEBDC;"
+            <ci:IconText Glyph="&#xEF27;" Text="通用" Margin="0 0 0 8" />
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
                                        Header="播放源列表"
                                        Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息，需要重载组件才能生效。">
                             <controls:SettingsExpander.Footer>
                                 <ci:FluentIcon Glyph="&#xF19B;"/>
                             </controls:SettingsExpander.Footer>
                     <StackPanel Orientation="Vertical">
-                        <!--<ListView Margin="12 6 12 6"
-                                  ItemsSource="{Binding Settings.MediaSourceList, Mode=OneWay}">
-                            <ListView.ItemContainerStyle>
-                                <Style TargetType="ListViewItem">
-                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                                    <Setter Property="Margin" Value="0" />
-                                    <Setter Property="Padding" Value="0" />
-                                </Style>
-                            </ListView.ItemContainerStyle>
-                            <ListView.ItemTemplate>
-                                <DataTemplate>
-                                    <ci:SettingsControl IconGlyph="PlayCircleFilled" Header="{Binding Source, Mode=OneWay}">
-                                        <ci:SettingsControl.Switcher>
-                                            <ToggleButton IsChecked="{Binding IsEnabled, Mode=TwoWay}" Checked="ToggleButton_OnChecked" Unchecked="ToggleButton_OnChecked"/>
-                                        </ci:SettingsControl.Switcher>
-                                    </ci:SettingsControl>
-                                </DataTemplate>
-                            </ListView.ItemTemplate>
-                        </ListView>-->
                         <DataGrid Margin="12,6,70,6"
                                   IsReadOnly="False"
                                   AutoGenerateColumns="False"
@@ -50,9 +31,9 @@
                                   Height="240"
                                   ItemsSource="{Binding Settings.MediaSourceList, Mode=TwoWay}">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="播放源" Width="Auto" MinWidth="60" MaxWidth="400" Binding="{Binding Source}" />
-                                <DataGridCheckBoxColumn Header="启用" Width="60" Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                <DataGridTemplateColumn Header="操作" Width="60">
+                                <DataGridTextColumn Header="播放源" Width="Auto" MinWidth="120" MaxWidth="400" Binding="{Binding Source}" />
+                                <DataGridCheckBoxColumn Header="启用" Width="Auto" Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                <DataGridTemplateColumn Header="操作" Width="Auto">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Button Width="20"
@@ -72,18 +53,22 @@
                         <StackPanel Orientation="Horizontal" Margin="12,0,12,6">
                             <Button HorizontalAlignment="Left"
                                     VerticalAlignment="Center"
+                                    Theme="{StaticResource TransparentButton}"
+                                    Classes="accent"
                                     Click="AddButtonOnClick">
                                 <ci:IconText Text="添加当前播放源" Glyph="&#xE00C;" />
                             </Button>
                             <Button HorizontalAlignment="Left"
                                     VerticalAlignment="Center"
+                                    Theme="{StaticResource TransparentButton}"
+                                    Classes="accent"
                                     Click="SaveButtonOnClick">
                                 <ci:IconText Text="保存" Glyph="&#xEEB5;" />
                             </Button>
                         </StackPanel>
                     </StackPanel>
                 </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE817;}" 
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}" 
                                        Header="匿名使用情况分析" 
                                        Description="本插件使用 Sentry 收集与本插件相关的使用情况与错误信息，以帮助改善本插件，相关信息将被匿名上传。此功能不会收集您的个人信息。">
                 <controls:SettingsExpander.Footer>
