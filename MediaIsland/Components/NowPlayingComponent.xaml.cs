@@ -48,7 +48,7 @@ namespace MediaIsland.Components
         void NowPlayingComponent_OnUnloaded(object sender, RoutedEventArgs e)
         {
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
-            mediaManager.Dispose();
+            if (mediaManager.IsStarted) mediaManager.Dispose();
         }
 
         private async void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
