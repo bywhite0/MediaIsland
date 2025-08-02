@@ -107,7 +107,7 @@ namespace MediaIsland.Components
 
             try
             {
-                await mediaManager.StartAsync();
+                if (!mediaManager.IsStarted) await mediaManager.StartAsync();
             }
             catch (COMException)
             {
