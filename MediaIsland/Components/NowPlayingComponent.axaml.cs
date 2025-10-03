@@ -49,7 +49,7 @@ namespace MediaIsland.Components
         private void NowPlayingComponent_OnUnloaded(object? sender, RoutedEventArgs routedEventArgs)
         {
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
-            MediaManager.Dispose();
+            if (MediaManager.IsStarted) MediaManager.Dispose();
         }
 
         // ReSharper disable once AsyncVoidMethod
@@ -111,7 +111,7 @@ namespace MediaIsland.Components
 
             try
             {
-                await MediaManager.StartAsync();
+                if (!MediaManager.IsStarted) await MediaManager.StartAsync();
             }
             catch (COMException)
             {
