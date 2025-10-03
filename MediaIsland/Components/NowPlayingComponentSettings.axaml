@@ -50,7 +50,7 @@
                     </controls:SettingsExpanderItem.Footer>
                 </controls:SettingsExpanderItem>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBCB;}" Header="显示当前播放状态" Description="显示当前媒体的播放状态，关闭则显示音符图标。">
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBCB;}" Header="显示当前播放状态" Description="显示当前媒体的播放状态。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
