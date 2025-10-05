@@ -1,7 +1,3 @@
-> [!NOTE]
-> 
-> 由于开发者~~电脑太烂带不动 Rider 以及硬盘爆了等~~个人原因，本插件于 2025 年 8 月起暂缓更新。
-
 # MediaIsland
 
 MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在 ClassIsland 主界面上显示 Windows [SMTC](https://learn.microsoft.com/en-us/uwp/api/windows.media.systemmediatransportcontrols) 媒体信息。
