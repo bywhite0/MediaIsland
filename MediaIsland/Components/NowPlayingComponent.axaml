@@ -16,7 +16,7 @@
     </ci:ComponentBase.Resources>
     <Grid x:Name="MediaGrid" ColumnDefinitions="Auto,Auto,Auto,Auto" Margin="0" HorizontalAlignment="Center" VerticalAlignment="Center" DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:NowPlayingComponent}}">
         <StackPanel Name="StatusStackPanel" Grid.Column="0" Margin="0" Orientation="Horizontal" IsVisible="{Binding Settings.IsShowPlaybackStatus}">
-            <ci:FluentIcon x:Name="StatusIcon" Glyph="&#xEDB8;" VerticalAlignment="Center" Margin="0 0 4 4" />
+            <ci:FluentIcon x:Name="StatusIcon" Glyph="&#xEDB8;" VerticalAlignment="Center" Margin="0 0 4 0" />
         </StackPanel>
         <StackPanel Name="CoverStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" IsVisible="{Binding Settings.IsShowAlbumArt}">
             <Grid Name="CoverGrid" Margin="0" ClipToBounds="True" Width="28" Height="28">
