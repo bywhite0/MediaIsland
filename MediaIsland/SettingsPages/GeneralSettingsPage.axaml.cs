@@ -33,6 +33,16 @@ namespace MediaIsland.SettingsPages
             InitializeComponent();
             sessionManager = GlobalSystemMediaTransportControlsSessionManager.RequestAsync().GetAwaiter().GetResult();
             sessionManager.SessionsChanged += OnSessionsChanged;
+            var screenshotApp = new MediaSource
+            {
+                Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
+                IsEnabled = false
+            };
+            if (Settings.MediaSourceList.All(source => source.Source == "Microsoft.ScreenSketch_8wekyb3d8bbwe!App"))
+            {
+                Settings.MediaSourceList.Add(screenshotApp);
+                SaveSettings();
+            }
         }
 
         private void OnSessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)

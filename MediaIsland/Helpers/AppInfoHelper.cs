@@ -18,7 +18,7 @@ namespace MediaIsland.Helpers
                 //  ["Microsoft.ZuneVideo"] = "电影与电视",
                 //  ["msedge"] = "Edge",
                 //  ["chrome"] = "Chrome",
-                //  ["cloudmusic"] = "网易云音乐",
+                ["cloudmusic"] = "网易云音乐",
                 //  ["1F8B0F94.122165AE053F"] = "网易云音乐 UWP",
                 //  ["QQMusic"] = "QQ 音乐",
                 //  ["spotify"] = "Spotify",
