@@ -40,9 +40,11 @@ namespace MediaIsland.SettingsPages
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
                 IsEnabled = false
             };
-            if (Settings.MediaSourceList.Any(source => source.Source == "Microsoft.ScreenSketch_8wekyb3d8bbwe!App")) return;
-            Settings.MediaSourceList.Add(screenshotApp);
-            SaveSettings();
+            if (Settings.MediaSourceList.All(source => source.Source == "Microsoft.ScreenSketch_8wekyb3d8bbwe!App"))
+            {
+                Settings.MediaSourceList.Add(screenshotApp);
+                SaveSettings();
+            }
             // TODO: Remove after ExtraIsland's new version release
             if (Settings.IsLXMusicLyricForwarderEnabled)
             {
