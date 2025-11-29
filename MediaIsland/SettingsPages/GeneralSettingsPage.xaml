@@ -110,57 +110,33 @@
                              IconGlyph="Antenna"
                              Description="本插件使用 Sentry 收集与本插件相关的使用情况与错误信息，以帮助改善本插件，相关信息将被匿名上传。此功能不会收集您的个人信息。"
                              IsOn="{Binding Settings.IsTodayEatSentry, Mode=TwoWay}" />
+            <ci:SettingsCard Header="移除封面的 Spotify 水印"
+                             IconGlyph="Trademark"
+                             Description="部分版本的 Spotify 桌面版会在传给 SMTC 的封面下方加入其商标，如果你在插件呈现的封面上看到了，可以打开这个开关。"
+                             IsOn="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
             <Separator Margin="0 16 0 8"/>
             <ci:IconText Kind="CogOutline" Text="与其他应用集成" Margin="0 0 0 8" />
-            <DockPanel Margin="8 4">
-                <md:PackIcon Kind="WarningCircleOutline" Height="16" Width="16" />
-                <TextBlock Margin="4 0 0 0" TextWrapping="Wrap" VerticalAlignment="Center">
-                本功能将在未来移除，关注
-                <ci:NavHyperlink CommandParameter="https://github.com/LiPolymer/LycheeLib">
-                    <Run Text="LycheeLib"/>
-                </ci:NavHyperlink>
-                喵，关注 
-                <ci:NavHyperlink CommandParameter="https://github.com/LiPolymer/LycheeLib">
-                    <Run Text="LycheeLib"/>
-                </ci:NavHyperlink>
-                谢谢喵
-                </TextBlock>
-            </DockPanel>
-            <md:Card x:Name="LXMusicsLyricForwarderCard">
+            <!--
+            <md:Card x:Name="LyricGetter">
                 <Expander Background="Transparent"
-                          IsExpanded="{Binding Settings.IsLXMusicLyricForwarderEnabled, Mode=TwoWay}"
+                          IsExpanded="{Binding Settings.IsLyricGetterEnabled, Mode=TwoWay}"
                           TextBlock.Foreground="{DynamicResource MaterialDesignBody}"
                           Margin="-12 0">
                     <Expander.Header>
-                        <ci:SettingsControl Header="LX Music 歌词转发"
+                        <ci:SettingsControl Header="获取歌词(实验性)"
                                             IconGlyph="BuildOutline"
-                                            Description="将 LX Music 的歌词转发到 LyricsIsland 接口。"
+                                            Description="使用当前 SMTC 信息获取歌词。"
                                             HasSwitcher="True"
-                                            x:Name="LXMusicsLyricForwarderSwitcher"
-                                            IsOn="{Binding Settings.IsLXMusicLyricForwarderEnabled, Mode=TwoWay}"
+                                            x:Name="LyricGetterSwitcher"
+                                            IsOn="{Binding Settings.IsLyricGetterEnabled, Mode=TwoWay}"
                                              />
                     </Expander.Header>
                     <StackPanel Orientation="Vertical" Style="{StaticResource SettingsPageStackPanelStyle}" Margin="24 0 48 12">
                         
-                        <ci:SettingsControl Header="LX Music API 端口"
-                                            IconGlyph="DirectionsBoat"
-                                            Description="设置 LX Music API 端口。"
-                                            HasSwitcher="True">
-                            <ci:SettingsControl.Switcher>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBox Text="{Binding Settings.LXMusicAPIPort, Mode=TwoWay}"
-                                             Foreground="{DynamicResource MaterialDesignBody}"
-                                             Margin="3,0,3,0"/>
-                                    <Button Content="应用"
-                                            Click="StartLXMusicLyricsForwarder_OnClick"
-                                            Style="{StaticResource MaterialDesignFlatButton}"
-                                            Margin="12,0,0,0"/>
-                                </StackPanel>
-                            </ci:SettingsControl.Switcher>
-                        </ci:SettingsControl>
                     </StackPanel>
                 </Expander>
             </md:Card>
+            -->
         </StackPanel>
     </ScrollViewer>
 </ci:SettingsPageBase>

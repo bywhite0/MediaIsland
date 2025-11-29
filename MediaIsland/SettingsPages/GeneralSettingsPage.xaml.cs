@@ -45,14 +45,6 @@ namespace MediaIsland.SettingsPages
                 Settings.MediaSourceList.Add(screenshotApp);
                 SaveSettings();
             }
-            // TODO: Remove after ExtraIsland's new version release
-            if (Settings.IsLXMusicLyricForwarderEnabled)
-            {
-                if (IsLyricsIslandInstalled() || IsExtraIslandInstalled())
-                {
-                    LXMusicsLyricForwarderSwitcher.IsEnabled = true;
-                }
-            }
         }
 
         private void OnSessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)
@@ -83,16 +75,6 @@ namespace MediaIsland.SettingsPages
         public static bool IsLyricsIslandExisted()
         {
             return IsLyricsIslandInstalled() || IsExtraIslandInstalled();
-        }
-        // TODO: Remove after ExtraIsland's new version release
-        void LXMLFSwitcher_Click(object sender, RoutedEventArgs e)
-        {
-
-        }
-        private void StartLXMusicLyricsForwarder_OnClick(object sender, RoutedEventArgs e)
-        {
-            var LyricsForwarder = new LXMusicLyricsHelper(Settings);
-            Task.Run(async () => await LyricsForwarder.LyricsForwarderAsync());
         }
 
         private void AddButtonOnClick(object sender,RoutedEventArgs e)

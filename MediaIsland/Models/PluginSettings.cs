@@ -5,27 +5,28 @@ namespace MediaIsland.Models
 {
     public class PluginSettings : ObservableRecipient
     {
-        // TODO: Remove after ExtraIsland's new version release
-        private bool _IsLXMusicLyricForwarderEnabled = false;
-        int _LXMusicAPIPort = 23330;
+        // Not implemented
+        private bool _isLyricGetterEnabled = false;
 
-        public bool IsLXMusicLyricForwarderEnabled
+        public bool IsLyricGetterEnabled
         {
-            get => _IsLXMusicLyricForwarderEnabled;
+            get => _isLyricGetterEnabled;
             set
             {
-                if (_IsLXMusicLyricForwarderEnabled == value) return;
-                _IsLXMusicLyricForwarderEnabled = value;
+                if (_isLyricGetterEnabled == value) return;
+                _isLyricGetterEnabled = value;
                 OnPropertyChanged();
             }
         }
-        public int LXMusicAPIPort
+        private bool _isCutSpotifyTrademarkEnabled = false;
+
+        public bool IsCutSpotifyTrademarkEnabled
         {
-            get => _LXMusicAPIPort;
+            get => _isCutSpotifyTrademarkEnabled;
             set
             {
-                if (_LXMusicAPIPort == value) return;
-                _LXMusicAPIPort = value;
+                if (_isCutSpotifyTrademarkEnabled  == value) return;
+                _isCutSpotifyTrademarkEnabled = value;
                 OnPropertyChanged();
             }
         }

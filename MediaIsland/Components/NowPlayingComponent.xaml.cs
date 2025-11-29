@@ -241,7 +241,7 @@ namespace MediaIsland.Components
                             // 更新封面
                             if (thumb != null)
                             {
-                                if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
+                                if (AppInfoHelper.IsSourceAppSpotify(sourceApp) && globalSettings.IsCutSpotifyTrademarkEnabled)
                                 {
                                     AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
                                 }
