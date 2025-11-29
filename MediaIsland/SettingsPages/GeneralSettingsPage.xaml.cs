@@ -40,7 +40,7 @@ namespace MediaIsland.SettingsPages
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
                 IsEnabled = false
             };
-            if (Settings.MediaSourceList.All(source => source.Source == "Microsoft.ScreenSketch_8wekyb3d8bbwe!App"))
+            if (!Settings.MediaSourceList.Any(source => source.Source == "Microsoft.ScreenSketch_8wekyb3d8bbwe!App"))
             {
                 Settings.MediaSourceList.Add(screenshotApp);
                 SaveSettings();
