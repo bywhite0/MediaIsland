@@ -2,6 +2,14 @@
 
 MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在 ClassIsland 主界面上显示 Windows [SMTC](https://learn.microsoft.com/en-us/uwp/api/windows.media.systemmediatransportcontrols) 媒体信息。
 
+> [!IMPORTANT]
+>
+> 本分支面向 ClassIsland 1.x 版本。请切换到 `dev/ci-v2` 分支以查看面向 ClassIsland 2.0 的版本。
+
+> [!NOTE]
+> 
+> 本插件暂未上架 ClassIsland 2.0 版本的插件市场，如需在 ClassIsland [1.7.106.2](https://github.com/ClassIsland/ClassIsland/releases/tag/1.7.106.2) 或更高版本上使用，请在安装带 `-civ2` 后缀的插件后使用任意文本编辑器打开 ClassIsland 应用目录下的 `plugins\bywhite.mediaisland\manifest.yml`，将 `apiVersion` 的值修改为 `2.0.0.0` 并保存，重启 ClassIsland 后即可正常加载。
+
 ## 组件
 
 **正在播放**
