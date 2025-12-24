@@ -1,6 +1,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Media;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
 using MaterialDesignThemes.Wpf;
@@ -169,8 +170,9 @@ namespace MediaIsland.Components
                                     $"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
                                 await Dispatcher.InvokeAsync(async () =>
                                 {
-                                    sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
-                                    sourceIcon.ImageSource = IconHelper.GetAppIcon(sourceApp);
+                                    (string appName, ImageSource? appIcon) = MediaPlayerData.GetMediaPlayerData(sourceApp);
+                                    sourceText.Text = appName;
+                                    sourceIcon.ImageSource = appIcon;
                                     await RefreshMediaProperties(session);
                                     await RefreshPlaybackInfo(session);
                                     await RefreshTimelineProperties(session);
