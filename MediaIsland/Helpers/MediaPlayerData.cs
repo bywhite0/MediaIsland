@@ -34,9 +34,7 @@ public static class MediaPlayerData
 
         // remove common non-informative substrings
         var variants = mediaSessionIdVariants.Select(variant =>
-            variant.Replace("com", "", StringComparison.OrdinalIgnoreCase)
-                   .Replace("github", "", StringComparison.OrdinalIgnoreCase)
-                   .Replace("exe", "", StringComparison.OrdinalIgnoreCase)
+            variant.Replace("exe", "", StringComparison.OrdinalIgnoreCase)
                    .Trim()
         ).Where(variant => !string.IsNullOrWhiteSpace(variant)).ToList();
 
