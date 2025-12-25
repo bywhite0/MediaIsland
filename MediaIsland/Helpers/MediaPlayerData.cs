@@ -1,6 +1,6 @@
 // Modified from https://github.com/unchihugo/FluentFlyout/blob/v2.4.0/FluentFlyoutWPF/Classes/Utils/MediaPlayerData.cs
 // Copyright (C) 2024 Hugo Li
-// Licensed under the GPL-3。0 License.
+// Licensed under the GPL-3.0 License.
 using System.Diagnostics;
 using Avalonia.Media.Imaging;
 
