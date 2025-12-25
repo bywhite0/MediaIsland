@@ -1,8 +1,10 @@
 
 using System.IO;
+using ClassIsland.Core;
 using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Core.Extensions.Registry;
+using ClassIsland.Shared;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
@@ -21,7 +23,6 @@ namespace MediaIsland
         public override void Initialize(HostBuilderContext context, IServiceCollection services)
         {
             Console.WriteLine("[MI]正在加载 MediaIsland...");
-            services.AddSingleton<IMediaSessionService, MediaSessionService>();
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
             globalConfigFolder = PluginConfigFolder; 
@@ -31,6 +32,10 @@ namespace MediaIsland
                 ConfigureFileHelper.SaveConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"), Settings);
             };
             services.AddSettingsPage<GeneralSettingsPage>();
+            services.AddSingleton<IMediaService, MediaService>();
+            AppBase.Current.AppStarted += (_,_) => {
+                IAppHost.GetService<IMediaService>();
+            };
 #if !DEBUG
             if (Settings.IsTodayEatSentry)
             {
