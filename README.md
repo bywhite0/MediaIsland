@@ -61,3 +61,5 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 本项目基于 GNU Affero General Public License v3.0 许可。
 
 本项目部分使用了 [DubyaDude/WindowsMediaController](https://github.com/DubyaDude/WindowsMediaController) 的代码，其内容仍基于 MIT 许可。
+
+本项目部分使用了 [unchihugo/FluentFlyout](https://github.com/unchihugo/FluentFlyout) 的代码，其内容仍基于 GNU General Public License v3.0 许可。
