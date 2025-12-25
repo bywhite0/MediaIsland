@@ -4,7 +4,7 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 
 > [!IMPORTANT]
 >
-> 本分支面向 ClassIsland 1.x 版本。请切换到 `dev/ci-v2` 分支以查看面向 ClassIsland 2.0 的版本。
+> 本分支面向 ClassIsland 2.0 版本。请切换到 `master` 分支以查看面向 ClassIsland 1.x 的版本。
 
 > [!NOTE]
 > 
