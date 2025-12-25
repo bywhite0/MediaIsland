@@ -38,7 +38,7 @@ namespace MediaIsland.SettingsPages
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
                 IsEnabled = false
             };
-            if (Settings.MediaSourceList.All(source => source.Source == "Microsoft.ScreenSketch_8wekyb3d8bbwe!App"))
+            if (!Settings.MediaSourceList.Any(source => source.Source == "Microsoft.ScreenSketch_8wekyb3d8bbwe!App"))
             {
                 Settings.MediaSourceList.Add(screenshotApp);
                 SaveSettings();
@@ -61,6 +61,21 @@ namespace MediaIsland.SettingsPages
             SaveSettings();
         }
         
+
+        static bool IsLyricsIslandInstalled()
+        {
+            return IntegrationHelper.IsPluginInstalled("jiangyin14.lyrics");
+        }
+
+        static bool IsExtraIslandInstalled()
+        {
+            return IntegrationHelper.IsPluginInstalled("ink.lipoly.ext.extraisland");
+        }
+        public static bool IsLyricsIslandExisted()
+        {
+            return IsLyricsIslandInstalled() || IsExtraIslandInstalled();
+        }
+
         private void AddButtonOnClick(object sender,RoutedEventArgs e)
         {
             if (sessionManager.GetCurrentSession() == null)
