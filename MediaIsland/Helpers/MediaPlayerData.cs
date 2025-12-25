@@ -110,6 +110,13 @@ public static class MediaPlayerData
         if (processData != null)
         {
             mediaTitle = !string.IsNullOrWhiteSpace(processData.Title) ? processData.Title : mediaPlayerId;
+            foreach (var key in nameMapping.Keys)
+            {
+                if (mediaPlayerId.Contains(key))
+                {
+                    mediaTitle = nameMapping[key];
+                }
+            }
             try
             {
                 using (var icon = System.Drawing.Icon.ExtractAssociatedIcon(processData.Path))
