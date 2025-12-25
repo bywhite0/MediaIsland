@@ -214,7 +214,7 @@ namespace MediaIsland.Components
                                     var thumb = mediaProperties.Thumbnail;
                                     if (thumb != null)
                                     {
-                                        if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
+                                        if (globalSettings.IsCutSpotifyTrademarkEnabled && AppInfoHelper.IsSourceAppSpotify(sourceApp))
                                         {
                                             AlbumArt.ImageSource =
                                                 await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
