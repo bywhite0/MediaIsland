@@ -1,7 +1,5 @@
 ﻿using System.Diagnostics;
-using System.Windows;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
+using Avalonia.Media.Imaging;
 
 namespace MediaIsland.Helpers;
 
@@ -10,7 +8,7 @@ public static class MediaPlayerData
     private class CachedMediaPlayerInfo
     {
         public string Title { get; set; }
-        public ImageSource? Icon { get; set; }
+        public Bitmap? Icon { get; set; }
     }
     // cache for media player info to avoid redundant process lookups
     private static readonly Dictionary<string, CachedMediaPlayerInfo> MediaPlayerCache = new();
@@ -19,7 +17,7 @@ public static class MediaPlayerData
     private static DateTime lastCacheTime = DateTime.MinValue;
     private const int CacheDurationSeconds = 5;
 
-    public static (string Title, ImageSource? Icon) GetMediaPlayerData(string mediaPlayerId)
+    public static (string Title, Bitmap? Icon) GetMediaPlayerData(string mediaPlayerId)
     {
         if (MediaPlayerCache.TryGetValue(mediaPlayerId, out var cachedInfo))
         {
@@ -27,7 +25,7 @@ public static class MediaPlayerData
         }
 
         string mediaTitle = mediaPlayerId;
-        ImageSource? mediaIcon = null;
+        Bitmap? mediaIcon = null;
         
         // get sanitized media title name
         string[] mediaSessionIdVariants = mediaPlayerId.Split('.');
@@ -119,18 +117,18 @@ public static class MediaPlayerData
             }
             try
             {
-                using (var icon = System.Drawing.Icon.ExtractAssociatedIcon(processData.Path))
-                {
-                    if (icon != null)
-                    {
-                        mediaIcon = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
-                            icon.Handle,
-                            Int32Rect.Empty,
-                            BitmapSizeOptions.FromEmptyOptions());
-
-                        mediaIcon.Freeze();
-                    }
-                }
+                // using (var icon = System.Drawing.Icon.ExtractAssociatedIcon(processData.Path))
+                // {
+                //     if (icon != null)
+                //     {
+                //         mediaIcon = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                //             icon.Handle,
+                //             Int32Rect.Empty,
+                //             BitmapSizeOptions.FromEmptyOptions());
+                //
+                //         mediaIcon.Freeze();
+                //     }
+                // }
             }
             catch
             {
@@ -155,7 +153,6 @@ public static class MediaPlayerData
             if (internalIcon != null)
             {
                 mediaIcon = internalIcon;
-                mediaIcon.Freeze();
             }
         }
 
@@ -167,11 +164,11 @@ public static class MediaPlayerData
 
         return (mediaTitle, mediaIcon);
     }
-    private static ImageSource? GetInternalIcon(string appUserModelId)
+    private static Bitmap? GetInternalIcon(string appUserModelId)
     {
         try
         {
-            return new BitmapImage(new Uri($"pack://application:,,,/MediaIsland;;;component/Assets/SourceAppIcons/{appUserModelId}.png", UriKind.RelativeOrAbsolute));
+            return new Bitmap(($"avares://MediaIsland/Assets/SourceAppIcons/{appUserModelId}.png"));
         }
         catch
         {
