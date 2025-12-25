@@ -178,8 +178,6 @@ namespace MediaIsland.Components
                                 // ReSharper disable once AsyncVoidMethod
                                 await Dispatcher.UIThread.InvokeAsync(async void () =>
                                 {
-                                    SourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
-                                    // SourceIcon.Source = IconHelper.GetAppIcon(sourceApp);
                                     await RefreshMediaProperties(session);
                                     await RefreshPlaybackInfo(session);
                                     await RefreshTimelineProperties(session);
@@ -237,17 +235,13 @@ namespace MediaIsland.Components
                         var sourceApp = session.ControlSession.SourceAppUserModelId;
                         var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
                         var thumb = mediaProperties.Thumbnail;
-                        await Dispatcher.UIThread.InvokeAsync(() =>
+                        await Dispatcher.UIThread.InvokeAsync(async() =>
                         {
                             // 更新标题、艺术家
                             TitleText.Text = mediaProperties.Title ?? "未知标题";
                             ArtistText.Text = mediaProperties.Artist ?? "未知艺术家";
                             //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-                        });
-
-                        // ReSharper disable once AsyncVoidMethod
-                        await Dispatcher.UIThread.InvokeAsync(async void () =>
-                        {
+                        
                             // 更新封面
                             if (thumb != null)
                             {
@@ -451,12 +445,10 @@ namespace MediaIsland.Components
             Logger.LogDebug("SMTC 播放状态改变：{SenderId} is now {PlaybackStatus}", sender.Id, args.PlaybackStatus);
             try
             {
+                if (sender != MediaManager.GetFocusedSession()) return;
                 if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
                 {
-                    Dispatcher.UIThread.Invoke(() =>
-                    {
-                        MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
-                    });
+                    Dispatcher.UIThread.Invoke(() => { MediaGrid.IsVisible = !Settings.IsHideWhenPaused; });
                 }
 
                 await Dispatcher.UIThread.InvokeAsync(async () => await RefreshPlaybackInfo(sender));
@@ -478,7 +470,7 @@ namespace MediaIsland.Components
             Logger.LogDebug("SMTC 媒体属性改变：{SenderId} is now playing {Title} {Artist}", sender.Id, args.Title, string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}");
             try
             {
-                await Dispatcher.UIThread.InvokeAsync(async () => await RefreshMediaProperties(sender));
+                if (sender == MediaManager.GetFocusedSession()) await Dispatcher.UIThread.InvokeAsync(async () => await RefreshMediaProperties(sender));
             }
             catch
             {
@@ -496,7 +488,7 @@ namespace MediaIsland.Components
             //Logger.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
             try
             {
-                await Dispatcher.UIThread.InvokeAsync(async () => await RefreshTimelineProperties(sender));
+                if (sender == MediaManager.GetFocusedSession()) await Dispatcher.UIThread.InvokeAsync(async () => await RefreshTimelineProperties(sender));
             }
             catch
             {
