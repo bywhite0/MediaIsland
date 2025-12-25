@@ -356,16 +356,22 @@ namespace MediaIsland.Components
             GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
         {
             Logger!.LogDebug($"SMTC 播放状态改变：{sender.Id} is now {args.PlaybackStatus}");
-            if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+            try
             {
-                Dispatcher.Invoke(() =>
+                if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
                 {
-                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
-                });
-            }
-            else
-            {
+                    Dispatcher.Invoke(() =>
+                    {
+                        MediaGrid.Visibility =
+                            Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
+                    });
+                }
+
                 await RefreshMediaInfo(sender);
+            }
+            catch
+            {
+                // pass
             }
         }
 
