@@ -39,7 +39,7 @@
             <TextBlock x:Name="timeText" HorizontalAlignment="Left" VerticalAlignment="Center"  FontSize="10" Margin="0" Visibility="Collapsed"/>
         </StackPanel>
         <StackPanel Name="SourceStackPanel" Grid.Column="3" Margin="4 0 0 0" Orientation="Vertical" VerticalAlignment="Center" Visibility="{Binding Settings.IsShowSource, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <Border Name="SourceIconBorder" VerticalAlignment="Center" CornerRadius="16"  Margin="0" ClipToBounds="True" Width="22" Height="22">
+            <Border Name="SourceIconBorder" VerticalAlignment="Center" CornerRadius="{Binding Settings.SourceIconRadius}"  Margin="0" ClipToBounds="True" Width="22" Height="22">
                 <md:PackIcon Kind="MusicNote" VerticalAlignment="Center" Margin="0" Visibility="Collapsed" />
                 <Border.Background>
                     <ImageBrush x:Name="sourceIcon" Stretch="UniformToFill" />

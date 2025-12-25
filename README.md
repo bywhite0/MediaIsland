@@ -2,6 +2,14 @@
 
 MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在 ClassIsland 主界面上显示 Windows [SMTC](https://learn.microsoft.com/en-us/uwp/api/windows.media.systemmediatransportcontrols) 媒体信息。
 
+> [!IMPORTANT]
+>
+> 本分支面向 ClassIsland 1.x 版本。请切换到 `dev/ci-v2` 分支以查看面向 ClassIsland 2.0 的版本。
+
+> [!NOTE]
+> 
+> 本插件暂未上架 ClassIsland 2.0 版本的插件市场，如需在 ClassIsland [1.7.106.2](https://github.com/ClassIsland/ClassIsland/releases/tag/1.7.106.2) 或更高版本上使用，请在安装带 `-civ2` 后缀的插件后使用任意文本编辑器打开 ClassIsland 应用目录下的 `plugins\bywhite.mediaisland\manifest.yml`，将 `apiVersion` 的值修改为 `2.0.0.0` 并保存，重启 ClassIsland 后即可正常加载。
+
 ## 组件
 
 **正在播放**
@@ -17,6 +25,14 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
     搭配 <img src="https://github.com/LiPolymer.png" alt="LiPolymer" style="width:16px" /><a href="https://github.com/LiPolymer">LiPolymer</a> 佬的 <a href="https://github.com/LiPolymer/ExtraIsland">ExtraIsland</a> 的【当前活动】组件，并启用「启用歌词」功能：
     <img src="Assets/screenshot_with_ei.png" alt="搭配ei使用截图" />
   </details>
+
+**正在播放(简)**
+
+![截图](./Assets/screenshot_snpc.png)
+
+简略显示正在播放的媒体信息，可调整显示样式。
+
+![设置截图](./Assets/snpc_settings.png)
 
 > [!IMPORTANT]
 >

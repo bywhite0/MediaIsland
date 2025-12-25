@@ -1,42 +1,46 @@
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
-using System.Windows.Threading;
+using System.Windows.Media;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
 using MaterialDesignThemes.Wpf;
 using MediaIsland.Helpers;
-using MediaIsland.Services;
 using Microsoft.Extensions.Logging;
 using Windows.Media.Control;
+using ClassIsland.Shared.Helpers;
+using MediaIsland.Models;
 using WindowsMediaController;
 using static WindowsMediaController.MediaManager;
 
 namespace MediaIsland.Components
 {
     [ComponentInfo(
-            "6E9C7C44-59EB-499C-A637-2C6C9253BF2B",
-            "正在播放",
-            PackIconKind.MusicBoxOutline,
-            "显示当前播放的媒体信息。"
-        )]
+        "6E9C7C44-59EB-499C-A637-2C6C9253BF2B",
+        "正在播放",
+        PackIconKind.MusicBoxOutline,
+        "显示当前播放的媒体信息。"
+    )]
     public partial class NowPlayingComponent : ComponentBase<NowPlayingComponentConfig>
     {
         //private string titleLabel, artistLabel, albumLabel, timeLabel, sourceLabel;
-        //static MediaManager? mediaManager;
-        public IMediaSessionService MediaSessionService;
+        static MediaManager mediaManager = new();
+
         //TimeSpan currentDuration;
         //TimeSpan currentPosition;
-        private ILogger<NowPlayingComponent> ComponentLogger { get; }
+        private ILogger<NowPlayingComponent> Logger { get; }
 
         private static MediaSession? currentSession = null;
 
-        public NowPlayingComponent(ILogger<NowPlayingComponent> clogger, IMediaSessionService mediaSessionService)
+        private PluginSettings globalSettings;
+
+        public NowPlayingComponent(ILogger<NowPlayingComponent> logger)
         {
-            ComponentLogger = clogger;
-            MediaSessionService = mediaSessionService;
-            MediaSessionService.StartAsync();
-            MediaSessionService.MediaSessionChanged += MediaSessionChanged;
             InitializeComponent();
+            Logger = logger;
+            globalSettings =
+                ConfigureFileHelper.LoadConfig<PluginSettings>(
+                    Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
         }
 
         void NowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
@@ -48,38 +52,49 @@ namespace MediaIsland.Components
         void NowPlayingComponent_OnUnloaded(object sender, RoutedEventArgs e)
         {
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
-            MediaSessionService.MediaSessionChanged -= MediaSessionChanged;
-            //MediaSessionService.StopAsync();
+            if (mediaManager.IsStarted) mediaManager.Dispose();
         }
 
         private async void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
             if (e.PropertyName == "IsHideWhenPaused")
             {
-                if (currentSession?.ControlSession?.GetPlaybackInfo().PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                try
                 {
-                    await Dispatcher.InvokeAsync(() =>
+                    GlobalSystemMediaTransportControlsSessionManager _sessionManager =
+                        await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
+                    var playbackInfo = _sessionManager.GetCurrentSession().GetPlaybackInfo();
+                    if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
                     {
-                        MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
-                    });
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            MediaGrid.Visibility =
+                                Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
+                        });
+                    }
+                }
+                catch
+                {
                 }
             }
+
             if (e.PropertyName == "SubInfoType")
             {
-            	switch (Settings.SubInfoType)
-            	{
-            		case 0:
-            			artistText.Visibility = Visibility.Visible;
-            			timeText.Visibility = Visibility.Collapsed;
-            			break;
-            		case 1:
-            			if (timeText.Text != "00:00 / 00:00")
-            			{
-            				artistText.Visibility = Visibility.Collapsed;
-            				timeText.Visibility = Visibility.Visible;
-            			}
-            			break;
-            	}
+                switch (Settings.SubInfoType)
+                {
+                    case 0:
+                        artistText.Visibility = Visibility.Visible;
+                        timeText.Visibility = Visibility.Collapsed;
+                        break;
+                    case 1:
+                        if (timeText.Text != "00:00 / 00:00")
+                        {
+                            artistText.Visibility = Visibility.Collapsed;
+                            timeText.Visibility = Visibility.Visible;
+                        }
+
+                        break;
+                }
             }
         }
 
@@ -88,41 +103,44 @@ namespace MediaIsland.Components
         /// </summary>
         async void LoadCurrentPlayingInfoAsync()
         {
-            //mediaManager = new MediaManager();
-            //mediaManager.OnAnySessionOpened += MediaManager_OnAnySessionOpened;
-            //mediaManager.OnAnySessionClosed += MediaManager_OnAnySessionClosed;
-            //mediaManager.OnFocusedSessionChanged += MediaManager_OnFocusedSessionChanged;
-            //mediaManager.OnAnyPlaybackStateChanged += MediaManager_OnAnyPlaybackStateChanged;
-            //mediaManager.OnAnyMediaPropertyChanged += MediaManager_OnAnyMediaPropertyChanged;
-            //mediaManager.OnAnyTimelinePropertyChanged += MediaManager_OnAnyTimelinePropertyChanged;
+            mediaManager.OnAnySessionOpened += MediaManager_OnAnySessionOpened;
+            mediaManager.OnAnySessionClosed += MediaManager_OnAnySessionClosed;
+            mediaManager.OnFocusedSessionChanged += MediaManager_OnFocusedSessionChanged;
+            mediaManager.OnAnyPlaybackStateChanged += MediaManager_OnAnyPlaybackStateChanged;
+            mediaManager.OnAnyMediaPropertyChanged += MediaManager_OnAnyMediaPropertyChanged;
+            mediaManager.OnAnyTimelinePropertyChanged += MediaManager_OnAnyTimelinePropertyChanged;
 
-            //await mediaManager.StartAsync();
             try
             {
-                    var currentSession = MediaSessionService.CurrentSession;
-                    ComponentLogger!.LogInformation("尝试获取 SMTC 会话信息");
+                if (!mediaManager.IsStarted) await mediaManager.StartAsync();
+            }
+            catch (COMException)
+            {
+                Logger!.LogWarning("无法获取 SMTC 会话管理器。");
+                await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
+                return;
+            }
+
+            try
+            {
+                var currentSession = mediaManager.GetFocusedSession();
+                Logger!.LogInformation("尝试获取 SMTC 会话信息");
                 if (currentSession != null)
                 {
-                    ComponentLogger!.LogInformation("存在 SMTC 会话信息");
-                    ComponentLogger!.LogDebug("刷新【正在播放】组件内容");
+                    Logger!.LogInformation("存在 SMTC 会话信息");
+                    Logger!.LogDebug("刷新【正在播放】组件内容");
                     await RefreshMediaInfo(currentSession);
                 }
                 else
                 {
-                    ComponentLogger!.LogInformation("不存在 SMTC 会话信息，隐藏组件 UI");
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        MediaGrid.Visibility = Visibility.Collapsed;
-                    });
+                    Logger!.LogInformation("不存在 SMTC 会话信息，隐藏组件 UI");
+                    await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
                 }
             }
-                catch (Exception ex)
+            catch (Exception ex)
             {
-                ComponentLogger!.LogError($"获取 SMTC 会话时发生错误: {ex.Message}");
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    MediaGrid.Visibility = Visibility.Collapsed;
-                });
+                Logger!.LogError($"获取 SMTC 会话时发生错误: {ex.Message}");
+                await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
             }
         }
 
@@ -144,136 +162,132 @@ namespace MediaIsland.Components
                         try
                         {
                             string sourceApp = session.ControlSession.SourceAppUserModelId;
-                            var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
-                            var timeline = session.ControlSession.GetTimelineProperties();
-                            var playbackInfo = session.ControlSession.GetPlaybackInfo();
-                            ComponentLogger!.LogTrace($"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
-                            await Dispatcher.InvokeAsync(async () =>
+                            if (IsSourceEnabled(sourceApp, globalSettings.MediaSourceList))
                             {
-                                sourceText.Text = await AppInfoHelper.GetFriendlyAppNameAsync(sourceApp);
-                                sourceIcon.ImageSource = IconHelper.GetAppIcon(sourceApp);
-                                await RefreshMediaProperties(session);
-                                await RefreshPlaybackInfo(session);
-                                await RefreshTimelineProperties(session);
-                            });
-                            
+                                var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
+                                var timeline = session.ControlSession.GetTimelineProperties();
+                                var playbackInfo = session.ControlSession.GetPlaybackInfo();
+                                Logger!.LogTrace(
+                                    $"当前 SMTC 信息：[{sourceApp}] {mediaProperties.Artist} - {mediaProperties.Title} ({playbackInfo.PlaybackStatus}) [{timeline.Position} / {timeline.EndTime}]");
+                                await Dispatcher.InvokeAsync(new Action(async () =>
+                                {
+                                    if (playbackInfo.PlaybackStatus ==
+                                        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                                    {
+                                        MediaGrid.Visibility = Settings.IsHideWhenPaused
+                                            ? Visibility.Collapsed
+                                            : Visibility.Visible;
+                                    }
+                                    else
+                                    {
+                                        MediaGrid.Visibility = Visibility.Visible;
+                                        StatusIcon.Kind = PackIconKind.Pause;
+                                    }
+
+                                    // 更新播放状态
+                                    if (playbackInfo.PlaybackStatus ==
+                                        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
+                                    {
+                                        StatusIcon.Kind = PackIconKind.Play;
+                                    }
+                                    else if (playbackInfo.PlaybackStatus ==
+                                             GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                                    {
+                                        StatusIcon.Kind = PackIconKind.Pause;
+                                    }
+                                    else if (playbackInfo.PlaybackStatus ==
+                                             GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
+                                    {
+                                        StatusIcon.Kind = PackIconKind.Stop;
+                                    }
+                                    else if (playbackInfo.PlaybackStatus ==
+                                             GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
+                                    {
+                                        StatusIcon.Kind = PackIconKind.Refresh;
+                                    }
+
+                                    // 更新 UI 内容
+                                    titleText.Text = mediaProperties.Title ?? "未知标题";
+                                    artistText.Text = mediaProperties.Artist ?? "未知艺术家";
+                                    //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
+
+                                    var thumb = mediaProperties.Thumbnail;
+                                    if (thumb != null)
+                                    {
+                                        if (globalSettings.IsCutSpotifyTrademarkEnabled && AppInfoHelper.IsSourceAppSpotify(sourceApp))
+                                        {
+                                            AlbumArt.ImageSource =
+                                                await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
+                                        }
+                                        else
+                                        {
+                                            AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
+                                        }
+
+                                        CoverPlaceholder.Visibility = Visibility.Collapsed;
+                                    }
+                                    else
+                                    {
+                                        AlbumArt.ImageSource = null;
+                                        CoverPlaceholder.Visibility = Visibility.Visible;
+                                    }
+
+                                    (string appName, ImageSource? appIcon) =
+                                        MediaPlayerData.GetMediaPlayerData(sourceApp);
+                                    sourceText.Text = appName;
+                                    sourceIcon.ImageSource = appIcon;
+
+                                    // 进度处理
+                                    //UpdateProgressUI(timeline.Position, timeline.EndTime);
+                                    //progressBar.Maximum = (int)timeline.EndTime.TotalSeconds;
+                                    //progressBar.Value = (int)timeline.Position.TotalSeconds;
+                                    timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
+                                    // 更新 UI 时处理时间轴
+                                    if (Settings.SubInfoType == 1)
+                                    {
+                                        if (timeline.Position != timeline.EndTime)
+                                        {
+                                            artistText.Visibility = Visibility.Collapsed;
+                                            timeText.Visibility = Visibility.Visible;
+                                        }
+                                        else
+                                        {
+                                            artistText.Visibility = Visibility.Visible;
+                                            timeText.Visibility = Visibility.Collapsed;
+                                        }
+                                    }
+                                }));
+                            }
+                            else
+                            {
+                                Logger!.LogInformation("当前 SMTC 会话 [{sourceApp}] 已禁用，自动隐藏", sourceApp);
+                                await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
+                            }
                         }
                         catch
+
                         {
-                            ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
-                            await Dispatcher.InvokeAsync(() =>
-                            {
-                                MediaGrid.Visibility = Visibility.Collapsed;
-                            });
+                            Logger!.LogWarning("SMTC 会话为空，无法获取信息");
+                            await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
                         }
                     }
+
                     else
                     {
-                        ComponentLogger!.LogWarning("SMTC 会话为空，无法获取信息");
-                        await Dispatcher.InvokeAsync(() =>
-                        {
-                            MediaGrid.Visibility = Visibility.Collapsed;
-                        });
+                        Logger!.LogWarning("SMTC 会话为空，无法获取信息");
+                        await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
                     }
                 }
                 else
                 {
-                    await Dispatcher.InvokeAsync(() =>
-                    {
-                        MediaGrid.Visibility = Visibility.Collapsed;
-                    });
+                    await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
                 }
             }
             catch (Exception ex)
             {
-                ComponentLogger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
+                Logger!.LogError($"获取 SMTC 信息失败：{ex.Message}");
             }
-        }
-
-        async Task RefreshMediaProperties(MediaSession session)
-        {
-            string sourceApp = session.ControlSession.SourceAppUserModelId;
-            var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
-            var thumb = mediaProperties.Thumbnail;
-            await Dispatcher.InvokeAsync(new Action(async () =>
-            {
-                // 更新标题、艺术家
-                titleText.Text = mediaProperties.Title ?? "未知标题";
-                artistText.Text = mediaProperties.Artist ?? "未知艺术家";
-                //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-            }));
-           
-            await Dispatcher.InvokeAsync(new Action(async () =>
-            {
-                // 更新封面
-                if (thumb != null)
-                {
-                    if (AppInfoHelper.IsSourceAppSpotify(sourceApp))
-                    {
-                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb, isSourceAppSpotify: true);
-                    }
-                    else
-                    {
-                        AlbumArt.ImageSource = await ThumbnailHelper.GetThumbnail(thumb);
-                    }
-                    CoverPlaceholder.Visibility = Visibility.Collapsed;
-                }
-                else
-                {
-                    AlbumArt.ImageSource = null;
-                    CoverPlaceholder.Visibility = Visibility.Visible;
-                }
-            }));
-        }
-
-        async Task RefreshPlaybackInfo(MediaSession session)
-        {
-            var playbackInfo = session.ControlSession.GetPlaybackInfo();
-            await Dispatcher.InvokeAsync(new Action(() =>
-            {
-                // 更新播放状态
-                if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing)
-                {
-                    MediaGrid.Visibility = Visibility.Visible;
-                    StatusIcon.Kind = PackIconKind.Play;
-                }
-                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
-                {
-                    StatusIcon.Kind = PackIconKind.Pause;
-                    MediaGrid.Visibility = Settings.IsHideWhenPaused ? Visibility.Visible : Visibility.Collapsed;
-                }
-                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped)
-                {
-                    StatusIcon.Kind = PackIconKind.Stop;
-                }
-                else if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing)
-                {
-                    StatusIcon.Kind = PackIconKind.Refresh;
-                }
-            }));
-        }
-
-        async Task RefreshTimelineProperties(MediaSession session)
-        {
-            var timeline = session.ControlSession.GetTimelineProperties();
-            await Dispatcher.InvokeAsync(new Action(() =>
-            {
-                // 更新 UI 时处理时间轴
-                if (Settings.SubInfoType == 1)
-                {
-                    if (timeline.Position != timeline.EndTime)
-                    {
-                        artistText.Visibility = Visibility.Collapsed;
-                        timeText.Visibility = Visibility.Visible;
-                    }
-                    else
-                    {
-                        artistText.Visibility = Visibility.Visible;
-                        timeText.Visibility = Visibility.Collapsed;
-                    }
-                }
-                timeText.Text = $"{timeline.Position:mm\\:ss} / {timeline.EndTime:mm\\:ss}";
-            }));
+            
         }
 
         //private void UpdateProgressUI(TimeSpan position, TimeSpan duration)
@@ -287,16 +301,121 @@ namespace MediaIsland.Components
         //    }
         //}
 
-        async void MediaSessionChanged(Object? sender, MediaSession? session)
+        /// <summary>
+        /// SMTC 会话打开事件
+        /// </summary>
+        /// <param name="sender">发出事件的 SMTC 会话</param>
+        async void MediaManager_OnAnySessionOpened(MediaSession sender)
         {
-            if (session == null)
+            Logger.LogDebug($"新 SMTC 会话：{sender.Id}");
+            await RefreshMediaInfo(sender);
+        }
+
+        /// <summary>
+        /// SMTC 会话关闭事件
+        /// </summary>
+        /// <param name="sender">发出事件的 SMTC 会话</param>
+        void MediaManager_OnAnySessionClosed(MediaManager.MediaSession sender)
+        {
+            Logger!.LogDebug($"SMTC 会话关闭：{sender.Id}");
+            sender.MediaManagerInstance.ForceUpdate();
+            //await RefreshMediaInfo(sender);
+        }
+
+        /// <summary>
+        /// SMTC 会话焦点改变事件
+        /// </summary>
+        /// <param name="sender">发出事件的 SMTC 会话</param>
+        async void MediaManager_OnFocusedSessionChanged(MediaSession sender)
+        {
+            Logger!.LogDebug($"SMTC 会话焦点改变：{sender?.ControlSession?.SourceAppUserModelId}");
+            if (sender?.ControlSession == null)
             {
-                await Dispatcher.InvokeAsync(() =>
-                {
-                    MediaGrid.Visibility = Visibility.Collapsed;
-                });
+                // 无会话时隐藏 UI
+                await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
             }
-            await RefreshMediaInfo(session);
+            else
+            {
+                try
+                {
+                    await RefreshMediaInfo(sender);
+                }
+                catch
+                {
+                    // 刷新失败时隐藏 UI
+                    await Dispatcher.InvokeAsync(() => { MediaGrid.Visibility = Visibility.Collapsed; });
+                }
+            }
+        }
+
+        /// <summary>
+        /// SMTC 播放状态改变事件
+        /// </summary>
+        /// <param name="sender">发出事件的 SMTC 会话</param>
+        async void MediaManager_OnAnyPlaybackStateChanged(MediaSession sender,
+            GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
+        {
+            Logger!.LogDebug($"SMTC 播放状态改变：{sender.Id} is now {args.PlaybackStatus}");
+            try
+            {
+                if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        MediaGrid.Visibility =
+                            Settings.IsHideWhenPaused ? Visibility.Collapsed : Visibility.Visible;
+                    });
+                }
+
+                await RefreshMediaInfo(sender);
+            }
+            catch
+            {
+                // pass
+            }
+        }
+
+        /// <summary>
+        /// SMTC 媒体属性改变事件
+        /// </summary>
+        /// <param name="sender">发出事件的 SMTC 会话</param>
+        async void MediaManager_OnAnyMediaPropertyChanged(MediaSession sender,
+            GlobalSystemMediaTransportControlsSessionMediaProperties args)
+        {
+            Logger!.LogDebug(
+                $"SMTC 媒体属性改变：{sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
+            await RefreshMediaInfo(sender);
+        }
+
+        /// <summary>
+        /// SMTC 时间属性改变事件
+        /// </summary>
+        /// <param name="sender">发出事件的 SMTC 会话</param>
+        async void MediaManager_OnAnyTimelinePropertyChanged(MediaSession sender,
+            GlobalSystemMediaTransportControlsSessionTimelineProperties args)
+        {
+            //Logger!.LogDebug($"SMTC 时间属性改变：{sender.Id} timeline is now {args.Position}/{args.EndTime}");
+            //await RefreshMediaInfo(sender);
+        }
+
+        private bool IsSourceEnabled(string appUserModelId, IEnumerable<MediaSource> sources)
+        {
+            foreach (var source in sources)
+            {
+                try
+                {
+                    if (appUserModelId.Equals(source.Source))
+                    {
+                        return source.IsEnabled;
+                    }
+                }
+                catch
+                {
+                    // ignored
+                }
+            }
+
+            return true;
         }
     }
 }

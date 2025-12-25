@@ -1,29 +1,75 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+﻿using System.Collections.ObjectModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace MediaIsland.Models
 {
     public class PluginSettings : ObservableRecipient
     {
-        private bool _IsLXMusicLyricForwarderEnabled = false;
-        int _LXMusicAPIPort = 23330;
+        // Not implemented
+        private bool _isLyricGetterEnabled = false;
 
-        public bool IsLXMusicLyricForwarderEnabled
+        public bool IsLyricGetterEnabled
         {
-            get => _IsLXMusicLyricForwarderEnabled;
+            get => _isLyricGetterEnabled;
             set
             {
-                if (_IsLXMusicLyricForwarderEnabled == value) return;
-                _IsLXMusicLyricForwarderEnabled = value;
+                if (_isLyricGetterEnabled == value) return;
+                _isLyricGetterEnabled = value;
                 OnPropertyChanged();
             }
         }
-        public int LXMusicAPIPort
+        private bool _isCutSpotifyTrademarkEnabled = false;
+
+        public bool IsCutSpotifyTrademarkEnabled
         {
-            get => _LXMusicAPIPort;
+            get => _isCutSpotifyTrademarkEnabled;
             set
             {
-                if (_LXMusicAPIPort == value) return;
-                _LXMusicAPIPort = value;
+                if (_isCutSpotifyTrademarkEnabled  == value) return;
+                _isCutSpotifyTrademarkEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public ObservableCollection<MediaSource> MediaSourceList { get; set; } = [];
+        
+        private bool _isTodayEatSentry = true;
+
+        public bool IsTodayEatSentry
+        {
+            get => _isTodayEatSentry;
+            set
+            {
+                if (_isTodayEatSentry == value) return;
+                _isTodayEatSentry = value;
+                OnPropertyChanged();
+            }
+        }
+
+    }
+    public class MediaSource : ObservableObject
+    {
+        private string _source = string.Empty;
+        private bool _isEnabled = true;
+
+        public string Source
+        {
+            get => _source;
+            set
+            {
+                if (_source == value) return;
+                _source = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set
+            {
+                if (_isEnabled == value) return;
+                _isEnabled = value;
                 OnPropertyChanged();
             }
         }
