@@ -14,27 +14,38 @@ static class Program
             var logger = new ConsoleLogger<MediaService>();
             var mediaService = new MediaService(logger);
 
+            // Test Case 1 & 4: Title, Artist, Album AND Source on Media Change
             mediaService.OnMediaPropertiesChanged += (sender, info) =>
             {
-                if (info == null)
-                {
-                    Console.WriteLine("\n[Media Info] No media playing or info unavailable.");
-                    return;
-                }
+                if (info == null) return;
+                Console.WriteLine($"\n[Test Case 1] Metadata Changed:");
+                Console.WriteLine($"Title:  {info.Title}");
+                Console.WriteLine($"Artist: {info.Artist}");
+                Console.WriteLine($"Album:  {info.AlbumTitle}");
 
-                Console.WriteLine($"\n[Media Info] Update at {DateTime.Now:T}");
-                Console.WriteLine($"Title:    {info.Title}");
-                Console.WriteLine($"Artist:   {info.Artist}");
-                Console.WriteLine($"Album:    {info.AlbumTitle}");
-                Console.WriteLine($"Timeline: {info.Position} / {info.Duration}");
-                Console.WriteLine($"Status:   {info.PlaybackInfo?.PlaybackStatus}");
-                Console.WriteLine($"Source:   {info.SourceApp}");
+                Console.WriteLine($"\n[Test Case 4] Source Info:");
+                Console.WriteLine($"Source: {info.SourceApp}");
+            };
+
+            // Test Case 2: Timeline
+            mediaService.OnTimelinePropertyChanged += (sender, args) =>
+            {
+                Console.WriteLine($"\n[Test Case 2] Timeline Updated:");
+                Console.WriteLine($"Position: {args.Position}");
+                Console.WriteLine($"End:      {args.EndTime}");
+            };
+
+            // Test Case 3: Status
+            mediaService.OnPlaybackStateChanged += (sender, args) =>
+            {
+                Console.WriteLine($"\n[Test Case 3] Playback Status Changed:");
+                Console.WriteLine($"Status: {args.PlaybackStatus}");
             };
 
             Console.WriteLine("Starting MediaService...");
             await mediaService.StartAsync();
 
-            Console.WriteLine("MediaService started. Press Enter to exit.");
+            Console.WriteLine("MediaService started. Waiting for events... Press Enter to exit.");
             Console.ReadLine();
 
             mediaService.Dispose();
