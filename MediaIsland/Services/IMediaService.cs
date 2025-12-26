@@ -19,6 +19,10 @@ public interface IMediaService : IDisposable
     /// SMTC 会话改变事件
     /// </summary>
     event EventHandler? OnFocusedSessionChanged;
+    /// <summary>
+    /// SMTC 时间轴改变事件
+    /// </summary>
+    event EventHandler<GlobalSystemMediaTransportControlsSessionTimelineProperties>? OnTimelinePropertyChanged;
 
     /// <summary>
     /// 启动媒体服务

@@ -17,6 +17,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
     public event EventHandler<MediaInfo?>? OnMediaPropertiesChanged;
     public event EventHandler<GlobalSystemMediaTransportControlsSessionPlaybackInfo>? OnPlaybackStateChanged;
     public event EventHandler? OnFocusedSessionChanged;
+    public event EventHandler<GlobalSystemMediaTransportControlsSessionTimelineProperties>? OnTimelinePropertyChanged;
 
     private int _disposed;
 
@@ -26,10 +27,11 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
         {
             if (!_mediaManager.IsStarted)
             {
-                _mediaManager.OnAnySessionOpened += OnAnySessionOpened; 
+                _mediaManager.OnAnySessionOpened += OnAnySessionOpened;
                 _mediaManager.OnAnySessionClosed += OnAnySessionClosed;
                 _mediaManager.OnFocusedSessionChanged += OnCurrentSessionChanged;
                 _mediaManager.OnAnyPlaybackStateChanged += OnAnyPlaybackStateChanged;
+                _mediaManager.OnAnyTimelinePropertyChanged += OnAnyTimelinePropertyChanged;
                 _mediaManager.OnAnyMediaPropertyChanged += OnAnyMediaPropertyChanged;
                 await _mediaManager.StartAsync();
             }
@@ -55,15 +57,16 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
             return;
         if (_mediaManager.IsStarted)
         {
-            _mediaManager.OnAnySessionOpened -= OnAnySessionOpened; 
+            _mediaManager.OnAnySessionOpened -= OnAnySessionOpened;
             _mediaManager.OnAnySessionClosed -= OnAnySessionClosed;
             _mediaManager.OnFocusedSessionChanged -= OnCurrentSessionChanged;
             _mediaManager.OnAnyPlaybackStateChanged -= OnAnyPlaybackStateChanged;
+            _mediaManager.OnAnyTimelinePropertyChanged -= OnAnyTimelinePropertyChanged;
             _mediaManager.OnAnyMediaPropertyChanged -= OnAnyMediaPropertyChanged;
             _mediaManager.Dispose();
         }
     }
-    
+
     private void OnAnySessionOpened(MediaSession sender)
     {
         logger.LogDebug($"New SMTC session: {sender.Id}");
@@ -75,7 +78,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
         logger.LogDebug($"SMTC session closed: {sender.Id}");
         OnFocusedSessionChanged?.Invoke(this, EventArgs.Empty);
     }
-    
+
     private void OnCurrentSessionChanged(MediaSession? sender)
     {
         logger.LogDebug($"Focused SMTC session changed: {sender?.ControlSession?.SourceAppUserModelId}");
@@ -98,12 +101,18 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
         RefreshMediaInfo(sender);
     }
 
+    private void OnAnyTimelinePropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
+    {
+        OnTimelinePropertyChanged?.Invoke(this, args);
+        RefreshMediaInfo(sender);
+    }
+
     private void OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
     {
         logger.LogDebug($"SMTC media properties changed: {sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
         RefreshMediaInfo(sender);
     }
-    
+
     private async Task RefreshMediaInfo(MediaSession session)
     {
         if (session?.ControlSession == null)
@@ -133,7 +142,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
                 playbackInfo,
                 thumbnail
             );
-            
+
             CurrentMediaInfo = data; // Store the current media info
             OnMediaPropertiesChanged?.Invoke(this, data);
         }
