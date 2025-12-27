@@ -60,7 +60,7 @@ static class Program
 
                 try
                 {
-                    var query = $"{info.Artist} - {info.Title}";
+                    var query = $"{info.Title} - {info.Artist.Replace("/", "")}";
                     var searchResults = await searcher.SearchForResults(query);
 
                     if (searchResults is null or { Count: 0 })
