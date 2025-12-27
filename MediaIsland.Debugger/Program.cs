@@ -1,21 +1,23 @@
 using MediaIsland.Services;
 using Microsoft.Extensions.Logging;
-using Lyricify.Lyrics.Helpers;
 using Lyricify.Lyrics.Searchers;
 using Lyricify.Lyrics.Models;
 using Lyricify.Lyrics.Parsers;
-using System.Linq;
-using System.Threading.Tasks;
+using System.Text;
+using System.Text.Json;
 
 namespace MediaIsland.Debugger;
 
 static class Program
 {
+    private static readonly HttpClient client = new HttpClient();
+
     static async Task Main(string[] args)
     {
         bool showLyricsOnly = args.Contains("--lyrics");
         LyricsData? currentLyrics = null;
         string? currentLine = null;
+        
 
         if (!showLyricsOnly)
         {
@@ -184,6 +186,7 @@ static class Program
                                     if (!string.IsNullOrEmpty(lineContent))
                                     {
                                         Console.WriteLine(lineContent);
+                                        _ = PostLyric(lineContent);
                                     }
                                 }
                             }
@@ -201,6 +204,17 @@ static class Program
         {
             Console.WriteLine(ex);
         }
+    }
+
+    private static async Task PostLyric(string lyric)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(new { lyric, extra = "" });
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            await client.PostAsync("http://127.0.0.1:50063/component/lyrics/lyrics/", content);
+        }
+        catch { }
     }
 }
 public class ConsoleLogger<T> : ILogger<T>
