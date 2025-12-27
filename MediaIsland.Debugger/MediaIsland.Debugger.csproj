@@ -8,6 +8,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+      <PackageReference Include="Lyricify.Lyrics.Helper" Version="0.1.4" />
       <ProjectReference Include="..\MediaIsland\MediaIsland.csproj" />
       <PackageReference Include="ClassIsland.PluginSdk" Version="1.6.0.5" />
     </ItemGroup>
