@@ -6,10 +6,6 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 >
 > 本分支面向 ClassIsland 2.0 版本。请切换到 `master` 分支以查看面向 ClassIsland 1.x 的版本。
 
-> [!NOTE]
-> 
-> 本插件暂未上架 ClassIsland 2.0 版本的插件市场，如需在 ClassIsland [1.7.106.2](https://github.com/ClassIsland/ClassIsland/releases/tag/1.7.106.2) 或更高版本上使用，请在安装带 `-civ2` 后缀的插件后使用任意文本编辑器打开 ClassIsland 应用目录下的 `plugins\bywhite.mediaisland\manifest.yml`，将 `apiVersion` 的值修改为 `2.0.0.0` 并保存，重启 ClassIsland 后即可正常加载。
-
 ## 组件
 
 **正在播放**
@@ -38,9 +34,6 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 >
 > 本插件的内存占用较大，低性能设备请谨慎使用。
 
-> [!NOTE]
-> 
-> 在较新的 Windows 版本中，使用部分应用可能无法正常获取播放器信息。
 
 ## 要求
 
