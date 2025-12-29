@@ -21,35 +21,6 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowAlbumArt, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander Foreground="{DynamicResource MaterialDesignBody}"
-                                       IsExpanded="{Binding Settings.IsShowSource, Mode=OneWay}"
-                                       Header="显示当前播放源"
-                                       Description="显示当前媒体的播放源。"
-                                       IconSource="{ci:FluentIconSource &#xF4B6;}"
-                                       IsEnabled="False">
-                <controls:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.IsShowSource, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-                <controls:SettingsExpanderItem Content="显示当前播放源名称" 
-                                               Description="显示当前媒体的播放源名称。"
-                                               IconSource="{ci:FluentIconSource &#xEBDB;}">
-                    <controls:SettingsExpanderItem.Footer>
-                        <ToggleSwitch IsChecked="{Binding Settings.IsShowSourceName, Mode=TwoWay}" />
-                    </controls:SettingsExpanderItem.Footer>
-                </controls:SettingsExpanderItem>
-                <controls:SettingsExpanderItem Content="图标圆角半径" 
-                                               Description="播放源图标的圆角半径，默认为圆形。"
-                                               IconSource="{ci:FluentIconSource &#xF031;}">
-                    <controls:SettingsExpanderItem.Footer>
-                        <Slider Width="160" Minimum="0" Maximum="16" 
-                                Value="{Binding Settings.SourceIconRadius, Mode=TwoWay}"
-                                TickFrequency="0.5"
-                                IsSnapToTickEnabled="True"
-                                Classes="auto-tooltip"
-                                IsEnabled="false"/>
-                    </controls:SettingsExpanderItem.Footer>
-                </controls:SettingsExpanderItem>
-            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBCB;}" Header="显示当前播放状态" Description="显示当前媒体的播放状态。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
