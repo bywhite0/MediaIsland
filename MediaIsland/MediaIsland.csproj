@@ -11,7 +11,7 @@
 
 
 	<ItemGroup>
-		<PackageReference Include="ClassIsland.PluginSdk" Version="1.7.104-dev-v2">
+		<PackageReference Include="ClassIsland.PluginSdk" Version="2.0.0.1">
 			<ExcludeAssets>runtime; native</ExcludeAssets>
 		</PackageReference>
 		<PackageReference Include="Sentry" Version="5.8.1" />
