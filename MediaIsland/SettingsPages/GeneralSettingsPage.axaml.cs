@@ -31,6 +31,7 @@ namespace MediaIsland.SettingsPages
             Plugin = plugin;
             Settings = Plugin.Settings;
             InitializeComponent();
+            Settings.needRestart += RequestRestart;
             sessionManager = GlobalSystemMediaTransportControlsSessionManager.RequestAsync().GetAwaiter().GetResult();
             sessionManager.SessionsChanged += OnSessionsChanged;
             var screenshotApp = new MediaSource

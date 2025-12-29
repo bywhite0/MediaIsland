@@ -1,10 +1,13 @@
 ﻿using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
+using ClassIsland.Core.Abstractions;
 
 namespace MediaIsland.Models
 {
     public class PluginSettings : ObservableRecipient
     {
+        public Action? needRestart;
+        
         // Not implemented
         private bool _isLyricGetterEnabled = false;
 
@@ -28,6 +31,7 @@ namespace MediaIsland.Models
                 if (_isCutSpotifyTrademarkEnabled  == value) return;
                 _isCutSpotifyTrademarkEnabled = value;
                 OnPropertyChanged();
+                needRestart?.Invoke();
             }
         }
 

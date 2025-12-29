@@ -68,6 +68,13 @@
                         </StackPanel>
                     </StackPanel>
                 </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}" 
+                                       Header="移除封面的 Spotify 水印" 
+                                       Description="部分版本的 Spotify 桌面版会在传给 SMTC 的封面下方加入其商标，如果你在插件呈现的封面上看到了，可以打开这个开关。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}" 
                                        Header="匿名使用情况分析" 
                                        Description="本插件使用 Sentry 收集与本插件相关的使用情况与错误信息，以帮助改善本插件，相关信息将被匿名上传。此功能不会收集您的个人信息。">
