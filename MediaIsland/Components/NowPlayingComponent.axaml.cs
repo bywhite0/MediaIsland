@@ -33,11 +33,22 @@ namespace MediaIsland.Components
 
         private PluginSettings globalSettings;
 
+        private DispatcherTimer _timelineTimer;
+        private DateTime _lastTimelineUpdate;
+        private TimeSpan _basePosition;
+        private TimeSpan _currentEndTime;
+        private bool _isPlaying;
+
         public NowPlayingComponent(ILogger<NowPlayingComponent> logger)
         {
             InitializeComponent();
             Logger = logger;
             globalSettings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
+            _timelineTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(100)
+            };
+            _timelineTimer.Tick += OnTimelineTimerTick;
         }
 
         private void NowPlayingComponent_OnLoaded(object? sender, RoutedEventArgs routedEventArgs)
@@ -48,6 +59,7 @@ namespace MediaIsland.Components
 
         private void NowPlayingComponent_OnUnloaded(object? sender, RoutedEventArgs routedEventArgs)
         {
+            _timelineTimer.Stop();
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
             if (MediaManager.IsStarted) MediaManager.Dispose();
         }
@@ -293,14 +305,21 @@ namespace MediaIsland.Components
                             {
                                 // 更新播放状态
                                 case GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing:
+                                    _isPlaying = true;
+                                    _lastTimelineUpdate = DateTime.Now;
+                                    _timelineTimer.Start();
                                     MediaGrid.IsVisible = true;
                                     StatusIcon.Glyph = "\uEDB8";
                                     break;
                                 case GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused:
+                                    _isPlaying = false;
+                                    _timelineTimer.Stop();
                                     StatusIcon.Glyph = "\uEC90";
                                     MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
                                     break;
                                 case GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped:
+                                    _isPlaying = false;
+                                    _timelineTimer.Stop();
                                     StatusIcon.Glyph = "\uF086";
                                     break;
                                 case GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing:
@@ -336,21 +355,10 @@ namespace MediaIsland.Components
                         var timeline = session.ControlSession.GetTimelineProperties();
                         await Dispatcher.UIThread.InvokeAsync(() =>
                         {
-                            // 更新 UI 时处理时间轴
-                            if (Settings.SubInfoType == 1)
-                            {
-                                if (timeline.Position != timeline.EndTime)
-                                {
-                                    ArtistText.IsVisible = false;
-                                    TimeText.IsVisible = true;
-                                }
-                                else
-                                {
-                                    ArtistText.IsVisible = true;
-                                    TimeText.IsVisible = false;
-                                }
-                            }
-                            TimeText.Text = (timeline.EndTime.Hours == 0) ? $@"{timeline.Position:mm\:ss} / {timeline.EndTime:mm\:ss}" : $@"{timeline.Position} / {timeline.EndTime}";
+                            _basePosition = timeline.Position;
+                            _currentEndTime = timeline.EndTime;
+                            _lastTimelineUpdate = DateTime.Now;
+                            UpdateTimelineUi(_basePosition, _currentEndTime);
                         });
                     }
                     catch (Exception ex)
@@ -451,7 +459,11 @@ namespace MediaIsland.Components
                     Dispatcher.UIThread.Invoke(() => { MediaGrid.IsVisible = !Settings.IsHideWhenPaused; });
                 }
 
-                await Dispatcher.UIThread.InvokeAsync(async () => await RefreshPlaybackInfo(sender));
+                await Dispatcher.UIThread.InvokeAsync(async () =>
+                {
+                    await RefreshPlaybackInfo(sender);
+                    await RefreshTimelineProperties(sender);
+                });
             }
             catch
             {
@@ -495,6 +507,34 @@ namespace MediaIsland.Components
                 // ignored
             }
         }
+        private void OnTimelineTimerTick(object? sender, EventArgs e)
+        {
+            if (!_isPlaying) return;
+            var elapsed = DateTime.Now - _lastTimelineUpdate;
+            var currentPosition = _basePosition + elapsed;
+            if (currentPosition > _currentEndTime) currentPosition = _currentEndTime;
+            UpdateTimelineUi(currentPosition, _currentEndTime);
+        }
+
+        private void UpdateTimelineUi(TimeSpan position, TimeSpan duration)
+        {
+            // 更新 UI 时处理时间轴
+            if (Settings.SubInfoType == 1)
+            {
+                if (position != duration)
+                {
+                    ArtistText.IsVisible = false;
+                    TimeText.IsVisible = true;
+                }
+                else
+                {
+                    ArtistText.IsVisible = true;
+                    TimeText.IsVisible = false;
+                }
+            }
+            TimeText.Text = (duration.Hours == 0) ? $@"{position:mm\:ss} / {duration:mm\:ss}" : $@"{position} / {duration}";
+        }
+
         private bool IsSourceEnabled(string appUserModelId, IEnumerable<MediaSource> sources)
         {
             foreach (var source in sources)
