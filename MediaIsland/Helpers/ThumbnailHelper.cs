@@ -35,7 +35,7 @@ namespace MediaIsland.Helpers
                 byte[] imageBytes = thumbnailBytes;
 
                 using var ms = new MemoryStream(imageBytes);
-                // 统一处理图片：裁剪（Spotify  可能的水印）和缩放（512x512）
+                // 统一处理图片：裁剪（Spotify 可能的水印）和缩放（512x512）
                 return ProcessThumbnail(ms, isSourceAppSpotify);
             }
             catch (Exception ex) when (ex is IOException or COMException)
