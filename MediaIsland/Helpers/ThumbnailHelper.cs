@@ -34,16 +34,9 @@ namespace MediaIsland.Helpers
 
                 byte[] imageBytes = thumbnailBytes;
 
-                var ms = new MemoryStream(imageBytes);
-                var image = new Bitmap(ms);
-                // 裁剪 Spotify 封面
-                if (isSourceAppSpotify)
-                {
-                    var cropRect = new SKRectI(33, 0, 234, 234);
-                    return CropBitmap(ms, cropRect);
-                }
-
-                return image;
+                using var ms = new MemoryStream(imageBytes);
+                // 统一处理图片：裁剪（Spotify  可能的水印）和缩放（512x512）
+                return ProcessThumbnail(ms, isSourceAppSpotify);
             }
             catch (Exception ex) when (ex is IOException or COMException)
             {
@@ -54,34 +47,74 @@ namespace MediaIsland.Helpers
 
 
         /// <summary>
-        /// 将图像从流中加载，并裁剪指定区域。
+        /// 处理缩略图，包括可选的裁剪和缩放。
         /// </summary>
         /// <param name="inputStream">原始图像流</param>
-        /// <param name="cropRect">裁剪区域（单位像素）</param>
-        internal static Bitmap CropBitmap(Stream inputStream, SKRectI cropRect)
+        /// <param name="isSpotify">是否为 Spotify 来源（需要特殊裁剪）</param>
+        internal static Bitmap? ProcessThumbnail(Stream inputStream, bool isSpotify)
         {
-            inputStream.Seek(0, SeekOrigin.Begin);
-            using var skStream = new SKManagedStream(inputStream);
-            using var codec = SKCodec.Create(skStream);
-            using var originalBitmap = SKBitmap.Decode(codec);
-
-            using var croppedBitmap = new SKBitmap(cropRect.Width, cropRect.Height);
-            using (var canvas = new SKCanvas(croppedBitmap))
+            try
             {
-                var srcRect = cropRect;
-                var dstRect = new SKRect(0, 0, cropRect.Width, cropRect.Height);
-                canvas.DrawBitmap(originalBitmap, srcRect, dstRect);
-            }
+                inputStream.Seek(0, SeekOrigin.Begin);
+                using var skStream = new SKManagedStream(inputStream);
+                using var codec = SKCodec.Create(skStream);
+                if (codec == null) return null;
+                using var originalBitmap = SKBitmap.Decode(codec);
+                if (originalBitmap == null) return null;
 
-            using var croppedStream = new MemoryStream();
-            using (var skImage = SKImage.FromBitmap(croppedBitmap))
-            using (var data = skImage.Encode(SKEncodedImageFormat.Png, 100))
+                SKBitmap currentBitmap = originalBitmap;
+                bool isNewBitmap = false;
+
+                // 1. 裁剪 Spotify 封面
+                if (isSpotify)
+                {
+                    var cropRect = new SKRectI(33, 0, 234, 234);
+                    var cropped = new SKBitmap(cropRect.Width, cropRect.Height);
+                    using (var canvas = new SKCanvas(cropped))
+                    {
+                        var srcRect = cropRect;
+                        var dstRect = new SKRect(0, 0, cropRect.Width, cropRect.Height);
+                        canvas.DrawBitmap(currentBitmap, srcRect, dstRect);
+                    }
+                    currentBitmap = cropped;
+                    isNewBitmap = true;
+                }
+
+                // 2. 缩小至 512x512
+                const int targetSize = 512;
+                if (currentBitmap.Width > targetSize || currentBitmap.Height > targetSize)
+                {
+                    // 计算缩放比例以保持宽高比
+                    float ratio = Math.Min((float)targetSize / currentBitmap.Width, (float)targetSize / currentBitmap.Height);
+                    int newWidth = (int)(currentBitmap.Width * ratio);
+                    int newHeight = (int)(currentBitmap.Height * ratio);
+
+                    var resized = currentBitmap.Resize(new SKImageInfo(newWidth, newHeight), SKFilterQuality.High);
+                    if (resized != null)
+                    {
+                        if (isNewBitmap) currentBitmap.Dispose();
+                        currentBitmap = resized;
+                        isNewBitmap = true;
+                    }
+                }
+
+                using var outStream = new MemoryStream();
+                using (var skImage = SKImage.FromBitmap(currentBitmap))
+                using (var data = skImage.Encode(SKEncodedImageFormat.Png, 100))
+                {
+                    data.SaveTo(outStream);
+                }
+
+                if (isNewBitmap) currentBitmap.Dispose();
+
+                outStream.Seek(0, SeekOrigin.Begin);
+                return new Bitmap(outStream);
+            }
+            catch (Exception ex)
             {
-                data.SaveTo(croppedStream);
+                logger?.LogError($"处理封面图片时发生错误: {ex.Message}");
+                return null;
             }
-
-            croppedStream.Seek(0, SeekOrigin.Begin);
-            return new Bitmap(croppedStream);
         }
     }
 }
