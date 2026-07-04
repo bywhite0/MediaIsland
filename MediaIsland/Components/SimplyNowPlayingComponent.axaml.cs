@@ -333,17 +333,28 @@ namespace MediaIsland.Components
         private async void MediaManager_OnAnyPlaybackStateChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
         {
             Logger.LogDebug("SMTC 播放状态改变：{SenderId} is now {PlaybackStatus}", sender.Id, args.PlaybackStatus);
-            if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+            if (sender != MediaManager.GetFocusedSession()) return;
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Dispatcher.UIThread.Invoke(() =>
+                if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
                 {
                     MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
-                });
-            }
-            else
-            {
-                await RefreshMediaInfo(sender);
-            }
+                }
+                else
+                {
+                    MediaGrid.IsVisible = true;
+                }
+
+                StatusIcon.Glyph = args.PlaybackStatus switch
+                {
+                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing => "\uEDB8",
+                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused => "\uEC90",
+                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped => "\uF086",
+                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing => "\uE0B4",
+                    _ => StatusIcon.Glyph
+                };
+            });
         }
 
         /// <summary>
