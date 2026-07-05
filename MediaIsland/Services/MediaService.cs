@@ -27,6 +27,9 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
     public event EventHandler? OnFocusedSessionChanged;
     public event EventHandler<GlobalSystemMediaTransportControlsSessionTimelineProperties>? OnTimelinePropertyChanged;
 
+    private readonly object _startSync = new();
+    private Task? _startTask;
+    private bool _mediaManagerEventsSubscribed;
     private int _disposed;
 
     Task IHostedService.StartAsync(CancellationToken cancellationToken)
@@ -49,20 +52,16 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
 
         try
         {
-            if (!_mediaManager.IsStarted)
+            await GetOrCreateStartTask().ConfigureAwait(false);
+            if (_disposed == 1 || !_mediaManager.IsStarted)
             {
-                _mediaManager.OnAnySessionOpened += OnAnySessionOpened;
-                _mediaManager.OnAnySessionClosed += OnAnySessionClosed;
-                _mediaManager.OnFocusedSessionChanged += OnCurrentSessionChanged;
-                _mediaManager.OnAnyPlaybackStateChanged += OnAnyPlaybackStateChanged;
-                _mediaManager.OnAnyTimelinePropertyChanged += OnAnyTimelinePropertyChanged;
-                _mediaManager.OnAnyMediaPropertyChanged += OnAnyMediaPropertyChanged;
-                await _mediaManager.StartAsync();
+                return;
             }
+
             var currentSession = _mediaManager.GetFocusedSession();
             if (currentSession != null)
             {
-                await RefreshMediaInfo(currentSession);
+                await RefreshMediaInfo(currentSession).ConfigureAwait(false);
             }
         }
         catch (COMException)
@@ -75,18 +74,112 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         }
     }
 
-    public void Dispose()
+    private Task GetOrCreateStartTask()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 1)
-            return;
-        if (_mediaManager.IsStarted)
+        lock (_startSync)
         {
+            if (_disposed == 1 || _mediaManager.IsStarted)
+            {
+                return Task.CompletedTask;
+            }
+
+            return _startTask ??= StartMediaManagerAsync();
+        }
+    }
+
+    private async Task StartMediaManagerAsync()
+    {
+        try
+        {
+            if (!EnsureMediaManagerEventsSubscribed())
+            {
+                return;
+            }
+
+            await _mediaManager.StartAsync().ConfigureAwait(false);
+            if (_disposed == 1 && _mediaManager.IsStarted)
+            {
+                _mediaManager.Dispose();
+                lock (_startSync)
+                {
+                    _mediaManagerEventsSubscribed = false;
+                }
+            }
+        }
+        catch (COMException)
+        {
+            ResetStartTaskIfNotStarted();
+            logger.LogWarning("Unable to get SMTC session manager.");
+        }
+        catch (Exception ex)
+        {
+            ResetStartTaskIfNotStarted();
+            logger.LogError(ex, "An error occurred while starting SMTC session manager.");
+        }
+    }
+
+    private void ResetStartTaskIfNotStarted()
+    {
+        lock (_startSync)
+        {
+            if (!_mediaManager.IsStarted)
+            {
+                _startTask = null;
+            }
+        }
+    }
+
+    private bool EnsureMediaManagerEventsSubscribed()
+    {
+        lock (_startSync)
+        {
+            if (_disposed == 1)
+            {
+                return false;
+            }
+
+            if (_mediaManagerEventsSubscribed)
+            {
+                return true;
+            }
+
+            _mediaManager.OnAnySessionOpened += OnAnySessionOpened;
+            _mediaManager.OnAnySessionClosed += OnAnySessionClosed;
+            _mediaManager.OnFocusedSessionChanged += OnCurrentSessionChanged;
+            _mediaManager.OnAnyPlaybackStateChanged += OnAnyPlaybackStateChanged;
+            _mediaManager.OnAnyTimelinePropertyChanged += OnAnyTimelinePropertyChanged;
+            _mediaManager.OnAnyMediaPropertyChanged += OnAnyMediaPropertyChanged;
+            _mediaManagerEventsSubscribed = true;
+            return true;
+        }
+    }
+
+    private void UnsubscribeMediaManagerEvents()
+    {
+        lock (_startSync)
+        {
+            if (!_mediaManagerEventsSubscribed)
+            {
+                return;
+            }
+
             _mediaManager.OnAnySessionOpened -= OnAnySessionOpened;
             _mediaManager.OnAnySessionClosed -= OnAnySessionClosed;
             _mediaManager.OnFocusedSessionChanged -= OnCurrentSessionChanged;
             _mediaManager.OnAnyPlaybackStateChanged -= OnAnyPlaybackStateChanged;
             _mediaManager.OnAnyTimelinePropertyChanged -= OnAnyTimelinePropertyChanged;
             _mediaManager.OnAnyMediaPropertyChanged -= OnAnyMediaPropertyChanged;
+            _mediaManagerEventsSubscribed = false;
+        }
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 1)
+            return;
+        UnsubscribeMediaManagerEvents();
+        if (_mediaManager.IsStarted)
+        {
             _mediaManager.Dispose();
         }
 
@@ -173,8 +266,8 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
             return;
         }
 
+        UpdateCurrentTimeline(args);
         OnTimelinePropertyChanged?.Invoke(this, args);
-        _ = RefreshMediaInfo(sender);
     }
 
     private void OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
@@ -201,6 +294,26 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         }
 
         return sender == _mediaManager.GetFocusedSession();
+    }
+
+    private void UpdateCurrentTimeline(GlobalSystemMediaTransportControlsSessionTimelineProperties timeline)
+    {
+        var current = CurrentMediaInfo;
+        if (current == null)
+        {
+            return;
+        }
+
+        CurrentMediaInfo = new MediaInfo(
+            current.Title,
+            current.Artist,
+            current.AlbumTitle,
+            timeline.Position,
+            timeline.EndTime,
+            current.SourceApp,
+            current.PlaybackInfo,
+            current.Thumbnail
+        );
     }
 
     private async Task RefreshMediaInfo(MediaSession session)
