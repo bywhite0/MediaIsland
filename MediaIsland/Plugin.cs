@@ -33,10 +33,9 @@ namespace MediaIsland
                 ConfigureFileHelper.SaveConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"), Settings);
             };
             services.AddSettingsPage<GeneralSettingsPage>();
-            services.AddSingleton<IMediaService, MediaService>();
-            AppBase.Current.AppStarted += (_,_) => {
-                IAppHost.GetService<IMediaService>();
-            };
+            services.AddSingleton<MediaService>();
+            services.AddSingleton<IMediaService>(provider => provider.GetRequiredService<MediaService>());
+            services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
 #if !DEBUG
             if (Settings.IsTodayEatSentry)
             {

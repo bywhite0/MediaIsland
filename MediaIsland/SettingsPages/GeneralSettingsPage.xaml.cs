@@ -1,7 +1,6 @@
 ﻿using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Data;
 using System.Windows.Media;
 using Windows.Media.Control;
 using ClassIsland.Core.Attributes;
@@ -11,6 +10,7 @@ using ClassIsland.Shared.Helpers;
 using MaterialDesignThemes.Wpf;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
+using MediaIsland.Services;
 
 namespace MediaIsland.SettingsPages
 {
@@ -27,18 +27,21 @@ namespace MediaIsland.SettingsPages
     {
         public Plugin Plugin { get; }
         public PluginSettings Settings { get; }
-        private GlobalSystemMediaTransportControlsSessionManager sessionManager;
-        private GlobalSystemMediaTransportControlsSession? currentSession;
+        private readonly IMediaService _mediaService;
+        private bool _isUnloaded;
 
-        public GeneralSettingsPage(Plugin plugin)
+        public GeneralSettingsPage(Plugin plugin, IMediaService mediaService)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
+            _mediaService = mediaService;
             InitializeComponent();
             DataContext = this;
-            sessionManager = GlobalSystemMediaTransportControlsSessionManager.RequestAsync().GetAwaiter().GetResult();
-            sessionManager.SessionsChanged += OnSessionsChanged;
-            _ = RefreshCurrentMediaInfoAsync();
+            _mediaService.OnMediaPropertiesChanged += MediaService_OnMediaPropertiesChanged;
+            _mediaService.OnPlaybackStateChanged += MediaService_OnPlaybackStateChanged;
+            _mediaService.OnTimelinePropertyChanged += MediaService_OnTimelinePropertyChanged;
+            _mediaService.OnFocusedSessionChanged += MediaService_OnFocusedSessionChanged;
+            _ = RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
             var screenshotApp = new MediaSource
             {
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
@@ -49,22 +52,6 @@ namespace MediaIsland.SettingsPages
                 Settings.MediaSourceList.Add(screenshotApp);
                 SaveSettings();
             }
-        }
-
-        private async void OnSessionsChanged(GlobalSystemMediaTransportControlsSessionManager sender, SessionsChangedEventArgs args)
-        {
-            await RefreshCurrentMediaInfoAsync();
-            var session = sessionManager.GetCurrentSession();
-            if (session == null) return;
-
-            var currentSource = session.SourceAppUserModelId;
-            var sourceItem = new MediaSource
-            {
-                Source = currentSource
-            };
-            if (Settings.MediaSourceList.Any(source => source.Source == currentSource)) return;
-            Settings.MediaSourceList.Add(sourceItem);
-            SaveSettings();
         }
 
         static bool IsLyricsIslandInstalled()
@@ -83,109 +70,95 @@ namespace MediaIsland.SettingsPages
 
         private void AddButtonOnClick(object sender,RoutedEventArgs e)
         {
-            if (sessionManager.GetCurrentSession() == null)
+            var currentSource = _mediaService.CurrentMediaInfo?.SourceApp;
+            if (currentSource == null)
             {
                 CommonDialog.ShowError("未检测到正在播放的媒体，请播放媒体后再试。");
                 return;
             }
-            var currentSource = sessionManager.GetCurrentSession().SourceAppUserModelId;
-            var sourceItem = new MediaSource
+            if (AddMediaSourceIfMissing(currentSource))
             {
-                Source = currentSource
-            };
-            if (Settings.MediaSourceList.All(source => source.Source != currentSource))
-            {
-                Settings.MediaSourceList.Add(sourceItem);
-                SaveSettings();
+                return;
             }   
-            else
-            {
-                CommonDialog.ShowError("列表已存在该媒体源，");
-            }
+
+            CommonDialog.ShowError("列表已存在该媒体源，");
         }
 
-        private async Task RefreshCurrentMediaInfoAsync()
+        private bool AddMediaSourceIfMissing(string currentSource)
         {
-            var session = sessionManager.GetCurrentSession();
-            UpdateCurrentSession(session);
-
-            if (session == null)
+            if (Settings.MediaSourceList.Any(source => source.Source == currentSource))
             {
-                await Dispatcher.InvokeAsync(ClearCurrentMediaInfo);
+                return false;
+            }
+
+            Settings.MediaSourceList.Add(new MediaSource
+            {
+                Source = currentSource
+            });
+            SaveSettings();
+            return true;
+        }
+
+        private async Task RefreshCurrentMediaInfoAsync(MediaInfo? info)
+        {
+            if (info == null)
+            {
+                await UpdateCurrentMediaUiAsync(ClearCurrentMediaInfo);
                 return;
             }
 
             try
             {
-                var sourceApp = session.SourceAppUserModelId;
-                var mediaProperties = await session.TryGetMediaPropertiesAsync();
-                var timeline = session.GetTimelineProperties();
-                var playbackInfo = session.GetPlaybackInfo();
+                var sourceApp = info.SourceApp;
                 var (appName, appIcon) = MediaPlayerData.GetMediaPlayerData(sourceApp);
-                var thumbnail = await ThumbnailHelper.GetThumbnail(mediaProperties.Thumbnail,
-                    AppInfoHelper.IsSourceAppSpotify(sourceApp));
 
-                await Dispatcher.InvokeAsync(() =>
+                await UpdateCurrentMediaUiAsync(() =>
                 {
-                    CurrentMediaTitle.Text = string.IsNullOrWhiteSpace(mediaProperties.Title)
+                    CurrentMediaTitle.Text = string.IsNullOrWhiteSpace(info.Title)
                         ? "未知标题"
-                        : mediaProperties.Title;
+                        : info.Title;
                     CurrentMediaArtistAlbum.Text =
-                        FormatArtistAlbum(mediaProperties.Artist, mediaProperties.AlbumTitle);
-                    CurrentMediaStatus.Text = GetPlaybackStatusText(playbackInfo.PlaybackStatus);
-                    CurrentMediaStatusIcon.Kind = GetPlaybackStatusIcon(playbackInfo.PlaybackStatus);
-                    CurrentMediaTimeline.Text = FormatTimeline(timeline.Position, timeline.EndTime);
+                        FormatArtistAlbum(info.Artist, info.AlbumTitle);
+                    UpdatePlaybackInfo(info.PlaybackInfo);
+                    UpdateTimeline(info.Position, info.Duration);
                     CurrentMediaSource.Text = $"播放源：{appName} ({sourceApp})";
                     SetImage(CurrentMediaSourceIcon, appIcon);
-                    SetThumbnail(thumbnail);
+                    SetThumbnail(info.Thumbnail);
                 });
             }
             catch
             {
-                await Dispatcher.InvokeAsync(ClearCurrentMediaInfo);
+                await UpdateCurrentMediaUiAsync(ClearCurrentMediaInfo);
             }
         }
 
-        private void UpdateCurrentSession(GlobalSystemMediaTransportControlsSession? session)
+        private async void MediaService_OnMediaPropertiesChanged(object? sender, MediaInfo? info)
         {
-            if (ReferenceEquals(currentSession, session)) return;
-
-            if (currentSession != null)
+            if (info != null)
             {
-                currentSession.MediaPropertiesChanged -= CurrentSession_OnMediaPropertiesChanged;
-                currentSession.PlaybackInfoChanged -= CurrentSession_OnPlaybackInfoChanged;
-                currentSession.TimelinePropertiesChanged -= CurrentSession_OnTimelinePropertiesChanged;
+                await UpdateCurrentMediaUiAsync(() => AddMediaSourceIfMissing(info.SourceApp));
             }
 
-            currentSession = session;
-
-            if (currentSession != null)
-            {
-                currentSession.MediaPropertiesChanged += CurrentSession_OnMediaPropertiesChanged;
-                currentSession.PlaybackInfoChanged += CurrentSession_OnPlaybackInfoChanged;
-                currentSession.TimelinePropertiesChanged += CurrentSession_OnTimelinePropertiesChanged;
-            }
+            await RefreshCurrentMediaInfoAsync(info);
         }
 
-        private async void CurrentSession_OnMediaPropertiesChanged(
-            GlobalSystemMediaTransportControlsSession sender,
-            MediaPropertiesChangedEventArgs args)
+        private void MediaService_OnPlaybackStateChanged(
+            object? sender,
+            GlobalSystemMediaTransportControlsSessionPlaybackInfo playbackInfo)
         {
-            await RefreshCurrentMediaInfoAsync();
+            _ = UpdateCurrentMediaUiAsync(() => UpdatePlaybackInfo(playbackInfo));
         }
 
-        private async void CurrentSession_OnPlaybackInfoChanged(
-            GlobalSystemMediaTransportControlsSession sender,
-            PlaybackInfoChangedEventArgs args)
+        private void MediaService_OnTimelinePropertyChanged(
+            object? sender,
+            GlobalSystemMediaTransportControlsSessionTimelineProperties timeline)
         {
-            await RefreshCurrentMediaInfoAsync();
+            _ = UpdateCurrentMediaUiAsync(() => UpdateTimeline(timeline.Position, timeline.EndTime));
         }
 
-        private async void CurrentSession_OnTimelinePropertiesChanged(
-            GlobalSystemMediaTransportControlsSession sender,
-            TimelinePropertiesChangedEventArgs args)
+        private async void MediaService_OnFocusedSessionChanged(object? sender, EventArgs e)
         {
-            await RefreshCurrentMediaInfoAsync();
+            await RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
         }
 
         private void ClearCurrentMediaInfo()
@@ -213,7 +186,38 @@ namespace MediaIsland.SettingsPages
             return $"{position:mm\\:ss} / {endTime:mm\\:ss}";
         }
 
-        private static string GetPlaybackStatusText(GlobalSystemMediaTransportControlsSessionPlaybackStatus status)
+        private void UpdatePlaybackInfo(GlobalSystemMediaTransportControlsSessionPlaybackInfo? playbackInfo)
+        {
+            var playbackStatus = playbackInfo?.PlaybackStatus;
+            CurrentMediaStatus.Text = GetPlaybackStatusText(playbackStatus);
+            CurrentMediaStatusIcon.Kind = GetPlaybackStatusIcon(playbackStatus);
+        }
+
+        private void UpdateTimeline(TimeSpan position, TimeSpan endTime)
+        {
+            CurrentMediaTimeline.Text = FormatTimeline(position, endTime);
+        }
+
+        private async Task UpdateCurrentMediaUiAsync(Action update)
+        {
+            if (_isUnloaded || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            {
+                return;
+            }
+
+            try
+            {
+                await Dispatcher.InvokeAsync(update);
+            }
+            catch (TaskCanceledException) when (_isUnloaded || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            {
+            }
+            catch (InvalidOperationException) when (_isUnloaded || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            {
+            }
+        }
+
+        private static string GetPlaybackStatusText(GlobalSystemMediaTransportControlsSessionPlaybackStatus? status)
         {
             return status switch
             {
@@ -225,7 +229,7 @@ namespace MediaIsland.SettingsPages
             };
         }
 
-        private static PackIconKind GetPlaybackStatusIcon(GlobalSystemMediaTransportControlsSessionPlaybackStatus status)
+        private static PackIconKind GetPlaybackStatusIcon(GlobalSystemMediaTransportControlsSessionPlaybackStatus? status)
         {
             return status switch
             {
@@ -252,8 +256,11 @@ namespace MediaIsland.SettingsPages
 
         private void GeneralSettingsPage_OnUnloaded(object sender, RoutedEventArgs e)
         {
-            sessionManager.SessionsChanged -= OnSessionsChanged;
-            UpdateCurrentSession(null);
+            _isUnloaded = true;
+            _mediaService.OnMediaPropertiesChanged -= MediaService_OnMediaPropertiesChanged;
+            _mediaService.OnPlaybackStateChanged -= MediaService_OnPlaybackStateChanged;
+            _mediaService.OnTimelinePropertyChanged -= MediaService_OnTimelinePropertyChanged;
+            _mediaService.OnFocusedSessionChanged -= MediaService_OnFocusedSessionChanged;
         }
 
         private void DeleteButtonOnClick(object sender,RoutedEventArgs e)

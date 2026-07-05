@@ -4,15 +4,19 @@ using ClassIsland.Shared.Helpers;
 using Windows.Media.Control;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WindowsMediaController;
 using static WindowsMediaController.MediaManager;
 
 namespace MediaIsland.Services;
 
-public class MediaService(ILogger<MediaService> logger) : IMediaService
+public class MediaService(ILogger<MediaService> logger) : IMediaService, IHostedService
 {
-    private readonly MediaManager _mediaManager = new();
+    private readonly MediaManager _mediaManager = new()
+    {
+        Logger = logger
+    };
     private readonly PluginSettings _globalSettings =
         ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
 
@@ -25,8 +29,24 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
 
     private int _disposed;
 
+    Task IHostedService.StartAsync(CancellationToken cancellationToken)
+    {
+        return cancellationToken.IsCancellationRequested ? Task.CompletedTask : StartAsync();
+    }
+
+    Task IHostedService.StopAsync(CancellationToken cancellationToken)
+    {
+        Dispose();
+        return Task.CompletedTask;
+    }
+
     public async Task StartAsync()
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         try
         {
             if (!_mediaManager.IsStarted)
@@ -69,10 +89,21 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
             _mediaManager.OnAnyMediaPropertyChanged -= OnAnyMediaPropertyChanged;
             _mediaManager.Dispose();
         }
+
+        CurrentMediaInfo = null;
+        OnMediaPropertiesChanged = null;
+        OnPlaybackStateChanged = null;
+        OnFocusedSessionChanged = null;
+        OnTimelinePropertyChanged = null;
     }
 
     private void OnAnySessionOpened(MediaSession sender)
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         logger.LogDebug($"New SMTC session: {sender.Id}");
         if (!IsFocusedSession(sender))
         {
@@ -84,12 +115,22 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
 
     private void OnAnySessionClosed(MediaSession sender)
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         logger.LogDebug($"SMTC session closed: {sender.Id}");
         OnFocusedSessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnCurrentSessionChanged(MediaSession? sender)
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         logger.LogDebug($"Focused SMTC session changed: {sender?.ControlSession?.SourceAppUserModelId}");
         if (sender?.ControlSession == null)
         {
@@ -105,6 +146,11 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
 
     private void OnAnyPlaybackStateChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         if (!IsFocusedSession(sender))
         {
             return;
@@ -117,6 +163,11 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
 
     private void OnAnyTimelinePropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         if (!IsFocusedSession(sender))
         {
             return;
@@ -128,6 +179,11 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
 
     private void OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         if (!IsFocusedSession(sender))
         {
             return;
@@ -139,11 +195,21 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
 
     private bool IsFocusedSession(MediaSession sender)
     {
+        if (_disposed == 1 || !_mediaManager.IsStarted)
+        {
+            return false;
+        }
+
         return sender == _mediaManager.GetFocusedSession();
     }
 
     private async Task RefreshMediaInfo(MediaSession session)
     {
+        if (_disposed == 1)
+        {
+            return;
+        }
+
         if (session?.ControlSession == null)
         {
             CurrentMediaInfo = null; // Clear current media info
@@ -161,6 +227,11 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
             var thumbnail = await ThumbnailHelper.GetThumbnail(mediaProperties.Thumbnail,
                 AppInfoHelper.IsSourceAppSpotify(sourceApp) && _globalSettings.IsCutSpotifyTrademarkEnabled);
 
+            if (_disposed == 1)
+            {
+                return;
+            }
+
             var data = new MediaInfo(
                 mediaProperties.Title ?? "未知标题",
                 mediaProperties.Artist ?? "未知艺术家",
@@ -174,6 +245,9 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
 
             CurrentMediaInfo = data; // Store the current media info
             OnMediaPropertiesChanged?.Invoke(this, data);
+        }
+        catch (OperationCanceledException) when (_disposed == 1)
+        {
         }
         catch (Exception ex)
         {
