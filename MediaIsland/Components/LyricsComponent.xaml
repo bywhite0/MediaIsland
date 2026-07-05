@@ -1,0 +1,36 @@
+﻿<ci:ComponentBase x:Class="MediaIsland.Components.LyricsComponent"
+                  x:TypeArguments="local:LyricsComponentConfig"
+                  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                  xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                  xmlns:local="clr-namespace:MediaIsland.Components"
+                  xmlns:md="http://materialdesigninxaml.net/winfx/xaml/themes"
+                  mc:Ignorable="d"
+                  d:DesignHeight="80" d:DesignWidth="420"
+                  Loaded="LyricsComponent_OnLoaded"
+                  Unloaded="LyricsComponent_OnUnloaded">
+    <Grid x:Name="LyricsGrid"
+          HorizontalAlignment="Center"
+          VerticalAlignment="Center"
+          DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:LyricsComponent}}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <md:PackIcon Grid.Column="0"
+                     Kind="MusicNote"
+                     Width="16"
+                     Height="16"
+                     Margin="0 3 4 0"
+                     VerticalAlignment="Center" />
+        <TextBlock x:Name="lyricsText"
+                   Grid.Column="1"
+                   MaxWidth="520"
+                   VerticalAlignment="Center"
+                   TextTrimming="CharacterEllipsis"
+                   TextWrapping="NoWrap"
+                   FontSize="{DynamicResource MainWindowBodyFontSize}" />
+    </Grid>
+</ci:ComponentBase>
