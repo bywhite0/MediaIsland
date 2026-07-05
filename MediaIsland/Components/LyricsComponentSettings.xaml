@@ -19,7 +19,10 @@
                              Description="显示等待媒体信息、查找歌词和未找到歌词等调试状态。"
                              IsOn="{Binding Settings.IsShowStatusText, Mode=TwoWay}" />
             <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
-                Lyrics powered by MediaIsland
+                Powered by MediaIsland
+            </Label>
+            <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
+                Lyrics powered by Netease Cloud Music
             </Label>
         </StackPanel>
     </ScrollViewer>
