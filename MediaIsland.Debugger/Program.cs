@@ -1,8 +1,6 @@
 using MediaIsland.Services;
 using Microsoft.Extensions.Logging;
-using Lyricify.Lyrics.Searchers;
 using Lyricify.Lyrics.Models;
-using Lyricify.Lyrics.Parsers;
 using System.Text;
 using System.Text.Json;
 
@@ -30,7 +28,7 @@ static class Program
             var logger = new ConsoleLogger<MediaService>();
             var mediaService = new MediaService(logger);
 
-            var searcher = new NeteaseSearcher();
+            var lyricsSearchService = new LyricsSearchService(new ConsoleLogger<LyricsSearchService>());
 
             // Timer State
             TimeSpan lastSmtcPosition = TimeSpan.Zero;
@@ -62,52 +60,17 @@ static class Program
 
                 try
                 {
-                    var query = $"{info.Title} - {info.Artist.Replace("/", "")}";
-                    var searchResults = await searcher.SearchForResults(query);
-
-                    if (searchResults is null or { Count: 0 })
-                    {
-                        query = $"{info.Artist} - {info.Title} {info.AlbumTitle}";
-                        searchResults = await searcher.SearchForResults(query);
-                    }
-
-                    if (searchResults is { Count: > 0 })
-                    {
-                        var result = searchResults.First() as NeteaseSearchResult;
-                        if (result != null)
-                        {
-                            if (!showLyricsOnly) Console.WriteLine($"[Lyrics] Found: {result.Title} - {result.Id}");
-
-                            dynamic api = new Lyricify.Lyrics.Providers.Web.Netease.Api();
-                            var response = await api.GetLyric(result.Id);
-
-                            string? lyricsString = null;
-                            try
-                            {
-                                if (response != null)
-                                {
-                                    try { lyricsString = response.Lrc.Lyric; } catch { }
-                                    if (string.IsNullOrEmpty(lyricsString)) try { lyricsString = response.Lyric; } catch { }
-                                }
-                            }
-                            catch { }
-
-                            if (!string.IsNullOrEmpty(lyricsString))
-                            {
-                                lock (syncLock)
-                                {
-                                    currentLyrics = LrcParser.Parse(lyricsString.AsSpan());
-                                }
-                            }
-                            else
-                            {
-                                if (!showLyricsOnly) Console.WriteLine("[Lyrics] Start parsing failed: No text found in response.");
-                            }
-                        }
-                    }
-                    else
+                    var result = await lyricsSearchService.SearchAsync(info);
+                    if (result == null)
                     {
                         if (!showLyricsOnly) Console.WriteLine("[Lyrics] Not found.");
+                        return;
+                    }
+
+                    if (!showLyricsOnly) Console.WriteLine($"[Lyrics] Found: {result.Title} - {result.Id}");
+                    lock (syncLock)
+                    {
+                        currentLyrics = result.Lyrics;
                     }
                 }
                 catch (Exception ex)
