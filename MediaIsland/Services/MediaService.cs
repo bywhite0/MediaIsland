@@ -17,8 +17,9 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
     {
         Logger = logger
     };
-    private readonly PluginSettings _globalSettings =
-        ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
+    private readonly PluginSettings _globalSettings = Plugin.globalConfigFolder is null
+        ? new PluginSettings()
+        : ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder, "Settings.json"));
 
     public MediaInfo? CurrentMediaInfo { get; private set; }
 
@@ -53,16 +54,6 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         try
         {
             await GetOrCreateStartTask().ConfigureAwait(false);
-            if (_disposed == 1 || !_mediaManager.IsStarted)
-            {
-                return;
-            }
-
-            var currentSession = _mediaManager.GetFocusedSession();
-            if (currentSession != null)
-            {
-                await RefreshMediaInfo(currentSession).ConfigureAwait(false);
-            }
         }
         catch (COMException)
         {
@@ -104,6 +95,17 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
                 {
                     _mediaManagerEventsSubscribed = false;
                 }
+            }
+
+            if (_disposed == 1 || !_mediaManager.IsStarted)
+            {
+                return;
+            }
+
+            var currentSession = _mediaManager.GetFocusedSession();
+            if (currentSession != null)
+            {
+                await RefreshMediaInfo(currentSession).ConfigureAwait(false);
             }
         }
         catch (COMException)
@@ -178,10 +180,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         if (Interlocked.Exchange(ref _disposed, 1) == 1)
             return;
         UnsubscribeMediaManagerEvents();
-        if (_mediaManager.IsStarted)
-        {
-            _mediaManager.Dispose();
-        }
+        _mediaManager.Dispose();
 
         CurrentMediaInfo = null;
         OnMediaPropertiesChanged = null;

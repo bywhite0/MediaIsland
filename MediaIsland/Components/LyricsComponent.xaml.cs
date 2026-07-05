@@ -203,17 +203,23 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             }
         }
 
-        var line = lyrics.Lines?
-            .Where(lineInfo => lineInfo.StartTime <= currentMs)
-            .OrderByDescending(lineInfo => lineInfo.StartTime)
-            .FirstOrDefault();
+        var line = lyrics.Lines?.LastOrDefault(lineInfo => lineInfo.StartTime <= currentMs);
 
-        if (line == null || line.Text == _currentLine)
+        if (line == null)
         {
             return;
         }
 
-        _currentLine = line.Text;
+        lock (_syncLock)
+        {
+            if (line.Text == _currentLine)
+            {
+                return;
+            }
+
+            _currentLine = line.Text;
+        }
+
         if (string.IsNullOrWhiteSpace(line.Text))
         {
             SetStatus(string.Empty);
