@@ -1,4 +1,6 @@
+using System.IO;
 using System.Runtime.InteropServices;
+using ClassIsland.Shared.Helpers;
 using Windows.Media.Control;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
@@ -11,6 +13,8 @@ namespace MediaIsland.Services;
 public class MediaService(ILogger<MediaService> logger) : IMediaService
 {
     private readonly MediaManager _mediaManager = new();
+    private readonly PluginSettings _globalSettings =
+        ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
 
     public MediaInfo? CurrentMediaInfo { get; private set; }
 
@@ -70,7 +74,12 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
     private void OnAnySessionOpened(MediaSession sender)
     {
         logger.LogDebug($"New SMTC session: {sender.Id}");
-        RefreshMediaInfo(sender);
+        if (!IsFocusedSession(sender))
+        {
+            return;
+        }
+
+        _ = RefreshMediaInfo(sender);
     }
 
     private void OnAnySessionClosed(MediaSession sender)
@@ -90,27 +99,47 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
         }
         else
         {
-            RefreshMediaInfo(sender);
+            _ = RefreshMediaInfo(sender);
         }
     }
 
     private void OnAnyPlaybackStateChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
     {
+        if (!IsFocusedSession(sender))
+        {
+            return;
+        }
+
         logger.LogDebug($"SMTC playback state changed: {sender.Id} is now {args.PlaybackStatus}");
         OnPlaybackStateChanged?.Invoke(this, args);
-        RefreshMediaInfo(sender);
+        _ = RefreshMediaInfo(sender);
     }
 
     private void OnAnyTimelinePropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionTimelineProperties args)
     {
+        if (!IsFocusedSession(sender))
+        {
+            return;
+        }
+
         OnTimelinePropertyChanged?.Invoke(this, args);
-        RefreshMediaInfo(sender);
+        _ = RefreshMediaInfo(sender);
     }
 
     private void OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
     {
+        if (!IsFocusedSession(sender))
+        {
+            return;
+        }
+
         logger.LogDebug($"SMTC media properties changed: {sender.Id} is now playing {args.Title} {(string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}")}");
-        RefreshMediaInfo(sender);
+        _ = RefreshMediaInfo(sender);
+    }
+
+    private bool IsFocusedSession(MediaSession sender)
+    {
+        return sender == _mediaManager.GetFocusedSession();
     }
 
     private async Task RefreshMediaInfo(MediaSession session)
@@ -130,7 +159,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService
             var timeline = session.ControlSession.GetTimelineProperties();
             var playbackInfo = session.ControlSession.GetPlaybackInfo();
             var thumbnail = await ThumbnailHelper.GetThumbnail(mediaProperties.Thumbnail,
-                AppInfoHelper.IsSourceAppSpotify(sourceApp));
+                AppInfoHelper.IsSourceAppSpotify(sourceApp) && _globalSettings.IsCutSpotifyTrademarkEnabled);
 
             var data = new MediaInfo(
                 mediaProperties.Title ?? "未知标题",
