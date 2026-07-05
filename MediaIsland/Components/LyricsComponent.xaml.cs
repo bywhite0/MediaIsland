@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
@@ -19,6 +20,12 @@ namespace MediaIsland.Components;
 )]
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
+    private static readonly Duration LyricsTransitionDuration = TimeSpan.FromMilliseconds(220);
+    private static readonly IEasingFunction LyricsTransitionEasing = new CubicEase
+    {
+        EasingMode = EasingMode.EaseOut
+    };
+
     private readonly IMediaService _mediaService;
     private readonly ILogger<LyricsComponent> _logger;
     private readonly LyricsSearchService _lyricsSearchService;
@@ -245,10 +252,53 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         Dispatcher.InvokeAsync(() =>
         {
+            var targetOpacity = isStatusText ? 0.72 : 1.0;
+            if (lyricsText.Text == text && Math.Abs(lyricsText.Opacity - targetOpacity) < 0.001)
+            {
+                UpdateEmptyVisibility();
+                return;
+            }
+
+            StopTextTransition();
             lyricsText.Text = text;
-            lyricsText.Opacity = isStatusText ? 0.72 : 1.0;
+            lyricsText.Opacity = targetOpacity;
+            lyricsTextTransform.Y = 0;
             UpdateEmptyVisibility();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                StartTextTransition(targetOpacity);
+            }
         });
+    }
+
+    private void StartTextTransition(double targetOpacity)
+    {
+        lyricsText.BeginAnimation(
+            OpacityProperty,
+            new DoubleAnimation
+            {
+                From = 0,
+                To = targetOpacity,
+                Duration = LyricsTransitionDuration,
+                EasingFunction = LyricsTransitionEasing,
+                FillBehavior = FillBehavior.Stop
+            });
+        lyricsTextTransform.BeginAnimation(
+            System.Windows.Media.TranslateTransform.YProperty,
+            new DoubleAnimation
+            {
+                From = 4,
+                To = 0,
+                Duration = LyricsTransitionDuration,
+                EasingFunction = LyricsTransitionEasing,
+                FillBehavior = FillBehavior.Stop
+            });
+    }
+
+    private void StopTextTransition()
+    {
+        lyricsText.BeginAnimation(OpacityProperty, null);
+        lyricsTextTransform.BeginAnimation(System.Windows.Media.TranslateTransform.YProperty, null);
     }
 
     private void UpdateEmptyVisibility()

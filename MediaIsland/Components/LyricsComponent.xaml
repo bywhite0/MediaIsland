@@ -31,6 +31,10 @@
                    VerticalAlignment="Center"
                    TextTrimming="CharacterEllipsis"
                    TextWrapping="NoWrap"
-                   FontSize="{DynamicResource MainWindowBodyFontSize}" />
+                   FontSize="{DynamicResource MainWindowBodyFontSize}">
+            <TextBlock.RenderTransform>
+                <TranslateTransform x:Name="lyricsTextTransform" />
+            </TextBlock.RenderTransform>
+        </TextBlock>
     </Grid>
 </ci:ComponentBase>
