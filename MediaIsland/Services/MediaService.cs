@@ -226,7 +226,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         if (sender?.ControlSession == null)
         {
             CurrentMediaInfo = null; // Clear current media info
-            OnFocusedSessionChanged?.Invoke(this, EventArgs.Empty);
+            RaiseEvent(OnFocusedSessionChanged, EventArgs.Empty, "A focused session changed subscriber failed.");
             RaiseMediaPropertiesChanged(null);
         }
         else
@@ -248,7 +248,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         }
 
         logger.LogDebug($"SMTC playback state changed: {sender.Id} is now {args.PlaybackStatus}");
-        OnPlaybackStateChanged?.Invoke(this, args);
+        RaiseEvent(OnPlaybackStateChanged, args, "A playback state changed subscriber failed.");
         _ = RefreshMediaInfo(sender);
     }
 
@@ -265,7 +265,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         }
 
         UpdateCurrentTimeline(args);
-        OnTimelinePropertyChanged?.Invoke(this, args);
+        RaiseEvent(OnTimelinePropertyChanged, args, "A timeline property changed subscriber failed.");
     }
 
     private void OnAnyMediaPropertyChanged(MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
@@ -374,21 +374,47 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
 
     private void RaiseMediaPropertiesChanged(MediaInfo? info)
     {
-        var handlers = OnMediaPropertiesChanged?.GetInvocationList();
+        RaiseEvent(OnMediaPropertiesChanged, info, "A media properties changed subscriber failed.");
+    }
+
+    private void RaiseEvent(EventHandler? eventHandler, EventArgs args, string failureMessage)
+    {
+        var handlers = eventHandler?.GetInvocationList();
         if (handlers == null)
         {
             return;
         }
 
-        foreach (EventHandler<MediaInfo?> handler in handlers)
+        foreach (EventHandler handler in handlers)
         {
             try
             {
-                handler(this, info);
+                handler(this, args);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "A media properties changed subscriber failed.");
+                logger.LogError(ex, failureMessage);
+            }
+        }
+    }
+
+    private void RaiseEvent<TEventArgs>(EventHandler<TEventArgs>? eventHandler, TEventArgs args, string failureMessage)
+    {
+        var handlers = eventHandler?.GetInvocationList();
+        if (handlers == null)
+        {
+            return;
+        }
+
+        foreach (EventHandler<TEventArgs> handler in handlers)
+        {
+            try
+            {
+                handler(this, args);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, failureMessage);
             }
         }
     }

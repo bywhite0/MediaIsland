@@ -81,7 +81,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _mediaService.OnPlaybackStateChanged -= MediaService_OnPlaybackStateChanged;
         _mediaService.OnFocusedSessionChanged -= MediaService_OnFocusedSessionChanged;
         Settings.PropertyChanged -= Settings_OnPropertyChanged;
-        CancelAndDisposeCurrentSearch();
+        CancelCurrentSearch();
     }
 
     private void Settings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -152,7 +152,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _lastArtist = info.Artist;
             var searchCts = new CancellationTokenSource();
             var previousSearchCts = Interlocked.Exchange(ref _searchCts, searchCts);
-            previousSearchCts?.Cancel();
+            CancelSearch(previousSearchCts);
             var token = searchCts.Token;
             var version = Interlocked.Increment(ref _searchVersion);
 
@@ -190,6 +190,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 if (lyrics == null)
                 {
                     SetStatus("未找到歌词");
+                }
+                else
+                {
+                    SetStatus(string.Empty);
                 }
             }
             finally
@@ -322,17 +326,26 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
     }
 
-    private void CancelAndDisposeCurrentSearch()
-    {
-        var searchCts = Interlocked.Exchange(ref _searchCts, null);
-        searchCts?.Cancel();
-        searchCts?.Dispose();
-    }
-
     private void CancelCurrentSearch()
     {
-        var searchCts = Volatile.Read(ref _searchCts);
-        searchCts?.Cancel();
+        var searchCts = Interlocked.Exchange(ref _searchCts, null);
+        CancelSearch(searchCts);
+    }
+
+    private void CancelSearch(CancellationTokenSource? searchCts)
+    {
+        if (searchCts == null)
+        {
+            return;
+        }
+
+        try
+        {
+            searchCts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
     }
 
     private void StartTextTransition(double targetOpacity)
