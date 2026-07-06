@@ -5,7 +5,19 @@ namespace MediaIsland.Components;
 public class LyricsComponentConfig : ObservableRecipient
 {
     private bool _isHideWhenEmpty;
+    private bool _isHideWhenPaused;
     private bool _isShowStatusText = true;
+
+    public bool IsHideWhenPaused
+    {
+        get => _isHideWhenPaused;
+        set
+        {
+            if (_isHideWhenPaused == value) return;
+            _isHideWhenPaused = value;
+            OnPropertyChanged();
+        }
+    }
 
     public bool IsHideWhenEmpty
     {

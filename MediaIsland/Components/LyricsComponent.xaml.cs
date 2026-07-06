@@ -1,8 +1,10 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
+using ClassIsland.Shared.Helpers;
 using Lyricify.Lyrics.Models;
 using MaterialDesignThemes.Wpf;
 using MediaIsland.Models;
@@ -31,15 +33,19 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly DispatcherTimer _lyricsTimer;
     private readonly object _syncLock = new();
+    private readonly PluginSettings _globalSettings;
 
     private LyricsData? _currentLyrics;
     private string? _currentLine;
     private string? _lastTitle;
     private string? _lastArtist;
+    private string _lastStatusText = string.Empty;
+    private bool _isCurrentTextStatus = true;
     private TimeSpan _lastSmtcPosition;
     private long _lastSmtcUpdateTime = Environment.TickCount64;
     private bool _isPlaying;
     private double _playbackRate = 1.0;
+    private GlobalSystemMediaTransportControlsSessionPlaybackStatus? _playbackStatus;
     private CancellationTokenSource? _searchCts;
     private int _searchVersion;
 
@@ -49,6 +55,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _mediaService = mediaService;
         _logger = logger;
         _lyricsSearchService = new LyricsSearchService(logger);
+        _globalSettings = Plugin.globalConfigFolder is null
+            ? new PluginSettings()
+            : ConfigureFileHelper.LoadConfig<PluginSettings>(
+                Path.Combine(Plugin.globalConfigFolder, "Settings.json"));
         _lyricsTimer = new DispatcherTimer
         {
             Interval = TimeSpan.FromMilliseconds(80)
@@ -86,9 +96,23 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void Settings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(LyricsComponentConfig.IsHideWhenEmpty) or nameof(LyricsComponentConfig.IsShowStatusText))
+        if (e.PropertyName == nameof(LyricsComponentConfig.IsShowStatusText))
         {
-            UpdateEmptyVisibility();
+            ApplyCurrentDisplaySettings();
+            return;
+        }
+
+        if (e.PropertyName is nameof(LyricsComponentConfig.IsHideWhenEmpty) or nameof(LyricsComponentConfig.IsHideWhenPaused))
+        {
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (!IsLoaded || Settings == null)
+                {
+                    return;
+                }
+
+                UpdateEmptyVisibility();
+            });
         }
     }
 
@@ -99,6 +123,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void MediaService_OnTimelinePropertyChanged(object? sender, GlobalSystemMediaTransportControlsSessionTimelineProperties timeline)
     {
+        if (!IsCurrentSourceEnabled())
+        {
+            return;
+        }
+
         lock (_syncLock)
         {
             _lastSmtcPosition = timeline.Position;
@@ -108,12 +137,27 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void MediaService_OnPlaybackStateChanged(object? sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo playbackInfo)
     {
+        if (!IsCurrentSourceEnabled())
+        {
+            return;
+        }
+
         lock (_syncLock)
         {
             _isPlaying = playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
             _playbackRate = playbackInfo.PlaybackRate ?? 1.0;
+            _playbackStatus = playbackInfo.PlaybackStatus;
         }
 
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!IsLoaded || Settings == null)
+            {
+                return;
+            }
+
+            UpdateEmptyVisibility();
+        });
         _logger.LogInformation("[Lyrics] Playback status: {Status}", playbackInfo.PlaybackStatus);
     }
 
@@ -122,6 +166,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         if (_mediaService.CurrentMediaInfo == null)
         {
             ClearLyrics("没有可用的媒体会话");
+            return;
+        }
+
+        if (!IsSourceEnabled(_mediaService.CurrentMediaInfo.SourceApp))
+        {
+            ClearLyrics("当前播放源已禁用");
         }
     }
 
@@ -135,13 +185,31 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
+            if (!IsSourceEnabled(info.SourceApp))
+            {
+                _logger.LogInformation("[Lyrics] Source {SourceApp} is disabled, hiding lyrics.", info.SourceApp);
+                ClearLyrics("当前播放源已禁用");
+                return;
+            }
+
             lock (_syncLock)
             {
                 _lastSmtcPosition = info.Position;
                 _lastSmtcUpdateTime = Environment.TickCount64;
                 _isPlaying = info.PlaybackInfo?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
                 _playbackRate = info.PlaybackInfo?.PlaybackRate ?? 1.0;
+                _playbackStatus = info.PlaybackInfo?.PlaybackStatus;
             }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (!IsLoaded || Settings == null)
+                {
+                    return;
+                }
+
+                UpdateEmptyVisibility();
+            });
 
             if (info.Title == _lastTitle && info.Artist == _lastArtist)
             {
@@ -275,12 +343,66 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _lastSmtcUpdateTime = Environment.TickCount64;
             _isPlaying = false;
             _playbackRate = 1.0;
+            _playbackStatus = null;
         }
 
         SetStatus(status);
     }
 
+    private bool IsCurrentSourceEnabled()
+    {
+        var current = _mediaService.CurrentMediaInfo;
+        return current == null || IsSourceEnabled(current.SourceApp);
+    }
+
+    private bool IsSourceEnabled(string appUserModelId)
+    {
+        foreach (var source in _globalSettings.MediaSourceList)
+        {
+            if (appUserModelId.Equals(source.Source, StringComparison.Ordinal))
+            {
+                return source.IsEnabled;
+            }
+        }
+
+        return true;
+    }
+
     private void SetStatus(string text)
+    {
+        _lastStatusText = text;
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!IsLoaded || Settings == null)
+            {
+                return;
+            }
+
+            _isCurrentTextStatus = true;
+            SetTextCore(GetVisibleText(text, isStatusText: true), isStatusText: true);
+        });
+    }
+
+    private void SetText(string text, bool isStatusText)
+    {
+        if (isStatusText)
+        {
+            _lastStatusText = text;
+        }
+
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!IsLoaded || Settings == null)
+            {
+                return;
+            }
+
+            _isCurrentTextStatus = isStatusText;
+            SetTextCore(GetVisibleText(text, isStatusText), isStatusText);
+        });
+    }
+
+    private void ApplyCurrentDisplaySettings()
     {
         Dispatcher.InvokeAsync(() =>
         {
@@ -289,21 +411,19 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
-            SetTextCore(Settings.IsShowStatusText ? text : string.Empty, isStatusText: true);
-        });
-    }
-
-    private void SetText(string text, bool isStatusText)
-    {
-        Dispatcher.InvokeAsync(() =>
-        {
-            if (!IsLoaded)
+            if (_isCurrentTextStatus)
             {
+                SetTextCore(GetVisibleText(_lastStatusText, isStatusText: true), isStatusText: true);
                 return;
             }
 
-            SetTextCore(text, isStatusText);
+            UpdateEmptyVisibility();
         });
+    }
+
+    private string GetVisibleText(string text, bool isStatusText)
+    {
+        return isStatusText && !Settings.IsShowStatusText ? string.Empty : text;
     }
 
     private void SetTextCore(string text, bool isStatusText)
@@ -380,7 +500,14 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void UpdateEmptyVisibility()
     {
-        LyricsGrid.Visibility = Settings.IsHideWhenEmpty && string.IsNullOrWhiteSpace(lyricsText.Text)
+        var isPaused = false;
+        lock (_syncLock)
+        {
+            isPaused = _playbackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused;
+        }
+
+        LyricsGrid.Visibility = (Settings.IsHideWhenPaused && isPaused) ||
+                                (Settings.IsHideWhenEmpty && string.IsNullOrWhiteSpace(lyricsText.Text))
             ? Visibility.Collapsed
             : Visibility.Visible;
     }
