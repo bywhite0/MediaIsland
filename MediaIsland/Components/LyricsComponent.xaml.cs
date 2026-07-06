@@ -175,7 +175,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
                 var result = await _lyricsSearchService.SearchAsync(info, token);
                 token.ThrowIfCancellationRequested();
-                if (version != _searchVersion || !IsLoaded)
+                if (version != _searchVersion || token.IsCancellationRequested)
                 {
                     return;
                 }
