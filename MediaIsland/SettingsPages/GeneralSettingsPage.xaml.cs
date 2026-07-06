@@ -81,7 +81,7 @@ namespace MediaIsland.SettingsPages
                 return;
             }   
 
-            CommonDialog.ShowError("列表已存在该媒体源，");
+            CommonDialog.ShowError("列表已存在该媒体源。");
         }
 
         private bool AddMediaSourceIfMissing(string currentSource)
