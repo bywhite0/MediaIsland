@@ -15,12 +15,83 @@
                      TextElement.FontWeight="Regular"
                      TextElement.FontSize="14"
                      TextOptions.TextFormattingMode="Ideal"
-                     TextOptions.TextRenderingMode="Auto">
+                     TextOptions.TextRenderingMode="Auto"
+                     Unloaded="GeneralSettingsPage_OnUnloaded">
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:GeneralSettingsPage}}">
         <StackPanel Style="{StaticResource SettingsPageStackPanelStyle}">
             <ci:InfoCard IconKind="Alert"
                      Title="实验性功能提示"
                      Content="本页面部分功能尚未开发完毕，请谨慎使用。"/>
+            <ci:IconText Kind="MusicNote" Text="当前媒体" Margin="0 0 0 8" />
+            <md:Card Margin="0 0 0 8" Padding="16 14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Width="64"
+                            Height="64"
+                            CornerRadius="4"
+                            ClipToBounds="True"
+                            Background="{DynamicResource MaterialDesignDivider}">
+                        <Grid>
+                            <Image x:Name="CurrentMediaThumbnail"
+                                   Stretch="UniformToFill"
+                                   Visibility="Collapsed" />
+                            <md:PackIcon x:Name="CurrentMediaThumbnailPlaceholder"
+                                         Kind="MusicNote"
+                                         Width="28"
+                                         Height="28"
+                                         Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                         HorizontalAlignment="Center"
+                                         VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="14 0 0 0" VerticalAlignment="Center">
+                        <TextBlock x:Name="CurrentMediaTitle"
+                                   Text="未检测到正在播放的媒体"
+                                   FontSize="16"
+                                   FontWeight="Medium"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="CurrentMediaArtistAlbum"
+                                   Text="播放媒体后会在此处显示标题、艺术家、专辑与进度。"
+                                   Margin="0 4 0 0"
+                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <StackPanel Orientation="Horizontal" Margin="0 8 0 0">
+                            <md:PackIcon x:Name="CurrentMediaStatusIcon"
+                                         Kind="HelpCircleOutline"
+                                         Width="16"
+                                         Height="16"
+                                         Margin="0 0 4 0"
+                                         Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                         VerticalAlignment="Center" />
+                            <TextBlock x:Name="CurrentMediaStatus"
+                                       Text="无媒体"
+                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Text=" · "
+                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock x:Name="CurrentMediaTimeline"
+                                       Text="00:00 / 00:00"
+                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0 4 0 0">
+                            <Image x:Name="CurrentMediaSourceIcon"
+                                   Width="16"
+                                   Height="16"
+                                   Margin="0 0 4 0"
+                                   Visibility="Collapsed" />
+                            <TextBlock x:Name="CurrentMediaSource"
+                                       Text="播放源：-"
+                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </md:Card>
             <ci:IconText Kind="CogOutline" Text="通用" Margin="0 0 0 8" />
             <md:Card Margin="0 0 0 8">
                 <Expander Background="Transparent"

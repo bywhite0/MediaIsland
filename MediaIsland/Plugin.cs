@@ -1,11 +1,14 @@
 
 using System.IO;
+using ClassIsland.Core;
 using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Core.Extensions.Registry;
+using ClassIsland.Shared;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
+using MediaIsland.Services;
 using MediaIsland.SettingsPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -22,6 +25,7 @@ namespace MediaIsland
             Console.WriteLine("[MI]正在加载 MediaIsland...");
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
+            services.AddComponent<LyricsComponent, LyricsComponentSettings>();
             globalConfigFolder = PluginConfigFolder; 
             Settings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"));
             Settings.PropertyChanged += (sender, args) =>
@@ -29,6 +33,9 @@ namespace MediaIsland
                 ConfigureFileHelper.SaveConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"), Settings);
             };
             services.AddSettingsPage<GeneralSettingsPage>();
+            services.AddSingleton<MediaService>();
+            services.AddSingleton<IMediaService>(provider => provider.GetRequiredService<MediaService>());
+            services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
 #if !DEBUG
             if (Settings.IsTodayEatSentry)
             {
