@@ -37,9 +37,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private string? _lastTitle;
     private string? _lastArtist;
     private TimeSpan _lastSmtcPosition;
-    private DateTime _lastSmtcUpdateTime = DateTime.Now;
+    private long _lastSmtcUpdateTime = Environment.TickCount64;
     private bool _isPlaying;
     private double _playbackRate = 1.0;
+    private CancellationTokenSource? _searchCts;
     private int _searchVersion;
 
     public LyricsComponent(IMediaService mediaService, ILogger<LyricsComponent> logger)
@@ -80,6 +81,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _mediaService.OnPlaybackStateChanged -= MediaService_OnPlaybackStateChanged;
         _mediaService.OnFocusedSessionChanged -= MediaService_OnFocusedSessionChanged;
         Settings.PropertyChanged -= Settings_OnPropertyChanged;
+        CancelAndDisposeCurrentSearch();
     }
 
     private void Settings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -100,7 +102,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         lock (_syncLock)
         {
             _lastSmtcPosition = timeline.Position;
-            _lastSmtcUpdateTime = DateTime.Now;
+            _lastSmtcUpdateTime = Environment.TickCount64;
         }
     }
 
@@ -125,60 +127,84 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private async Task HandleMediaInfoAsync(MediaInfo? info)
     {
-        if (info == null)
+        try
         {
-            ClearLyrics("没有可用的媒体会话");
-            return;
+            if (info == null)
+            {
+                ClearLyrics("没有可用的媒体会话");
+                return;
+            }
+
+            lock (_syncLock)
+            {
+                _lastSmtcPosition = info.Position;
+                _lastSmtcUpdateTime = Environment.TickCount64;
+                _isPlaying = info.PlaybackInfo?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+                _playbackRate = info.PlaybackInfo?.PlaybackRate ?? 1.0;
+            }
+
+            if (info.Title == _lastTitle && info.Artist == _lastArtist)
+            {
+                return;
+            }
+
+            _lastTitle = info.Title;
+            _lastArtist = info.Artist;
+            var searchCts = new CancellationTokenSource();
+            var previousSearchCts = Interlocked.Exchange(ref _searchCts, searchCts);
+            previousSearchCts?.Cancel();
+            var token = searchCts.Token;
+            var version = Interlocked.Increment(ref _searchVersion);
+
+            try
+            {
+                lock (_syncLock)
+                {
+                    _currentLyrics = null;
+                    _currentLine = null;
+                }
+
+                _logger.LogInformation(
+                    "[Metadata] {Title} - {Artist} ({Album}), duration {Duration}",
+                    info.Title,
+                    info.Artist,
+                    info.AlbumTitle,
+                    info.Duration);
+                _logger.LogInformation("[Source] {Source}", info.SourceApp);
+                SetStatus($"正在查找歌词: {info.Title}");
+
+                var result = await _lyricsSearchService.SearchAsync(info, token);
+                token.ThrowIfCancellationRequested();
+                if (version != _searchVersion || !IsLoaded)
+                {
+                    return;
+                }
+
+                var lyrics = result?.Lyrics;
+                lock (_syncLock)
+                {
+                    _currentLyrics = lyrics;
+                    _currentLine = null;
+                }
+
+                if (lyrics == null)
+                {
+                    SetStatus("未找到歌词");
+                }
+            }
+            finally
+            {
+                Interlocked.CompareExchange(ref _searchCts, null, searchCts);
+                searchCts.Dispose();
+            }
         }
-
-        lock (_syncLock)
+        catch (OperationCanceledException)
         {
-            _lastSmtcPosition = info.Position;
-            _lastSmtcUpdateTime = DateTime.Now;
-            _isPlaying = info.PlaybackInfo?.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
-            _playbackRate = info.PlaybackInfo?.PlaybackRate ?? 1.0;
         }
-
-        if (info.Title == _lastTitle && info.Artist == _lastArtist)
+        catch (Exception ex)
         {
-            return;
-        }
-
-        _lastTitle = info.Title;
-        _lastArtist = info.Artist;
-        var version = Interlocked.Increment(ref _searchVersion);
-
-        lock (_syncLock)
-        {
-            _currentLyrics = null;
-            _currentLine = null;
-        }
-
-        _logger.LogInformation(
-            "[Metadata] {Title} - {Artist} ({Album}), duration {Duration}",
-            info.Title,
-            info.Artist,
-            info.AlbumTitle,
-            info.Duration);
-        _logger.LogInformation("[Source] {Source}", info.SourceApp);
-        SetStatus($"正在查找歌词: {info.Title}");
-
-        var result = await _lyricsSearchService.SearchAsync(info);
-        if (version != _searchVersion)
-        {
-            return;
-        }
-
-        var lyrics = result?.Lyrics;
-        lock (_syncLock)
-        {
-            _currentLyrics = lyrics;
-            _currentLine = null;
-        }
-
-        if (lyrics == null)
-        {
-            SetStatus("未找到歌词");
+            _logger.LogError(ex, "[Lyrics] Error while handling media info.");
+            ClearLyrics("查找歌词失败");
         }
     }
 
@@ -198,8 +224,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             currentMs = _lastSmtcPosition.TotalMilliseconds;
             if (_isPlaying)
             {
-                var elapsed = DateTime.Now - _lastSmtcUpdateTime;
-                currentMs += elapsed.TotalMilliseconds * _playbackRate;
+                var elapsed = Environment.TickCount64 - _lastSmtcUpdateTime;
+                currentMs += elapsed * _playbackRate;
             }
         }
 
@@ -233,6 +259,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private void ClearLyrics(string status)
     {
         Interlocked.Increment(ref _searchVersion);
+        CancelCurrentSearch();
         _lastTitle = null;
         _lastArtist = null;
 
@@ -241,7 +268,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _currentLyrics = null;
             _currentLine = null;
             _lastSmtcPosition = TimeSpan.Zero;
-            _lastSmtcUpdateTime = DateTime.Now;
+            _lastSmtcUpdateTime = Environment.TickCount64;
             _isPlaying = false;
             _playbackRate = 1.0;
         }
@@ -251,30 +278,61 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void SetStatus(string text)
     {
-        SetText(Settings.IsShowStatusText ? text : string.Empty, isStatusText: true);
+        Dispatcher.InvokeAsync(() =>
+        {
+            if (!IsLoaded || Settings == null)
+            {
+                return;
+            }
+
+            SetTextCore(Settings.IsShowStatusText ? text : string.Empty, isStatusText: true);
+        });
     }
 
     private void SetText(string text, bool isStatusText)
     {
         Dispatcher.InvokeAsync(() =>
         {
-            var targetOpacity = isStatusText ? 0.72 : 1.0;
-            if (lyricsText.Text == text && Math.Abs(lyricsText.Opacity - targetOpacity) < 0.001)
+            if (!IsLoaded)
             {
-                UpdateEmptyVisibility();
                 return;
             }
 
-            StopTextTransition();
-            lyricsText.Text = text;
-            lyricsText.Opacity = targetOpacity;
-            lyricsTextTransform.Y = 0;
-            UpdateEmptyVisibility();
-            if (!string.IsNullOrWhiteSpace(text))
-            {
-                StartTextTransition(targetOpacity);
-            }
+            SetTextCore(text, isStatusText);
         });
+    }
+
+    private void SetTextCore(string text, bool isStatusText)
+    {
+        var targetOpacity = isStatusText ? 0.72 : 1.0;
+        if (lyricsText.Text == text && Math.Abs(lyricsText.Opacity - targetOpacity) < 0.001)
+        {
+            UpdateEmptyVisibility();
+            return;
+        }
+
+        StopTextTransition();
+        lyricsText.Text = text;
+        lyricsText.Opacity = targetOpacity;
+        lyricsTextTransform.Y = 0;
+        UpdateEmptyVisibility();
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            StartTextTransition(targetOpacity);
+        }
+    }
+
+    private void CancelAndDisposeCurrentSearch()
+    {
+        var searchCts = Interlocked.Exchange(ref _searchCts, null);
+        searchCts?.Cancel();
+        searchCts?.Dispose();
+    }
+
+    private void CancelCurrentSearch()
+    {
+        var searchCts = Volatile.Read(ref _searchCts);
+        searchCts?.Cancel();
     }
 
     private void StartTextTransition(double targetOpacity)

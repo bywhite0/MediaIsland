@@ -15,14 +15,15 @@ public sealed class LyricsSearchService(ILogger? logger = null)
 
     private readonly NeteaseSearcher _searcher = new();
 
-    public async Task<LyricsSearchResult?> SearchAsync(MediaInfo info)
+    public async Task<LyricsSearchResult?> SearchAsync(MediaInfo info, CancellationToken cancellationToken = default)
     {
         try
         {
             foreach (var query in BuildSearchQueries(info))
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 logger?.LogInformation("[Lyrics] Searching: {Query}", query);
-                var directResult = await SearchNeteaseApiAsync(query, info);
+                var directResult = await SearchNeteaseApiAsync(query, info, cancellationToken);
                 if (directResult != null)
                 {
                     logger?.LogInformation(
@@ -33,7 +34,7 @@ public sealed class LyricsSearchService(ILogger? logger = null)
                         directResult.Id,
                         directResult.Score);
 
-                    var directLyrics = await TryParseNeteaseLyricsAsync(directResult.Id);
+                    var directLyrics = await TryParseNeteaseLyricsAsync(directResult.Id, cancellationToken);
                     if (directLyrics == null)
                     {
                         logger?.LogInformation("[Lyrics] Start parsing failed: No text found in response.");
@@ -55,7 +56,9 @@ public sealed class LyricsSearchService(ILogger? logger = null)
                     continue;
                 }
 
+                cancellationToken.ThrowIfCancellationRequested();
                 var searchResults = await _searcher.SearchForResults(query);
+                cancellationToken.ThrowIfCancellationRequested();
                 var result = searchResults?.OfType<NeteaseSearchResult>().FirstOrDefault();
                 if (result == null || !IsTitleLikelyMatch(info.Title, result.Title))
                 {
@@ -63,7 +66,7 @@ public sealed class LyricsSearchService(ILogger? logger = null)
                 }
 
                 logger?.LogInformation("[Lyrics] Found by package fallback: {Title} - {Id}", result.Title, result.Id);
-                var packageLyrics = await TryParseNeteaseLyricsAsync(result.Id);
+                var packageLyrics = await TryParseNeteaseLyricsAsync(result.Id, cancellationToken);
                 if (packageLyrics == null)
                 {
                     logger?.LogInformation("[Lyrics] Start parsing failed: No text found in response.");
@@ -83,6 +86,10 @@ public sealed class LyricsSearchService(ILogger? logger = null)
             logger?.LogInformation("[Lyrics] Not found.");
             return null;
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             logger?.LogWarning(ex, "[Lyrics] Error while searching lyrics.");
@@ -90,21 +97,24 @@ public sealed class LyricsSearchService(ILogger? logger = null)
         }
     }
 
-    private static async Task<DirectNeteaseSearchResult?> SearchNeteaseApiAsync(string query, MediaInfo info)
+    private static async Task<DirectNeteaseSearchResult?> SearchNeteaseApiAsync(
+        string query,
+        MediaInfo info,
+        CancellationToken cancellationToken)
     {
         var url = $"https://music.163.com/api/search/get/web?s={Uri.EscapeDataString(query)}&type=1&limit=10&offset=0";
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.UserAgent.ParseAdd("Mozilla/5.0");
         request.Headers.Referrer = new Uri("https://music.163.com/");
 
-        using var response = await NeteaseHttpClient.SendAsync(request);
+        using var response = await NeteaseHttpClient.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             return null;
         }
 
-        await using var stream = await response.Content.ReadAsStreamAsync();
-        using var json = await JsonDocument.ParseAsync(stream);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
         if (!json.RootElement.TryGetProperty("result", out var result) ||
             !result.TryGetProperty("songs", out var songs) ||
             songs.ValueKind != JsonValueKind.Array)
@@ -372,18 +382,21 @@ public sealed class LyricsSearchService(ILogger? logger = null)
             .Replace("]", " "));
     }
 
-    private static async Task<LyricsData?> TryParseNeteaseLyricsAsync(object id)
+    private static async Task<LyricsData?> TryParseNeteaseLyricsAsync(object id, CancellationToken cancellationToken)
     {
-        var lyricsString = await GetNeteaseLyricsAsync(id);
+        var lyricsString = await GetNeteaseLyricsAsync(id, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         return string.IsNullOrWhiteSpace(lyricsString)
             ? null
             : LrcParser.Parse(lyricsString.AsSpan());
     }
 
-    private static async Task<string?> GetNeteaseLyricsAsync(object id)
+    private static async Task<string?> GetNeteaseLyricsAsync(object id, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         dynamic api = new Api();
         dynamic response = await api.GetLyric(id.ToString());
+        cancellationToken.ThrowIfCancellationRequested();
 
         try
         {

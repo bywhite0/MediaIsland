@@ -30,7 +30,7 @@ namespace MediaIsland.Components
 
         private TimeSpan _basePosition;
         private TimeSpan _currentEndTime;
-        private DateTime _lastTimelineUpdate = DateTime.Now;
+        private long _lastTimelineUpdate = Environment.TickCount64;
         private bool _isPlaying;
         private double _playbackRate = 1.0;
 
@@ -123,59 +123,66 @@ namespace MediaIsland.Components
         /// </summary>
         private async Task RefreshMediaInfo(MediaInfo? info)
         {
-            if (Settings == null)
+            try
             {
-                return;
-            }
-
-            if (info == null)
-            {
-                await Dispatcher.InvokeAsync(ClearMediaInfo);
-                return;
-            }
-
-            if (!IsSourceEnabled(info.SourceApp, globalSettings.MediaSourceList))
-            {
-                Logger.LogInformation("当前 SMTC 会话 [{SourceApp}] 已禁用，自动隐藏", info.SourceApp);
-                await Dispatcher.InvokeAsync(ClearMediaInfo);
-                return;
-            }
-
-            await Dispatcher.InvokeAsync(() =>
-            {
-                Logger.LogTrace(
-                    "当前 SMTC 信息：[{SourceApp}] {Artist} - {Title} ({PlaybackStatus}) [{Position} / {Duration}]",
-                    info.SourceApp,
-                    info.Artist,
-                    info.Title,
-                    info.PlaybackInfo?.PlaybackStatus,
-                    info.Position,
-                    info.Duration);
-
-                MediaGrid.Visibility = Visibility.Visible;
-                titleText.Text = info.Title;
-                artistText.Text = info.Artist;
-
-                if (info.Thumbnail != null)
+                await Dispatcher.InvokeAsync(() =>
                 {
-                    AlbumArt.ImageSource = info.Thumbnail;
-                    CoverPlaceholder.Visibility = Visibility.Collapsed;
-                }
-                else
-                {
-                    AlbumArt.ImageSource = null;
-                    CoverPlaceholder.Visibility = Visibility.Visible;
-                }
+                    if (!IsLoaded || Settings == null)
+                    {
+                        return;
+                    }
 
-                (string appName, ImageSource? appIcon) =
-                    MediaPlayerData.GetMediaPlayerData(info.SourceApp);
-                sourceText.Text = appName;
-                sourceIcon.ImageSource = appIcon;
+                    if (info == null)
+                    {
+                        ClearMediaInfo();
+                        return;
+                    }
 
-                UpdatePlaybackInfo(info.PlaybackInfo);
-                UpdateTimelineState(info.Position, info.Duration, info.PlaybackInfo);
-                UpdateTimelineUi(_basePosition, _currentEndTime);
-            });
+                    if (!IsSourceEnabled(info.SourceApp, globalSettings.MediaSourceList))
+                    {
+                        Logger.LogInformation("当前 SMTC 会话 [{SourceApp}] 已禁用，自动隐藏", info.SourceApp);
+                        ClearMediaInfo();
+                        return;
+                    }
+
+                    Logger.LogTrace(
+                        "当前 SMTC 信息：[{SourceApp}] {Artist} - {Title} ({PlaybackStatus}) [{Position} / {Duration}]",
+                        info.SourceApp,
+                        info.Artist,
+                        info.Title,
+                        info.PlaybackInfo?.PlaybackStatus,
+                        info.Position,
+                        info.Duration);
+
+                    MediaGrid.Visibility = Visibility.Visible;
+                    titleText.Text = info.Title;
+                    artistText.Text = info.Artist;
+
+                    if (info.Thumbnail != null)
+                    {
+                        AlbumArt.ImageSource = info.Thumbnail;
+                        CoverPlaceholder.Visibility = Visibility.Collapsed;
+                    }
+                    else
+                    {
+                        AlbumArt.ImageSource = null;
+                        CoverPlaceholder.Visibility = Visibility.Visible;
+                    }
+
+                    (string appName, ImageSource? appIcon) =
+                        MediaPlayerData.GetMediaPlayerData(info.SourceApp);
+                    sourceText.Text = appName;
+                    sourceIcon.ImageSource = appIcon;
+
+                    UpdatePlaybackInfo(info.PlaybackInfo);
+                    UpdateTimelineState(info.Position, info.Duration, info.PlaybackInfo);
+                    UpdateTimelineUi(_basePosition, _currentEndTime);
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Failed to refresh now playing UI.");
+            }
         }
 
         private async void MediaService_OnMediaPropertiesChanged(object? sender, MediaInfo? info)
@@ -228,7 +235,7 @@ namespace MediaIsland.Components
             switch (playbackInfo.PlaybackStatus)
             {
                 case GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing:
-                    _lastTimelineUpdate = DateTime.Now;
+                    _lastTimelineUpdate = Environment.TickCount64;
                     _timelineTimer.Start();
                     MediaGrid.Visibility = Visibility.Visible;
                     StatusIcon.Kind = PackIconKind.Play;
@@ -257,7 +264,7 @@ namespace MediaIsland.Components
         {
             _basePosition = ClampPosition(position, duration);
             _currentEndTime = duration;
-            _lastTimelineUpdate = DateTime.Now;
+            _lastTimelineUpdate = Environment.TickCount64;
 
             if (playbackInfo != null)
             {
@@ -299,9 +306,9 @@ namespace MediaIsland.Components
                 return _basePosition;
             }
 
-            var elapsed = DateTime.Now - _lastTimelineUpdate;
+            var elapsed = Environment.TickCount64 - _lastTimelineUpdate;
             return ClampPosition(
-                _basePosition + TimeSpan.FromMilliseconds(elapsed.TotalMilliseconds * _playbackRate),
+                _basePosition + TimeSpan.FromMilliseconds(elapsed * _playbackRate),
                 _currentEndTime);
         }
 

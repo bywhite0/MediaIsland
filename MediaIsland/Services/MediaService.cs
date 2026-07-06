@@ -213,7 +213,6 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         }
 
         logger.LogDebug($"SMTC session closed: {sender.Id}");
-        OnFocusedSessionChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnCurrentSessionChanged(MediaSession? sender)
