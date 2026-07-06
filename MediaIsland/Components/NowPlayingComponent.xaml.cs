@@ -194,7 +194,15 @@ namespace MediaIsland.Components
             object? sender,
             GlobalSystemMediaTransportControlsSessionPlaybackInfo playbackInfo)
         {
-            Dispatcher.InvokeAsync(() => UpdatePlaybackInfo(playbackInfo));
+            Dispatcher.InvokeAsync(() =>
+            {
+                if (!IsLoaded)
+                {
+                    return;
+                }
+
+                UpdatePlaybackInfo(playbackInfo);
+            });
         }
 
         private void MediaService_OnTimelinePropertyChanged(
@@ -203,6 +211,11 @@ namespace MediaIsland.Components
         {
             Dispatcher.InvokeAsync(() =>
             {
+                if (!IsLoaded)
+                {
+                    return;
+                }
+
                 UpdateTimelineState(timeline.Position, timeline.EndTime, _mediaService.CurrentMediaInfo?.PlaybackInfo);
                 UpdateTimelineUi(_basePosition, _currentEndTime);
             });
