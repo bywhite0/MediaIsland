@@ -115,7 +115,9 @@ public sealed class LyricsSearchService(ILogger? logger = null)
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        if (!json.RootElement.TryGetProperty("result", out var result) ||
+        if (json.RootElement.ValueKind != JsonValueKind.Object ||
+            !json.RootElement.TryGetProperty("result", out var result) ||
+            result.ValueKind != JsonValueKind.Object ||
             !result.TryGetProperty("songs", out var songs) ||
             songs.ValueKind != JsonValueKind.Array)
         {
@@ -125,15 +127,9 @@ public sealed class LyricsSearchService(ILogger? logger = null)
         DirectNeteaseSearchResult? bestResult = null;
         foreach (var song in songs.EnumerateArray())
         {
-            if (!song.TryGetProperty("id", out var idElement) ||
-                !idElement.TryGetInt64(out var id) ||
-                !song.TryGetProperty("name", out var nameElement))
-            {
-                continue;
-            }
-
-            var title = nameElement.GetString();
-            if (string.IsNullOrWhiteSpace(title))
+            if (song.ValueKind != JsonValueKind.Object ||
+                !TryReadInt64Property(song, "id", out var id) ||
+                !TryReadStringProperty(song, "name", out var title))
             {
                 continue;
             }
@@ -277,7 +273,8 @@ public sealed class LyricsSearchService(ILogger? logger = null)
 
     private static string ReadArtists(JsonElement song)
     {
-        if (!song.TryGetProperty("artists", out var artists) ||
+        if (song.ValueKind != JsonValueKind.Object ||
+            !song.TryGetProperty("artists", out var artists) ||
             artists.ValueKind != JsonValueKind.Array)
         {
             return string.Empty;
@@ -286,29 +283,30 @@ public sealed class LyricsSearchService(ILogger? logger = null)
         return string.Join(
             " ",
             artists.EnumerateArray()
-                .Select(artist => artist.TryGetProperty("name", out var name) ? name.GetString() : null)
+                .Select(artist => TryReadStringProperty(artist, "name", out var name) ? name : null)
                 .Where(name => !string.IsNullOrWhiteSpace(name)));
     }
 
     private static string ReadAlbum(JsonElement song)
     {
-        return song.TryGetProperty("album", out var album) &&
-               album.TryGetProperty("name", out var name)
-            ? name.GetString() ?? string.Empty
+        return song.ValueKind == JsonValueKind.Object &&
+               song.TryGetProperty("album", out var album) &&
+               TryReadStringProperty(album, "name", out var name)
+            ? name
             : string.Empty;
     }
 
     private static TimeSpan ReadDuration(JsonElement song)
     {
-        return song.TryGetProperty("duration", out var durationElement) &&
-               durationElement.TryGetInt64(out var duration)
+        return TryReadInt64Property(song, "duration", out var duration)
             ? TimeSpan.FromMilliseconds(duration)
             : TimeSpan.Zero;
     }
 
     private static IEnumerable<string> ReadStringArray(JsonElement element, string propertyName)
     {
-        if (!element.TryGetProperty(propertyName, out var property) ||
+        if (element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty(propertyName, out var property) ||
             property.ValueKind != JsonValueKind.Array)
         {
             yield break;
@@ -316,12 +314,35 @@ public sealed class LyricsSearchService(ILogger? logger = null)
 
         foreach (var value in property.EnumerateArray())
         {
-            var text = value.GetString();
+            var text = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             if (!string.IsNullOrWhiteSpace(text))
             {
                 yield return text;
             }
         }
+    }
+
+    private static bool TryReadInt64Property(JsonElement element, string propertyName, out long value)
+    {
+        value = default;
+        return element.ValueKind == JsonValueKind.Object &&
+               element.TryGetProperty(propertyName, out var property) &&
+               property.ValueKind == JsonValueKind.Number &&
+               property.TryGetInt64(out value);
+    }
+
+    private static bool TryReadStringProperty(JsonElement element, string propertyName, out string value)
+    {
+        value = string.Empty;
+        if (element.ValueKind != JsonValueKind.Object ||
+            !element.TryGetProperty(propertyName, out var property) ||
+            property.ValueKind != JsonValueKind.String)
+        {
+            return false;
+        }
+
+        value = property.GetString() ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(value);
     }
 
     private static IEnumerable<string> BuildSearchQueries(MediaInfo info)
