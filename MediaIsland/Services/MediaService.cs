@@ -227,7 +227,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         {
             CurrentMediaInfo = null; // Clear current media info
             OnFocusedSessionChanged?.Invoke(this, EventArgs.Empty);
-            OnMediaPropertiesChanged?.Invoke(this, null);
+            RaiseMediaPropertiesChanged(null);
         }
         else
         {
@@ -324,10 +324,11 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
         if (session?.ControlSession == null)
         {
             CurrentMediaInfo = null; // Clear current media info
-            OnMediaPropertiesChanged?.Invoke(this, null);
+            RaiseMediaPropertiesChanged(null);
             return;
         }
 
+        MediaInfo data;
         try
         {
             var sourceApp = session.ControlSession.SourceAppUserModelId;
@@ -343,7 +344,7 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
                 return;
             }
 
-            var data = new MediaInfo(
+            data = new MediaInfo(
                 mediaProperties.Title ?? "未知标题",
                 mediaProperties.Artist ?? "未知艺术家",
                 mediaProperties.AlbumTitle ?? "未知专辑",
@@ -355,16 +356,40 @@ public class MediaService(ILogger<MediaService> logger) : IMediaService, IHosted
             );
 
             CurrentMediaInfo = data; // Store the current media info
-            OnMediaPropertiesChanged?.Invoke(this, data);
         }
         catch (OperationCanceledException) when (_disposed == 1)
         {
+            return;
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Failed to get SMTC info.");
             CurrentMediaInfo = null; // Clear current media info on error
-            OnMediaPropertiesChanged?.Invoke(this, null);
+            RaiseMediaPropertiesChanged(null);
+            return;
+        }
+
+        RaiseMediaPropertiesChanged(data);
+    }
+
+    private void RaiseMediaPropertiesChanged(MediaInfo? info)
+    {
+        var handlers = OnMediaPropertiesChanged?.GetInvocationList();
+        if (handlers == null)
+        {
+            return;
+        }
+
+        foreach (EventHandler<MediaInfo?> handler in handlers)
+        {
+            try
+            {
+                handler(this, info);
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "A media properties changed subscriber failed.");
+            }
         }
     }
 }
