@@ -34,6 +34,15 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 
 ![设置截图](./Assets/snpc_settings.png)
 
+**实时歌词**
+
+![截图](./Assets/screenshot_lyrics.png)
+
+根据当前媒体信息从网易云音乐搜索并显示当前歌词。
+
+![设置截图](./Assets/lc_settings.png)
+
+
 > [!IMPORTANT]
 >
 > 本插件的内存占用较大，低性能设备请谨慎使用。

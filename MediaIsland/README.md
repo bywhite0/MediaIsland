@@ -18,6 +18,12 @@
 - 可选暂停时隐藏
 - 多种显示样式
 
+**实时歌词**
+
+![截图](https://ghproxy.net/https://raw.githubusercontent.com/bywhite0/MediaIsland/master/Assets/screenshot_lyrics.png)
+
+- 可选显示歌词服务状态
+
 ## 要求
 
 本插件需要 Windows 10 Build 17763 (1809) 或以上版本。
