@@ -27,7 +27,6 @@
                      VerticalAlignment="Center" />
         <TextBlock x:Name="lyricsText"
                    Grid.Column="1"
-                   MaxWidth="520"
                    VerticalAlignment="Center"
                    TextTrimming="CharacterEllipsis"
                    TextWrapping="NoWrap"
