@@ -1,8 +1,11 @@
 using System.IO;
+using Avalonia.Controls;
+using Avalonia.Data;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Shared.Helpers;
+using MediaIsland.Converters;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
 using MediaIsland.Services.Media;
@@ -33,6 +36,7 @@ namespace MediaIsland.Components
         private bool _isPlaying;
         private bool _isLoaded;
         private MediaInfo? _currentMediaInfo;
+        private IDisposable? _sourceIconRadiusBinding;
 
         public NowPlayingComponent(
             ILogger<NowPlayingComponent> logger,
@@ -54,6 +58,7 @@ namespace MediaIsland.Components
         private void NowPlayingComponent_OnLoaded(object? sender, RoutedEventArgs routedEventArgs)
         {
             _isLoaded = true;
+            BindSourceIconRadius();
             Settings.PropertyChanged += OnSettingsPropertyChanged;
             LoadCurrentPlayingInfoAsync();
         }
@@ -62,8 +67,22 @@ namespace MediaIsland.Components
         {
             _isLoaded = false;
             _timelineTimer.Stop();
+            _sourceIconRadiusBinding?.Dispose();
+            _sourceIconRadiusBinding = null;
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
             _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+        }
+
+        private void BindSourceIconRadius()
+        {
+            _sourceIconRadiusBinding?.Dispose();
+            _sourceIconRadiusBinding = SourceIconBorder.Bind(
+                Border.CornerRadiusProperty,
+                new Binding(nameof(NowPlayingComponentConfig.SourceIconRadius))
+                {
+                    Source = Settings,
+                    Converter = new DoubleToCornerRadiusConverter()
+                });
         }
 
         private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

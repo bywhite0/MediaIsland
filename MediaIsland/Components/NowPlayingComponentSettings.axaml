@@ -26,12 +26,28 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8B7;}" Header="显示播放源图标" Description="在播放源区域显示播放器图标。">
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE54A;}"
+                                       Header="显示播放源图标"
+                                       Description="在播放源区域显示播放器图标。"
+                                       IsExpanded="{Binding Settings.IsShowSource, Mode=OneWay}">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowSource, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
+                <controls:SettingsExpanderItem Content="图标圆角半径"
+                                               Description="播放源图标的圆角半径，默认为圆形。"
+                                               IconSource="{ci:FluentIconSource &#xF031;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <Slider Width="160"
+                                Minimum="0"
+                                Maximum="16"
+                                Value="{Binding Settings.SourceIconRadius, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TickFrequency="0.5"
+                                IsSnapToTickEnabled="True"
+                                Classes="auto-tooltip" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8D2;}" Header="显示播放源名称" Description="在播放源图标下方显示播放源名称。">
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE183;}" Header="显示播放源名称" Description="在播放源图标下方显示播放源名称。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowSourceName, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
