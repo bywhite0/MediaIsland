@@ -1,9 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
+		<!-- Intermediate state: Windows TFM is retained while the WinRT provider still lives in this assembly. -->
 		<TargetFramework>net8.0-windows10.0.17763</TargetFramework>
 		<Nullable>enable</Nullable>
-		<UseWPF>true</UseWPF>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<PlatformTarget>x64</PlatformTarget>
 		<EnableDynamicLoading>True</EnableDynamicLoading>
