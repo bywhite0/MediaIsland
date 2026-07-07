@@ -1,6 +1,8 @@
-﻿// From https://github.com/DubyaDude/WindowsMediaController/blob/master/WindowsMediaController/Main.cs
+﻿// Modified from https://github.com/DubyaDude/WindowsMediaController/blob/master/WindowsMediaController/Main.cs
 // Copyright (c) 2020 DubyaDude
 // Licensed under the MIT License.
+
+#nullable disable
 
 using Microsoft.Extensions.Logging;
 using System;
@@ -377,7 +379,7 @@ namespace WindowsMediaController
                 catch (Exception exception)
                 {
                     // Silence "The RPC server is unavailable. (0x800706BA)" and "The device is not ready. (0x80070015)"
-                    if (exception.Message.Contains("0x800706BA") || exception.Message.Contains("0x80070015"))
+                    if (IsIgnorableMediaPropertiesException(exception))
                     {
                         MediaManagerInstance.Logger?.LogWarning(exception, "[{mediaId}] Ignorable error when getting MediaProperties", Id);
                     }
@@ -386,6 +388,11 @@ namespace WindowsMediaController
                         MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error when getting MediaProperties", Id);
                     }
                 }
+            }
+
+            private static bool IsIgnorableMediaPropertiesException(Exception exception)
+            {
+                return exception.HResult is unchecked((int)0x800706BA) or unchecked((int)0x80070015);
             }
 
             internal void OnTimelinePropertiesChanged(GlobalSystemMediaTransportControlsSession sender, TimelinePropertiesChangedEventArgs args = null)

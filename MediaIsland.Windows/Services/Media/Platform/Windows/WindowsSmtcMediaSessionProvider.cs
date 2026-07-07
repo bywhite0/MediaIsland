@@ -72,16 +72,23 @@ public sealed class WindowsSmtcMediaSessionProvider(
 
     private async void OnAnySessionOpened(MediaManager.MediaSession session)
     {
-        logger.LogDebug("SMTC session opened: {SessionId}", session.Id);
-
-        if (!IsFocusedSession(session))
+        try
         {
-            return;
-        }
+            logger.LogDebug("SMTC session opened: {SessionId}", session.Id);
 
-        var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
-        CurrentSnapshot = snapshot;
-        Raise(FocusedSessionChanged, snapshot);
+            if (!IsFocusedSession(session))
+            {
+                return;
+            }
+
+            var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
+            CurrentSnapshot = snapshot;
+            Raise(FocusedSessionChanged, snapshot);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "处理 SMTC 会话打开事件失败：{SessionId}", session.Id);
+        }
     }
 
     private void OnAnySessionClosed(MediaManager.MediaSession session)
@@ -91,52 +98,80 @@ public sealed class WindowsSmtcMediaSessionProvider(
 
     private async void OnFocusedSessionChanged(MediaManager.MediaSession session)
     {
-        logger.LogDebug("SMTC focused session changed: {SessionId}", session?.Id);
-        var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
-        CurrentSnapshot = snapshot;
-        Raise(FocusedSessionChanged, snapshot);
+        try
+        {
+            logger.LogDebug("SMTC focused session changed: {SessionId}", session?.Id);
+            var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
+            CurrentSnapshot = snapshot;
+            Raise(FocusedSessionChanged, snapshot);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "处理 SMTC 焦点会话改变事件失败：{SessionId}", session?.Id);
+        }
     }
 
     private async void OnAnyPlaybackStateChanged(
         MediaManager.MediaSession session,
         GlobalSystemMediaTransportControlsSessionPlaybackInfo playbackInfo)
     {
-        if (!IsFocusedSession(session))
+        try
         {
-            return;
-        }
+            if (!IsFocusedSession(session))
+            {
+                return;
+            }
 
-        var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
-        CurrentSnapshot = snapshot;
-        Raise(PlaybackChanged, snapshot);
+            var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
+            CurrentSnapshot = snapshot;
+            Raise(PlaybackChanged, snapshot);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "处理 SMTC 播放状态改变事件失败：{SessionId}", session.Id);
+        }
     }
 
     private async void OnAnyMediaPropertyChanged(
         MediaManager.MediaSession session,
         GlobalSystemMediaTransportControlsSessionMediaProperties mediaProperties)
     {
-        if (!IsFocusedSession(session))
+        try
         {
-            return;
-        }
+            if (!IsFocusedSession(session))
+            {
+                return;
+            }
 
-        var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
-        CurrentSnapshot = snapshot;
-        Raise(MediaPropertiesChanged, snapshot);
+            var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
+            CurrentSnapshot = snapshot;
+            Raise(MediaPropertiesChanged, snapshot);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "处理 SMTC 媒体属性改变事件失败：{SessionId}", session.Id);
+        }
     }
 
     private async void OnAnyTimelinePropertyChanged(
         MediaManager.MediaSession session,
         GlobalSystemMediaTransportControlsSessionTimelineProperties timelineProperties)
     {
-        if (!IsFocusedSession(session))
+        try
         {
-            return;
-        }
+            if (!IsFocusedSession(session))
+            {
+                return;
+            }
 
-        var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
-        CurrentSnapshot = snapshot;
-        Raise(TimelineChanged, snapshot);
+            var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
+            CurrentSnapshot = snapshot;
+            Raise(TimelineChanged, snapshot);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "处理 SMTC 时间轴改变事件失败：{SessionId}", session.Id);
+        }
     }
 
     private bool IsFocusedSession(MediaManager.MediaSession session)
@@ -161,36 +196,102 @@ public sealed class WindowsSmtcMediaSessionProvider(
             return null;
         }
 
-        cancellationToken.ThrowIfCancellationRequested();
-        var controlSession = session.ControlSession;
-        var mediaProperties = await controlSession.TryGetMediaPropertiesAsync();
-        var timelineProperties = controlSession.GetTimelineProperties();
-        var playbackInfo = controlSession.GetPlaybackInfo();
-        var thumbnailReference = mediaProperties.Thumbnail;
-        MediaThumbnail? thumbnail = thumbnailReference == null
-            ? null
-            : new MediaThumbnail(async (isSourceAppSpotify, token) =>
-            {
-                token.ThrowIfCancellationRequested();
-                var bitmap = await WinRtThumbnailHelper.GetThumbnail(
-                    thumbnailReference,
-                    isSourceAppSpotify,
-                    logger);
-                token.ThrowIfCancellationRequested();
-                return bitmap;
-            });
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var controlSession = session.ControlSession;
+            var sourceApp = controlSession.SourceAppUserModelId;
+            var mediaProperties = await TryGetMediaPropertiesAsync(controlSession, sourceApp, cancellationToken);
+            var timelineProperties = TryGetTimelineProperties(controlSession, sourceApp);
+            var playbackInfo = TryGetPlaybackInfo(controlSession, sourceApp);
+            var thumbnailReference = mediaProperties?.Thumbnail;
+            MediaThumbnail? thumbnail = thumbnailReference == null
+                ? null
+                : new MediaThumbnail(async (isSourceAppSpotify, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    var bitmap = await WinRtThumbnailHelper.GetThumbnail(
+                        thumbnailReference,
+                        isSourceAppSpotify,
+                        logger);
+                    token.ThrowIfCancellationRequested();
+                    return bitmap;
+                });
 
-        return new MediaSessionSnapshot(
-            controlSession.SourceAppUserModelId,
-            mediaProperties.Title,
-            mediaProperties.Artist,
-            mediaProperties.AlbumTitle,
-            timelineProperties.Position,
-            timelineProperties.EndTime,
-            new MediaPlaybackInfo(
+            return new MediaSessionSnapshot(
+                sourceApp,
+                mediaProperties?.Title,
+                mediaProperties?.Artist,
+                mediaProperties?.AlbumTitle,
+                timelineProperties.Position,
+                timelineProperties.EndTime,
+                playbackInfo,
+                thumbnail);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "无法生成 SMTC 媒体会话快照：{SessionId}", session.Id);
+            return null;
+        }
+    }
+
+    private async Task<GlobalSystemMediaTransportControlsSessionMediaProperties?> TryGetMediaPropertiesAsync(
+        GlobalSystemMediaTransportControlsSession controlSession,
+        string sourceApp,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return await controlSession.TryGetMediaPropertiesAsync();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "无法读取 SMTC 媒体属性：{SourceApp}", sourceApp);
+            return null;
+        }
+    }
+
+    private (TimeSpan Position, TimeSpan EndTime) TryGetTimelineProperties(
+        GlobalSystemMediaTransportControlsSession controlSession,
+        string sourceApp)
+    {
+        try
+        {
+            var timelineProperties = controlSession.GetTimelineProperties();
+            return (timelineProperties.Position, timelineProperties.EndTime);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "无法读取 SMTC 时间轴属性：{SourceApp}", sourceApp);
+            return (TimeSpan.Zero, TimeSpan.Zero);
+        }
+    }
+
+    private MediaPlaybackInfo TryGetPlaybackInfo(
+        GlobalSystemMediaTransportControlsSession controlSession,
+        string sourceApp)
+    {
+        try
+        {
+            var playbackInfo = controlSession.GetPlaybackInfo();
+            return new MediaPlaybackInfo(
                 MapPlaybackState(playbackInfo.PlaybackStatus),
-                playbackInfo.PlaybackRate),
-            thumbnail);
+                playbackInfo.PlaybackRate);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "无法读取 SMTC 播放状态：{SourceApp}", sourceApp);
+            return new MediaPlaybackInfo(MediaPlaybackState.Unknown);
+        }
     }
 
     private static MediaPlaybackState MapPlaybackState(GlobalSystemMediaTransportControlsSessionPlaybackStatus status)
