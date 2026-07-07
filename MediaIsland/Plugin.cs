@@ -6,6 +6,9 @@ using ClassIsland.Core.Extensions.Registry;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
+using MediaIsland.Services.Media;
+using MediaIsland.Services.Media.Platform;
+using MediaIsland.Services.Media.Platform.Windows;
 using MediaIsland.SettingsPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -20,6 +23,14 @@ namespace MediaIsland
         public override void Initialize(HostBuilderContext context, IServiceCollection services)
         {
             Console.WriteLine("[MI]正在加载 MediaIsland...");
+            services.AddSingleton<NoOpMediaSourceInfoProvider>();
+            services.AddSingleton<WindowsSmtcMediaSessionProvider>();
+            services.AddSingleton<IMediaPlatformProvider, WindowsMediaPlatformProvider>();
+            services.AddSingleton<IMediaPlatformProvider, NoOpMediaPlatformProvider>();
+            services.AddSingleton<MediaPlatformProviderResolver>();
+            services.AddSingleton<MediaService>();
+            services.AddSingleton<IMediaService>(provider => provider.GetRequiredService<MediaService>());
+            services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
             globalConfigFolder = PluginConfigFolder; 
