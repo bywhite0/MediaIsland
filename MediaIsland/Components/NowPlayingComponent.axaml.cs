@@ -277,7 +277,15 @@ namespace MediaIsland.Components
                         case MediaPlaybackState.Playing:
                             _isPlaying = true;
                             _lastTimelineUpdate = DateTime.Now;
-                            _timelineTimer.Start();
+                            if (HasTimeline(_currentEndTime))
+                            {
+                                _timelineTimer.Start();
+                            }
+                            else
+                            {
+                                _timelineTimer.Stop();
+                            }
+
                             MediaGrid.IsVisible = true;
                             StatusIcon.Glyph = "\uEDB8";
                             break;
@@ -328,10 +336,21 @@ namespace MediaIsland.Components
 
                 await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    _basePosition = mediaInfo.Position;
-                    _currentEndTime = mediaInfo.Duration;
+                    _currentEndTime = mediaInfo.Duration > TimeSpan.Zero
+                        ? mediaInfo.Duration
+                        : TimeSpan.Zero;
+                    _basePosition = ClampPosition(mediaInfo.Position, _currentEndTime);
                     _lastTimelineUpdate = DateTime.Now;
                     UpdateTimelineUi(_basePosition, _currentEndTime);
+                    if (mediaInfo.PlaybackInfo.PlaybackState == MediaPlaybackState.Playing && HasTimeline(_currentEndTime))
+                    {
+                        _isPlaying = true;
+                        _timelineTimer.Start();
+                    }
+                    else if (!HasTimeline(_currentEndTime))
+                    {
+                        _timelineTimer.Stop();
+                    }
                 });
             }
             catch (Exception ex)
@@ -343,9 +362,19 @@ namespace MediaIsland.Components
         private void OnTimelineTimerTick(object? sender, EventArgs e)
         {
             if (!_isPlaying) return;
+            if (!HasTimeline(_currentEndTime))
+            {
+                _timelineTimer.Stop();
+                return;
+            }
+
             var elapsed = DateTime.Now - _lastTimelineUpdate;
-            var currentPosition = _basePosition + elapsed;
-            if (currentPosition > _currentEndTime) currentPosition = _currentEndTime;
+            var currentPosition = ClampPosition(_basePosition + elapsed, _currentEndTime);
+            if (currentPosition >= _currentEndTime)
+            {
+                _timelineTimer.Stop();
+            }
+
             UpdateTimelineUi(currentPosition, _currentEndTime);
         }
 
@@ -353,7 +382,7 @@ namespace MediaIsland.Components
         {
             if (Settings.SubInfoType == 1)
             {
-                if (position != duration)
+                if (HasTimeline(duration) && position < duration)
                 {
                     ArtistText.IsVisible = false;
                     TimeText.IsVisible = true;
@@ -365,6 +394,26 @@ namespace MediaIsland.Components
                 }
             }
             TimeText.Text = (duration.Hours == 0) ? $@"{position:mm\:ss} / {duration:mm\:ss}" : $@"{position} / {duration}";
+        }
+
+        private static bool HasTimeline(TimeSpan duration)
+        {
+            return duration > TimeSpan.Zero;
+        }
+
+        private static TimeSpan ClampPosition(TimeSpan position, TimeSpan duration)
+        {
+            if (position < TimeSpan.Zero)
+            {
+                return TimeSpan.Zero;
+            }
+
+            if (HasTimeline(duration) && position > duration)
+            {
+                return duration;
+            }
+
+            return position;
         }
 
         private async Task HideMediaGridAsync()
