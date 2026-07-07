@@ -1,17 +1,13 @@
 using System.IO;
-using System.Runtime.InteropServices;
 using Avalonia.Controls;
-using Avalonia.Interactivity;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Models;
+using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
-using Windows.Media.Control;
-using WindowsMediaController;
-// ReSharper disable ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract
-// ReSharper disable ConditionalAccessQualifierIsNonNullableAccordingToAPIContract
+using RoutedEventArgs = Avalonia.Interactivity.RoutedEventArgs;
 
 namespace MediaIsland.Components
 {
@@ -24,352 +20,251 @@ namespace MediaIsland.Components
     // ReSharper disable once ClassNeverInstantiated.Global
     public partial class SimplyNowPlayingComponent : ComponentBase<SimplyNowPlayingComponentConfig>
     {
-        //private string titleLabel, artistLabel, albumLabel, timeLabel, sourceLabel;
-        private static readonly MediaManager MediaManager = new();
-        //TimeSpan currentDuration;
-        //TimeSpan currentPosition;
+        private readonly IMediaService _mediaService;
         private ILogger<SimplyNowPlayingComponent> Logger { get; }
 
         private PluginSettings globalSettings;
+        private bool _isLoaded;
+        private MediaInfo? _currentMediaInfo;
 
-        public SimplyNowPlayingComponent(ILogger<SimplyNowPlayingComponent> logger)
+        public SimplyNowPlayingComponent(ILogger<SimplyNowPlayingComponent> logger, IMediaService mediaService)
         {
             InitializeComponent();
             Logger = logger;
+            _mediaService = mediaService;
             globalSettings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
         }
 
         private void SimplyNowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
         {
+            _isLoaded = true;
             Settings.PropertyChanged += OnSettingsPropertyChanged;
             LoadCurrentPlayingInfoAsync();
         }
 
         private void SimplyNowPlayingComponent_OnUnloaded(object sender, RoutedEventArgs e)
         {
+            _isLoaded = false;
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
-            if (MediaManager.IsStarted) MediaManager.Dispose();
+            _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
         }
 
-        // ReSharper disable once AsyncVoidMethod
-        private async void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
             switch (e.PropertyName)
             {
                 case "IsHideWhenPaused":
-                    try
+                    if (_currentMediaInfo?.PlaybackInfo.PlaybackState == MediaPlaybackState.Paused)
                     {
-                        var sessionManager = await GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-                        var playbackInfo = sessionManager.GetCurrentSession().GetPlaybackInfo();
-                        if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
+                        Dispatcher.UIThread.InvokeAsync(() =>
                         {
-                            await Dispatcher.UIThread.InvokeAsync(() =>
-                            {
-                                MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
-                            });
-                        }
-                    }
-                    catch
-                    {
-                        // ignored
+                            MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
+                        });
                     }
 
                     break;
                 case "InfoType":
-                    switch (Settings.InfoType)
-                    {
-                        case 0:
-                            DividerText.IsVisible = true;
-                            ArtistText.IsVisible = true;
-                            Grid.SetColumn(TitleText, 2);
-                            Grid.SetColumn(ArtistText, 0);
-                            break;
-                        case 1:
-                            DividerText.IsVisible = true;
-                            ArtistText.IsVisible = true;
-                            Grid.SetColumn(TitleText, 0);
-                            Grid.SetColumn(ArtistText, 2);
-                            break;
-                        case 2:
-                            DividerText.IsVisible = false;
-                            ArtistText.IsVisible = false;
-                            break;
-                    }
-                    Settings.IsDualLineStyle = (Settings.InfoType == 3);
+                    Dispatcher.UIThread.InvokeAsync(ApplyInfoType);
                     break;
             }
         }
 
         /// <summary>
-        /// 获取 SMTC 信息并更新 UI
+        /// 获取媒体服务信息并更新 UI
         /// </summary>
         // ReSharper disable once AsyncVoidMethod
         private async void LoadCurrentPlayingInfoAsync()
         {
-            MediaManager.OnAnySessionOpened += MediaManager_OnAnySessionOpened;
-            MediaManager.OnAnySessionClosed += MediaManager_OnAnySessionClosed;
-            MediaManager.OnFocusedSessionChanged += MediaManager_OnFocusedSessionChanged;
-            MediaManager.OnAnyPlaybackStateChanged += MediaManager_OnAnyPlaybackStateChanged;
-            MediaManager.OnAnyMediaPropertyChanged += MediaManager_OnAnyMediaPropertyChanged;
+            _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+            _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
 
             try
             {
-                if (!MediaManager.IsStarted) await MediaManager.StartAsync();
-            }
-            catch (COMException)
-            {
-                Logger.LogWarning("无法获取 SMTC 会话管理器。");
-                await Dispatcher.UIThread.InvokeAsync(() =>
+                await _mediaService.EnsureStartedAsync();
+                Logger.LogInformation("尝试获取媒体会话信息");
+                if (_mediaService.CurrentMediaInfo != null)
                 {
-                    MediaGrid.IsVisible = false;
-                });
+                    Logger.LogInformation("存在媒体会话信息");
+                    Logger.LogDebug("刷新【正在播放】组件内容");
+                    await RefreshMediaInfo(_mediaService.CurrentMediaInfo);
+                }
+                else
+                {
+                    Logger.LogInformation("不存在媒体会话信息，隐藏组件 UI");
+                    await HideMediaGridAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("获取媒体会话时发生错误: {ExMessage}", ex.Message);
+                await HideMediaGridAsync();
+            }
+        }
+
+        // ReSharper disable once AsyncVoidMethod
+        private async void MediaService_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
+        {
+            if (!_isLoaded)
+            {
                 return;
             }
+
+            _currentMediaInfo = e.MediaInfo;
+            if (e.MediaInfo == null)
+            {
+                await HideMediaGridAsync();
+                return;
+            }
+
+            if (!IsSourceEnabled(e.MediaInfo.SourceApp, globalSettings.MediaSourceList))
+            {
+                Logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", e.MediaInfo.SourceApp);
+                await HideMediaGridAsync();
+                return;
+            }
+
+            switch (e.ChangeKind)
+            {
+                case MediaInfoChangeKind.Playback:
+                    await RefreshPlaybackInfo(e.MediaInfo);
+                    break;
+                case MediaInfoChangeKind.CurrentSession:
+                case MediaInfoChangeKind.MediaProperties:
+                case MediaInfoChangeKind.Timeline:
+                default:
+                    await RefreshMediaInfo(e.MediaInfo);
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 使用获取到的媒体信息刷新 UI
+        /// </summary>
+        private async Task RefreshMediaInfo(MediaInfo mediaInfo)
+        {
+            _currentMediaInfo = mediaInfo;
+            if (!_isLoaded)
+            {
+                return;
+            }
+
             try
             {
-                var currentSession = MediaManager.GetFocusedSession();
-                Logger.LogInformation("尝试获取 SMTC 会话信息");
-                if (currentSession != null)
+                if (!IsSourceEnabled(mediaInfo.SourceApp, globalSettings.MediaSourceList))
                 {
-                    Logger.LogInformation("存在 SMTC 会话信息");
-                    Logger.LogDebug("刷新【正在播放】组件内容");
-                    await RefreshMediaInfo(currentSession);
+                    Logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", mediaInfo.SourceApp);
+                    await HideMediaGridAsync();
+                    return;
                 }
-                else
+
+                Logger.LogTrace(
+                    "当前媒体信息：{Artist} - {Title} ({PlaybackStatus}) [{TimelinePosition} / {TimelineEndTime}]",
+                    mediaInfo.Artist,
+                    mediaInfo.Title,
+                    mediaInfo.PlaybackInfo.PlaybackState,
+                    mediaInfo.Position,
+                    mediaInfo.Duration);
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    Logger.LogInformation("不存在 SMTC 会话信息，隐藏组件 UI");
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        MediaGrid.IsVisible = false;
-                    });
-                }
+                    ApplyPlaybackInfo(mediaInfo);
+
+                    TitleText.Text = mediaInfo.Title ?? "未知标题";
+                    ArtistText.Text = mediaInfo.Artist ?? "未知艺术家";
+                    DualTitleText.Text = mediaInfo.Title ?? "未知标题";
+                    DualArtistText.Text = mediaInfo.Artist ?? "未知艺术家";
+
+                    ApplyInfoType();
+                });
             }
             catch (Exception ex)
             {
-                Logger.LogError("获取 SMTC 会话时发生错误: {ExMessage}", ex.Message);
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    MediaGrid.IsVisible = false;
-                });
+                Logger.LogError("获取媒体信息失败：{ExMessage}", ex.Message);
             }
         }
 
-
-        /// <summary>
-        /// 使用获取到的 SMTC 信息刷新 UI
-        /// </summary>
-        /// <param name="session">SMTC 会话</param>
-        /// <returns></returns>
-        private async Task RefreshMediaInfo(MediaManager.MediaSession session)
+        private async Task RefreshPlaybackInfo(MediaInfo mediaInfo)
         {
-            if (Settings == null || session?.ControlSession == null) return;
             try
             {
-                if (session != null)
+                if (!_isLoaded)
                 {
-                    if (session.ControlSession != null)
-                    {
-                        try
-                        {
-                            var sourceApp = session.ControlSession.SourceAppUserModelId;
-                            if (IsSourceEnabled(sourceApp, globalSettings.MediaSourceList))
-                            {
-                                var mediaProperties = await session.ControlSession.TryGetMediaPropertiesAsync();
-                                var timeline = session.ControlSession.GetTimelineProperties();
-                                var playbackInfo = session.ControlSession.GetPlaybackInfo();
-                                Logger.LogTrace("当前 SMTC 信息：{Artist} - {Title} ({PlaybackStatus}) [{TimelinePosition} / {TimelineEndTime}]", mediaProperties.Artist, mediaProperties.Title, playbackInfo.PlaybackStatus, timeline.Position, timeline.EndTime);
-
-                                await Dispatcher.UIThread.InvokeAsync(() =>
-                                {
-                                    if (playbackInfo.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
-                                    {
-                                        MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
-                                    }
-                                    else
-                                    {
-                                        MediaGrid.IsVisible = true;
-                                    }
-
-                                    StatusIcon.Glyph = playbackInfo.PlaybackStatus switch
-                                    {
-                                        // 更新播放状态
-                                        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing => "\uEDB8",
-                                        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused => "\uEC90",
-                                        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped => "\uF086",
-                                        GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing => "\uE0B4",
-                                        _ => StatusIcon.Glyph
-                                    };
-
-                                    // 更新 UI 内容
-                                    TitleText.Text = mediaProperties.Title ?? "未知标题";
-                                    ArtistText.Text = mediaProperties.Artist ?? "未知艺术家";
-                                    //albumText.Text = mediaProperties.AlbumTitle ?? "未知专辑";
-
-                                    DualTitleText.Text = mediaProperties.Title ?? "未知标题";
-                                    DualArtistText.Text = mediaProperties.Artist ?? "未知艺术家";
-
-                                    switch (Settings.InfoType)
-                                    {
-                                        case 0:
-                                            DividerText.IsVisible = true;
-                                            ArtistText.IsVisible = true;
-                                            Grid.SetColumn(TitleText, 2);
-                                            Grid.SetColumn(ArtistText, 0);
-                                            break;
-                                        case 1:
-                                            DividerText.IsVisible = true;
-                                            ArtistText.IsVisible = true;
-                                            Grid.SetColumn(TitleText, 0);
-                                            Grid.SetColumn(ArtistText, 2);
-                                            break;
-                                        case 2:
-                                            DividerText.IsVisible = false;
-                                            ArtistText.IsVisible = false;
-                                            Grid.SetColumn(TitleText, 0);
-                                            Grid.SetColumn(ArtistText, 2);
-                                            break;
-                                    }
-                                });
-                            }
-                            else
-                            {
-                                Logger.LogInformation("当前 SMTC 会话 [{sourceApp}] 已禁用，自动隐藏", sourceApp);
-                                await Dispatcher.UIThread.InvokeAsync(() =>
-                                {
-                                    MediaGrid.IsVisible = false;
-                                });
-                            }
-                        }
-                        catch
-                        {
-                            Logger.LogWarning("SMTC 会话为空，无法获取信息");
-                            await Dispatcher.UIThread.InvokeAsync(() =>
-                            {
-                                MediaGrid.IsVisible = false;
-                            });
-                        }
-                    }
-                    else
-                    {
-                        Logger.LogWarning("SMTC 会话为空，无法获取信息");
-                        await Dispatcher.UIThread.InvokeAsync(() =>
-                        {
-                            MediaGrid.IsVisible = false;
-                        });
-                    }
+                    return;
                 }
-                else
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        MediaGrid.IsVisible = false;
-                    });
-                }
+                    ApplyPlaybackInfo(mediaInfo);
+                });
             }
             catch (Exception ex)
             {
-                Logger.LogError("获取 SMTC 信息失败：{ExMessage}", ex.Message);
+                Logger.LogWarning("无法获取播放状态：{ExMessage}", ex.Message);
             }
         }
-        /// <summary>
-        /// SMTC 会话打开事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        // ReSharper disable once AsyncVoidMethod
-        private async void MediaManager_OnAnySessionOpened(MediaManager.MediaSession sender)
-        {
-            Logger.LogDebug($"新 SMTC 会话：{sender.Id}");
-            await RefreshMediaInfo(sender);
-        }
 
-        /// <summary>
-        /// SMTC 会话关闭事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        private void MediaManager_OnAnySessionClosed(MediaManager.MediaSession sender)
+        private void ApplyPlaybackInfo(MediaInfo mediaInfo)
         {
-            Logger.LogDebug("SMTC 会话关闭：{SenderId}", sender.Id);
-            //await RefreshMediaInfo(sender);
-        }
-        /// <summary>
-        /// SMTC 会话焦点改变事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        // ReSharper disable once AsyncVoidMethod
-        private async void MediaManager_OnFocusedSessionChanged(MediaManager.MediaSession sender)
-        {
-            Logger.LogDebug("SMTC 会话焦点改变：{ControlSessionSourceAppUserModelId}", sender?.ControlSession?.SourceAppUserModelId);
-            if (sender?.ControlSession == null)
+            if (mediaInfo.PlaybackInfo.PlaybackState == MediaPlaybackState.Paused)
             {
-                // 无会话时隐藏 UI
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    MediaGrid.IsVisible = false;
-                });
+                MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
             }
             else
             {
-                try
-                {
-                    await RefreshMediaInfo(sender);
-                }
-                catch
-                {
-                    // 刷新失败时隐藏 UI
-                    await Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        MediaGrid.IsVisible = false;
-                    });
-                }
+                MediaGrid.IsVisible = true;
             }
+
+            StatusIcon.Glyph = mediaInfo.PlaybackInfo.PlaybackState switch
+            {
+                MediaPlaybackState.Playing => "\uEDB8",
+                MediaPlaybackState.Paused => "\uEC90",
+                MediaPlaybackState.Stopped => "\uF086",
+                MediaPlaybackState.Changing => "\uE0B4",
+                _ => StatusIcon.Glyph
+            };
         }
 
-        /// <summary>
-        /// SMTC 播放状态改变事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        /// <param name="args">事件参数</param>
-        // ReSharper disable once AsyncVoidMethod
-        private async void MediaManager_OnAnyPlaybackStateChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionPlaybackInfo args)
+        private void ApplyInfoType()
         {
-            Logger.LogDebug("SMTC 播放状态改变：{SenderId} is now {PlaybackStatus}", sender.Id, args.PlaybackStatus);
-            if (sender != MediaManager.GetFocusedSession()) return;
+            switch (Settings.InfoType)
+            {
+                case 0:
+                    DividerText.IsVisible = true;
+                    ArtistText.IsVisible = true;
+                    Grid.SetColumn(TitleText, 2);
+                    Grid.SetColumn(ArtistText, 0);
+                    break;
+                case 1:
+                    DividerText.IsVisible = true;
+                    ArtistText.IsVisible = true;
+                    Grid.SetColumn(TitleText, 0);
+                    Grid.SetColumn(ArtistText, 2);
+                    break;
+                case 2:
+                    DividerText.IsVisible = false;
+                    ArtistText.IsVisible = false;
+                    Grid.SetColumn(TitleText, 0);
+                    Grid.SetColumn(ArtistText, 2);
+                    break;
+            }
+
+            Settings.IsDualLineStyle = Settings.InfoType == 3;
+        }
+
+        private async Task HideMediaGridAsync()
+        {
+            if (!_isLoaded)
+            {
+                return;
+            }
 
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (args.PlaybackStatus == GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused)
-                {
-                    MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
-                }
-                else
-                {
-                    MediaGrid.IsVisible = true;
-                }
-
-                StatusIcon.Glyph = args.PlaybackStatus switch
-                {
-                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing => "\uEDB8",
-                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Paused => "\uEC90",
-                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Stopped => "\uF086",
-                    GlobalSystemMediaTransportControlsSessionPlaybackStatus.Changing => "\uE0B4",
-                    _ => StatusIcon.Glyph
-                };
+                MediaGrid.IsVisible = false;
             });
         }
 
-        /// <summary>
-        /// SMTC 媒体属性改变事件
-        /// </summary>
-        /// <param name="sender">发出事件的 SMTC 会话</param>
-        /// <param name="args">事件参数</param>
-        // ReSharper disable once AsyncVoidMethod
-        private async void MediaManager_OnAnyMediaPropertyChanged(MediaManager.MediaSession sender, GlobalSystemMediaTransportControlsSessionMediaProperties args)
-        {
-            Logger.LogDebug("SMTC 媒体属性改变：{SenderId} is now playing {Title} {ProbableArtist}", sender.Id, args.Title, string.IsNullOrEmpty(args.Artist) ? "" : $"by {args.Artist}");
-            await RefreshMediaInfo(sender);
-        }
-        
-        private bool IsSourceEnabled(string appUserModelId, IEnumerable<MediaSource> sources)
+        private static bool IsSourceEnabled(string appUserModelId, IEnumerable<MediaSource> sources)
         {
             foreach (var source in sources)
             {
