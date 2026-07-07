@@ -1,4 +1,4 @@
-using MediaIsland.Helpers;
+using MediaIsland.Windows.Helpers;
 using Microsoft.Extensions.Logging;
 using Windows.Media.Control;
 using WindowsMediaController;
@@ -152,7 +152,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         }
     }
 
-    private static async Task<MediaSessionSnapshot?> BuildSnapshotAsync(
+    private async Task<MediaSessionSnapshot?> BuildSnapshotAsync(
         MediaManager.MediaSession? session,
         CancellationToken cancellationToken)
     {
@@ -172,9 +172,10 @@ public sealed class WindowsSmtcMediaSessionProvider(
             : new MediaThumbnail(async (isSourceAppSpotify, token) =>
             {
                 token.ThrowIfCancellationRequested();
-                var bitmap = await ThumbnailHelper.GetThumbnail(
+                var bitmap = await WinRtThumbnailHelper.GetThumbnail(
                     thumbnailReference,
-                    isSourceAppSpotify: isSourceAppSpotify);
+                    isSourceAppSpotify,
+                    logger);
                 token.ThrowIfCancellationRequested();
                 return bitmap;
             });

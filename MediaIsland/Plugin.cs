@@ -1,5 +1,7 @@
 
 using System.IO;
+using System.Reflection;
+using System.Runtime.Loader;
 using ClassIsland.Core.Abstractions;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Core.Extensions.Registry;
@@ -8,7 +10,6 @@ using MediaIsland.Components;
 using MediaIsland.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
-using MediaIsland.Services.Media.Platform.Windows;
 using MediaIsland.SettingsPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -24,8 +25,7 @@ namespace MediaIsland
         {
             Console.WriteLine("[MI]正在加载 MediaIsland...");
             services.AddSingleton<NoOpMediaSourceInfoProvider>();
-            services.AddSingleton<WindowsSmtcMediaSessionProvider>();
-            services.AddSingleton<IMediaPlatformProvider, WindowsMediaPlatformProvider>();
+            RegisterPlatformProviders(services);
             services.AddSingleton<IMediaPlatformProvider, NoOpMediaPlatformProvider>();
             services.AddSingleton<MediaPlatformProviderResolver>();
             services.AddSingleton<MediaService>();
@@ -57,6 +57,53 @@ namespace MediaIsland
             }
 #endif
             Console.WriteLine("[MI]MediaIsland 加载成功");
+        }
+
+        private static void RegisterPlatformProviders(IServiceCollection services)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return;
+            }
+
+            try
+            {
+                var assembly = LoadOptionalProviderAssembly("MediaIsland.Windows");
+                var registrationType = assembly.GetType(
+                    "MediaIsland.Services.Media.Platform.Windows.WindowsMediaPlatformProviderRegistration",
+                    throwOnError: true);
+                var registrationMethod = registrationType?.GetMethod(
+                    "AddWindowsMediaPlatformProvider",
+                    BindingFlags.Public | BindingFlags.Static);
+
+                if (registrationMethod == null)
+                {
+                    Console.WriteLine("[MI]Windows media provider registration method not found.");
+                    return;
+                }
+
+                registrationMethod.Invoke(null, new object[] { services });
+                Console.WriteLine("[MI]Windows media provider registered.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[MI]Failed to register Windows media provider: {ex.Message}");
+            }
+        }
+
+        private static Assembly LoadOptionalProviderAssembly(string assemblyName)
+        {
+            var pluginAssembly = typeof(Plugin).Assembly;
+            var loadContext = AssemblyLoadContext.GetLoadContext(pluginAssembly);
+            var pluginFolder = Path.GetDirectoryName(pluginAssembly.Location) ?? AppContext.BaseDirectory;
+            var providerPath = Path.Combine(pluginFolder, $"{assemblyName}.dll");
+
+            if (File.Exists(providerPath) && loadContext != null)
+            {
+                return loadContext.LoadFromAssemblyPath(providerPath);
+            }
+
+            return Assembly.Load(new AssemblyName(assemblyName));
         }
 
     }
