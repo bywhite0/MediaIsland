@@ -13,12 +13,88 @@
                      FontFamily="{StaticResource HarmonyOsSans}"
                      TextElement.FontWeight="Regular"
                      TextElement.FontSize="14">
-    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:GeneralSettingsPage}}">
-        <StackPanel Classes="settings-container animated-intro">
-            <ci:IconText Glyph="&#xEF27;" Text="通用" Margin="0 0 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
-                                       Header="播放源列表"
-                                       Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息，需要重载组件才能生效。">
+	    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:GeneralSettingsPage}}">
+	        <StackPanel Classes="settings-container animated-intro">
+	            <ci:IconText Glyph="&#xEBC9;" Text="当前媒体" Margin="0 0 0 8" />
+	            <Border Margin="0 0 0 8"
+	                    Padding="14"
+	                    CornerRadius="4"
+	                    Background="{DynamicResource MaterialDesignCardBackground}">
+	                <Grid ColumnDefinitions="Auto,*">
+	                    <Border Width="64"
+	                            Height="64"
+	                            CornerRadius="4"
+	                            ClipToBounds="True"
+	                            Background="{DynamicResource MaterialDesignDivider}">
+	                        <Grid>
+	                            <Image Source="{Binding CurrentMediaThumbnail}"
+	                                   Stretch="UniformToFill"
+	                                   IsVisible="{Binding HasCurrentMediaThumbnail}" />
+	                            <ci:FluentIcon Glyph="&#xEBC9;"
+	                                           FontSize="28"
+	                                           HorizontalAlignment="Center"
+	                                           VerticalAlignment="Center"
+	                                           Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                           IsVisible="{Binding !HasCurrentMediaThumbnail}" />
+	                        </Grid>
+	                    </Border>
+	                    <StackPanel Grid.Column="1" Margin="14 0 0 0" VerticalAlignment="Center">
+	                        <TextBlock Text="{Binding CurrentMediaTitle}"
+	                                   FontSize="16"
+	                                   FontWeight="Medium"
+	                                   TextTrimming="CharacterEllipsis" />
+	                        <TextBlock Text="{Binding CurrentMediaArtistAlbum}"
+	                                   Margin="0 4 0 0"
+	                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                   TextTrimming="CharacterEllipsis" />
+	                        <StackPanel Orientation="Horizontal" Margin="0 8 0 0">
+	                            <ci:FluentIcon Glyph="{Binding CurrentMediaStatusGlyph}"
+	                                           FontSize="14"
+	                                           Margin="0 0 4 0"
+	                                           Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                           VerticalAlignment="Center" />
+	                            <TextBlock Text="{Binding CurrentMediaPlaybackStatus}"
+	                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                       VerticalAlignment="Center" />
+	                            <TextBlock Text=" · "
+	                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                       VerticalAlignment="Center" />
+	                            <TextBlock Text="{Binding CurrentMediaTimeline}"
+	                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                       VerticalAlignment="Center" />
+	                        </StackPanel>
+	                        <StackPanel Orientation="Horizontal" Margin="0 4 0 0">
+	                            <Border Width="16"
+	                                    Height="16"
+	                                    CornerRadius="3"
+	                                    ClipToBounds="True"
+	                                    Margin="0 0 4 0"
+	                                    ToolTip.Tip="{Binding CurrentMediaSourceIconStatus}">
+	                                <Image Source="{Binding CurrentMediaSourceIcon}"
+	                                       Stretch="UniformToFill"
+	                                       IsVisible="{Binding HasCurrentMediaSourceIcon}" />
+	                            </Border>
+	                            <TextBlock Text="{Binding CurrentMediaSourceDisplay}"
+	                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                       TextTrimming="CharacterEllipsis"
+	                                       ToolTip.Tip="{Binding CurrentMediaSourceId}" />
+	                        </StackPanel>
+	                        <TextBlock Text="{Binding CurrentMediaSourceId}"
+	                                   Margin="0 4 0 0"
+	                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                   TextTrimming="CharacterEllipsis" />
+	                        <TextBlock Text="{Binding CurrentMediaSourceIconStatus}"
+	                                   Margin="0 2 0 0"
+	                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
+	                                   TextTrimming="CharacterEllipsis" />
+	                    </StackPanel>
+	                </Grid>
+	            </Border>
+	            <ci:IconText Glyph="&#xEF27;" Text="通用" Margin="0 0 0 8" />
+	            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
+	                                       Header="播放源列表"
+	                                       Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息，需要重载组件才能生效。"
+	                                       ToolTip.Tip="这里的播放源 ID 来自系统媒体会话，可能是程序名、AUMID 或包名。">
                             <controls:SettingsExpander.Footer>
                                 <ci:FluentIcon Glyph="&#xF19B;"/>
                             </controls:SettingsExpander.Footer>
@@ -30,29 +106,51 @@
                                   CanUserReorderColumns="False"
                                   Height="240"
                                   ItemsSource="{Binding Settings.MediaSourceList, Mode=TwoWay}">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="播放源" Width="Auto" MinWidth="120" MaxWidth="400" Binding="{Binding Source}" />
-                                <DataGridCheckBoxColumn Header="启用" Width="Auto" Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                <DataGridTemplateColumn Header="图标" Width="Auto">
-                                    <DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-                                            <StackPanel Orientation="Horizontal" Spacing="2">
-                                                <Button Width="20"
-                                                        Height="20"
-                                                        Margin="0"
-                                                        Padding="4 0"
-                                                        Background="Transparent"
-                                                        BorderBrush="Transparent"
-                                                        Click="ChooseIconButtonOnClick">
+	                            <DataGrid.Columns>
+	                                <DataGridTextColumn Header="播放源" Width="Auto" MinWidth="120" MaxWidth="400" Binding="{Binding Source}" />
+	                                <DataGridTemplateColumn Header="显示名称" Width="Auto">
+	                                    <DataGridTemplateColumn.CellTemplate>
+	                                        <DataTemplate>
+	                                            <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" />
+	                                        </DataTemplate>
+	                                    </DataGridTemplateColumn.CellTemplate>
+	                                </DataGridTemplateColumn>
+	                                <DataGridCheckBoxColumn Header="启用" Width="Auto" Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+	                                <DataGridTemplateColumn Header="图标状态" Width="Auto">
+	                                    <DataGridTemplateColumn.CellTemplate>
+	                                        <DataTemplate>
+		                                            <StackPanel Orientation="Horizontal" Spacing="6"
+		                                                        ToolTip.Tip="{Binding IconStatus}">
+	                                                <Border Width="20" Height="20" CornerRadius="3" ClipToBounds="True">
+	                                                    <Image Source="{Binding DisplayIcon}" Stretch="UniformToFill" />
+	                                                </Border>
+	                                                <TextBlock Text="{Binding IconStatus}" VerticalAlignment="Center" />
+	                                            </StackPanel>
+	                                        </DataTemplate>
+	                                    </DataGridTemplateColumn.CellTemplate>
+	                                </DataGridTemplateColumn>
+	                                <DataGridTemplateColumn Header="图标操作" Width="Auto">
+	                                    <DataGridTemplateColumn.CellTemplate>
+	                                        <DataTemplate>
+	                                            <StackPanel Orientation="Horizontal" Spacing="2">
+	                                                <Button Width="20"
+	                                                        Height="20"
+	                                                        Margin="0"
+	                                                        Padding="4 0"
+	                                                        Background="Transparent"
+	                                                        BorderBrush="Transparent"
+	                                                        Click="ChooseIconButtonOnClick"
+	                                                        ToolTip.Tip="为这个播放源选择本地图片作为图标覆盖；文件路径会保存到插件设置中。">
                                                     <ci:FluentIcon Glyph="&#xE8B7;" />
                                                 </Button>
-                                                <Button Width="20"
-                                                        Height="20"
-                                                        Margin="0"
-                                                        Padding="4 0"
-                                                        Background="Transparent"
-                                                        BorderBrush="Transparent"
-                                                        Click="ClearIconButtonOnClick">
+	                                                <Button Width="20"
+	                                                        Height="20"
+	                                                        Margin="0"
+	                                                        Padding="4 0"
+	                                                        Background="Transparent"
+	                                                        BorderBrush="Transparent"
+	                                                        Click="ClearIconButtonOnClick"
+	                                                        ToolTip.Tip="清除这个播放源的自定义图标，恢复系统或内置图标解析。">
                                                     <ci:FluentIcon Glyph="&#xE711;" />
                                                 </Button>
                                             </StackPanel>
@@ -62,13 +160,14 @@
                                 <DataGridTemplateColumn Header="操作" Width="Auto">
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
-                                            <Button Width="20"
-                                                    Height="20"
-                                                    Margin="0"
-                                                    Padding="4 0"
-                                                    Background="Transparent"
-                                                    BorderBrush="Transparent"
-                                                    Click="DeleteButtonOnClick">
+	                                            <Button Width="20"
+	                                                    Height="20"
+	                                                    Margin="0"
+	                                                    Padding="4 0"
+	                                                    Background="Transparent"
+	                                                    BorderBrush="Transparent"
+	                                                    Click="DeleteButtonOnClick"
+	                                                    ToolTip.Tip="从列表中移除这个播放源；再次播放时仍可重新添加。">
                                                 <ci:FluentIcon Glyph="&#xE61C;" Foreground="Red" />
                                             </Button>
                                         </DataTemplate>
@@ -77,18 +176,20 @@
                             </DataGrid.Columns>
                         </DataGrid>
                         <StackPanel Orientation="Horizontal" Margin="12,0,12,6">
-                            <Button HorizontalAlignment="Left"
-                                    VerticalAlignment="Center"
-                                    Theme="{StaticResource TransparentButton}"
-                                    Classes="accent"
-                                    Click="AddButtonOnClick">
+	                            <Button HorizontalAlignment="Left"
+	                                    VerticalAlignment="Center"
+	                                    Theme="{StaticResource TransparentButton}"
+	                                    Classes="accent"
+	                                    Click="AddButtonOnClick"
+	                                    ToolTip.Tip="把当前媒体会话的播放源 ID 添加到列表。">
                                 <ci:IconText Text="添加当前播放源" Glyph="&#xE00C;" />
                             </Button>
-                            <Button HorizontalAlignment="Left"
-                                    VerticalAlignment="Center"
-                                    Theme="{StaticResource TransparentButton}"
-                                    Classes="accent"
-                                    Click="SaveButtonOnClick">
+	                            <Button HorizontalAlignment="Left"
+	                                    VerticalAlignment="Center"
+	                                    Theme="{StaticResource TransparentButton}"
+	                                    Classes="accent"
+	                                    Click="SaveButtonOnClick"
+	                                    ToolTip.Tip="保存播放源启用状态和自定义图标路径。">
                                 <ci:IconText Text="保存" Glyph="&#xEEB5;" />
                             </Button>
                         </StackPanel>

@@ -1,4 +1,6 @@
 ﻿using System.Collections.ObjectModel;
+using System.Text.Json.Serialization;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using ClassIsland.Core.Abstractions;
 
@@ -56,6 +58,9 @@ namespace MediaIsland.Models
         private string _source = string.Empty;
         private bool _isEnabled = true;
         private string? _iconPath;
+        private string _displayName = string.Empty;
+        private string _iconStatus = "未解析";
+        private Bitmap? _displayIcon;
 
         public string Source
         {
@@ -86,6 +91,42 @@ namespace MediaIsland.Models
             {
                 if (_iconPath == value) return;
                 _iconPath = value;
+                OnPropertyChanged();
+            }
+        }
+
+        [JsonIgnore]
+        public string DisplayName
+        {
+            get => string.IsNullOrWhiteSpace(_displayName) ? Source : _displayName;
+            set
+            {
+                if (_displayName == value) return;
+                _displayName = value;
+                OnPropertyChanged();
+            }
+        }
+
+        [JsonIgnore]
+        public string IconStatus
+        {
+            get => _iconStatus;
+            set
+            {
+                if (_iconStatus == value) return;
+                _iconStatus = value;
+                OnPropertyChanged();
+            }
+        }
+
+        [JsonIgnore]
+        public Bitmap? DisplayIcon
+        {
+            get => _displayIcon;
+            set
+            {
+                if (ReferenceEquals(_displayIcon, value)) return;
+                _displayIcon = value;
                 OnPropertyChanged();
             }
         }
