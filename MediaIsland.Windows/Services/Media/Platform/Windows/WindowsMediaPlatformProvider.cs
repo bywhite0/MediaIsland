@@ -2,7 +2,7 @@ namespace MediaIsland.Services.Media.Platform.Windows;
 
 public sealed class WindowsMediaPlatformProvider(
     WindowsSmtcMediaSessionProvider sessionProvider,
-    NoOpMediaSourceInfoProvider sourceInfoProvider) : IMediaPlatformProvider
+    WindowsMediaSourceInfoProvider sourceInfoProvider) : IMediaPlatformProvider
 {
     public string Id => "windows";
 

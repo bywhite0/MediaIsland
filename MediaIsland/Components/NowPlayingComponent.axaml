@@ -31,10 +31,10 @@
             <TextBlock x:Name="ArtistText" HorizontalAlignment="Left" VerticalAlignment="Center" FontSize="10" Margin="0" />
             <TextBlock x:Name="TimeText" HorizontalAlignment="Left" VerticalAlignment="Center"  FontSize="10" Margin="0" IsVisible="false"/>
         </StackPanel>
-        <StackPanel Name="SourceStackPanel" Grid.Column="3" Margin="4 0 0 0" Orientation="Vertical" VerticalAlignment="Center" IsVisible="{Binding Settings.IsShowSource}">
-            <!-- <Border Name="SourceIconBorder" VerticalAlignment="Center" CornerRadius="{Binding Settings.SourceIconRadius, Converter={StaticResource DoubleToCornerRadiusConverter}}"  Margin="0" ClipToBounds="True" Width="22" Height="22"> -->
-            <!--     <Image x:Name="SourceIcon" Stretch="UniformToFill" /> -->
-            <!-- </Border> -->
+        <StackPanel Name="SourceStackPanel" Grid.Column="3" Margin="4 0 0 0" Orientation="Vertical" VerticalAlignment="Center" IsVisible="{Binding Settings.IsShowSourceArea}">
+            <Border Name="SourceIconBorder" HorizontalAlignment="Center" VerticalAlignment="Center" CornerRadius="{Binding Settings.SourceIconRadius, Converter={StaticResource DoubleToCornerRadiusConverter}}"  Margin="0" ClipToBounds="True" Width="22" Height="22" IsVisible="{Binding Settings.IsShowSource}">
+                <Image x:Name="SourceIcon" Stretch="UniformToFill" />
+            </Border>
             <TextBlock x:Name="SourceText" HorizontalAlignment="Center" VerticalAlignment="Bottom" FontSize="8" IsVisible="{Binding Settings.IsShowSourceName}"/>
         </StackPanel>
         

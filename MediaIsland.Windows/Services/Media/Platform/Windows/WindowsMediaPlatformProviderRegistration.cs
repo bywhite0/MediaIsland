@@ -7,6 +7,7 @@ public static class WindowsMediaPlatformProviderRegistration
     public static IServiceCollection AddWindowsMediaPlatformProvider(IServiceCollection services)
     {
         services.AddSingleton<WindowsSmtcMediaSessionProvider>();
+        services.AddSingleton<WindowsMediaSourceInfoProvider>();
         services.AddSingleton<IMediaPlatformProvider, WindowsMediaPlatformProvider>();
         return services;
     }

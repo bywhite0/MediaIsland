@@ -55,6 +55,7 @@ namespace MediaIsland.Models
     {
         private string _source = string.Empty;
         private bool _isEnabled = true;
+        private string? _iconPath;
 
         public string Source
         {
@@ -74,6 +75,17 @@ namespace MediaIsland.Models
             {
                 if (_isEnabled == value) return;
                 _isEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string? IconPath
+        {
+            get => _iconPath;
+            set
+            {
+                if (_iconPath == value) return;
+                _iconPath = value;
                 OnPropertyChanged();
             }
         }

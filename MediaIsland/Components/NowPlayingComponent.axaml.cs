@@ -6,6 +6,7 @@ using ClassIsland.Shared.Helpers;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
 using MediaIsland.Services.Media;
+using MediaIsland.Services.Media.SourceDisplay;
 using Microsoft.Extensions.Logging;
 using RoutedEventArgs = Avalonia.Interactivity.RoutedEventArgs;
 
@@ -21,6 +22,7 @@ namespace MediaIsland.Components
     public partial class NowPlayingComponent : ComponentBase<NowPlayingComponentConfig>
     {
         private readonly IMediaService _mediaService;
+        private readonly IMediaSourceDisplayService _mediaSourceDisplayService;
         private readonly DispatcherTimer _timelineTimer;
         private ILogger<NowPlayingComponent> Logger { get; }
 
@@ -32,11 +34,15 @@ namespace MediaIsland.Components
         private bool _isLoaded;
         private MediaInfo? _currentMediaInfo;
 
-        public NowPlayingComponent(ILogger<NowPlayingComponent> logger, IMediaService mediaService)
+        public NowPlayingComponent(
+            ILogger<NowPlayingComponent> logger,
+            IMediaService mediaService,
+            IMediaSourceDisplayService mediaSourceDisplayService)
         {
             InitializeComponent();
             Logger = logger;
             _mediaService = mediaService;
+            _mediaSourceDisplayService = mediaSourceDisplayService;
             globalSettings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
             _timelineTimer = new DispatcherTimer
             {
@@ -90,6 +96,12 @@ namespace MediaIsland.Components
                             break;
                     }
 
+                    break;
+                case "IsShowSource":
+                    Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        SourceIconBorder.IsVisible = Settings.IsShowSource && SourceIcon.Source != null;
+                    });
                     break;
             }
         }
@@ -210,6 +222,7 @@ namespace MediaIsland.Components
             try
             {
                 var thumbnail = mediaInfo.Thumbnail;
+                var sourceDisplayInfo = await ResolveSourceDisplayInfoAsync(mediaInfo.SourceApp);
                 if (mediaInfo.ThumbnailSource != null &&
                     AppInfoHelper.IsSourceAppSpotify(mediaInfo.SourceApp) &&
                     globalSettings.IsCutSpotifyTrademarkEnabled)
@@ -226,6 +239,9 @@ namespace MediaIsland.Components
                 {
                     TitleText.Text = mediaInfo.Title ?? "未知标题";
                     ArtistText.Text = mediaInfo.Artist ?? "未知艺术家";
+                    SourceText.Text = sourceDisplayInfo.DisplayName;
+                    SourceIcon.Source = sourceDisplayInfo.Icon;
+                    SourceIconBorder.IsVisible = Settings.IsShowSource && sourceDisplayInfo.Icon != null;
 
                     if (thumbnail != null)
                     {
@@ -285,6 +301,19 @@ namespace MediaIsland.Components
             catch (Exception ex)
             {
                 Logger.LogWarning("无法获取播放状态：{ExMessage}", ex.Message);
+            }
+        }
+
+        private async Task<MediaSourceDisplayInfo> ResolveSourceDisplayInfoAsync(string sourceApp)
+        {
+            try
+            {
+                return await _mediaSourceDisplayService.ResolveAsync(sourceApp);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning("无法获取播放源显示信息：{ExMessage}", ex.Message);
+                return new MediaSourceDisplayInfo(sourceApp, sourceApp, null, MediaSourceDisplayKind.Unknown);
             }
         }
 

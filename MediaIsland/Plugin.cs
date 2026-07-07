@@ -10,6 +10,7 @@ using MediaIsland.Components;
 using MediaIsland.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
+using MediaIsland.Services.Media.SourceDisplay;
 using MediaIsland.SettingsPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -30,6 +31,8 @@ namespace MediaIsland
             services.AddSingleton<MediaPlatformProviderResolver>();
             services.AddSingleton<MediaService>();
             services.AddSingleton<IMediaService>(provider => provider.GetRequiredService<MediaService>());
+            services.AddSingleton<MediaSourceDisplayService>();
+            services.AddSingleton<IMediaSourceDisplayService>(provider => provider.GetRequiredService<MediaSourceDisplayService>());
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();

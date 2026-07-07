@@ -1,4 +1,5 @@
-﻿using Avalonia;
+﻿using System.Text.Json.Serialization;
+using Avalonia;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Avalonia.Media;
 
@@ -48,6 +49,7 @@ namespace MediaIsland.Components
                 if (_isShowSource == value) return;
                 _isShowSource = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(IsShowSourceArea));
             }
         }
         public bool IsShowSourceName
@@ -58,8 +60,13 @@ namespace MediaIsland.Components
                 if (_isShowSourceName == value) return;
                 _isShowSourceName = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(IsShowSourceArea));
             }
         }
+
+        [JsonIgnore]
+        public bool IsShowSourceArea => IsShowSource || IsShowSourceName;
+
         public double SourceIconRadius
         {
             get => _sourceIconRadius;
