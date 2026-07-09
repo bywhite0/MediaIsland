@@ -412,7 +412,7 @@ namespace MediaIsland.Components
                     TimeText.IsVisible = false;
                 }
             }
-            TimeText.Text = (duration.Hours == 0) ? $@"{position:mm\:ss} / {duration:mm\:ss}" : $@"{position} / {duration}";
+            TimeText.Text = (duration.Hours == 0) ? $@"{position:mm\:ss} / {duration:mm\:ss}" : $@"{(int)position.TotalHours:00}:{position:mm\:ss} / {(int)duration.TotalHours:00}:{duration:mm\:ss}";
         }
 
         private static bool HasTimeline(TimeSpan duration)

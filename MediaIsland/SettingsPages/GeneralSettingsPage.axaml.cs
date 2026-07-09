@@ -465,7 +465,7 @@ namespace MediaIsland.SettingsPages
         {
             return duration.Hours == 0
                 ? $@"{position:mm\:ss} / {duration:mm\:ss}"
-                : $@"{position} / {duration}";
+                : $@"{(int)position.TotalHours:00}:{position:mm\:ss} / {(int)duration.TotalHours:00}:{duration:mm\:ss}";
         }
 
         private static string GetPlaybackStatusText(MediaPlaybackState state)
