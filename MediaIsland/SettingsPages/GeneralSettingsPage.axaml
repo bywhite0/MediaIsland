@@ -79,22 +79,13 @@
 	                                       TextTrimming="CharacterEllipsis"
 	                                       ToolTip.Tip="{Binding CurrentMediaSourceId}" />
 	                        </StackPanel>
-	                        <TextBlock Text="{Binding CurrentMediaSourceId}"
-	                                   Margin="0 4 0 0"
-	                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                   TextTrimming="CharacterEllipsis" />
-	                        <TextBlock Text="{Binding CurrentMediaSourceIconStatus}"
-	                                   Margin="0 2 0 0"
-	                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                   TextTrimming="CharacterEllipsis" />
 	                    </StackPanel>
 	                </Grid>
 	            </Border>
 	            <ci:IconText Glyph="&#xEF27;" Text="通用" Margin="0 0 0 8" />
 	            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
 	                                       Header="播放源列表"
-	                                       Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息，需要重载组件才能生效。"
-	                                       ToolTip.Tip="这里的播放源 ID 来自系统媒体会话，可能是程序名、AUMID 或包名。">
+	                                       Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息，需要重载组件才能生效。">
                             <controls:SettingsExpander.Footer>
                                 <ci:FluentIcon Glyph="&#xF19B;"/>
                             </controls:SettingsExpander.Footer>
@@ -140,8 +131,8 @@
 	                                                        Background="Transparent"
 	                                                        BorderBrush="Transparent"
 	                                                        Click="ChooseIconButtonOnClick"
-	                                                        ToolTip.Tip="为这个播放源选择本地图片作为图标覆盖；文件路径会保存到插件设置中。">
-                                                    <ci:FluentIcon Glyph="&#xE8B7;" />
+	                                                        ToolTip.Tip="自定义图标">
+                                                    <ci:FluentIcon Glyph="&#xE9C4;" />
                                                 </Button>
 	                                                <Button Width="20"
 	                                                        Height="20"
@@ -150,8 +141,8 @@
 	                                                        Background="Transparent"
 	                                                        BorderBrush="Transparent"
 	                                                        Click="ClearIconButtonOnClick"
-	                                                        ToolTip.Tip="清除这个播放源的自定义图标，恢复系统或内置图标解析。">
-                                                    <ci:FluentIcon Glyph="&#xE711;" />
+	                                                        ToolTip.Tip="清除自定义图标">
+                                                    <ci:FluentIcon Glyph="&#xE7FF;" />
                                                 </Button>
                                             </StackPanel>
                                         </DataTemplate>
@@ -167,7 +158,7 @@
 	                                                    Background="Transparent"
 	                                                    BorderBrush="Transparent"
 	                                                    Click="DeleteButtonOnClick"
-	                                                    ToolTip.Tip="从列表中移除这个播放源；再次播放时仍可重新添加。">
+	                                                    ToolTip.Tip="移除播放源">
                                                 <ci:FluentIcon Glyph="&#xE61C;" Foreground="Red" />
                                             </Button>
                                         </DataTemplate>
@@ -180,16 +171,14 @@
 	                                    VerticalAlignment="Center"
 	                                    Theme="{StaticResource TransparentButton}"
 	                                    Classes="accent"
-	                                    Click="AddButtonOnClick"
-	                                    ToolTip.Tip="把当前媒体会话的播放源 ID 添加到列表。">
+	                                    Click="AddButtonOnClick">
                                 <ci:IconText Text="添加当前播放源" Glyph="&#xE00C;" />
                             </Button>
 	                            <Button HorizontalAlignment="Left"
 	                                    VerticalAlignment="Center"
 	                                    Theme="{StaticResource TransparentButton}"
 	                                    Classes="accent"
-	                                    Click="SaveButtonOnClick"
-	                                    ToolTip.Tip="保存播放源启用状态和自定义图标路径。">
+	                                    Click="SaveButtonOnClick">
                                 <ci:IconText Text="保存" Glyph="&#xEEB5;" />
                             </Button>
                         </StackPanel>

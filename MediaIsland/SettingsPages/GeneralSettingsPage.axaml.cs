@@ -490,7 +490,9 @@ namespace MediaIsland.SettingsPages
                 MediaPlaybackState.Paused => "\uEC90",
                 MediaPlaybackState.Stopped => "\uF086",
                 MediaPlaybackState.Changing => "\uE0B4",
-                _ => "\uE9CE"
+                MediaPlaybackState.Opened => "\uEC2E",
+                MediaPlaybackState.Closed => "\uE673",
+                _ => "\uEE2F"
             };
         }
 
