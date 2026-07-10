@@ -1,3 +1,8 @@
+using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
+using Avalonia.Media;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
@@ -17,22 +22,28 @@ namespace MediaIsland.Components;
 )]
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
+    private static readonly TimeSpan LyricsTransitionDuration = TimeSpan.FromMilliseconds(220);
+
     private readonly IMediaService _mediaService;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly ILogger<LyricsComponent> _logger;
     private readonly DispatcherTimer _lyricsTimer;
+    private readonly TranslateTransform _lyricsTextTransform;
     private readonly object _syncLock = new();
 
     private LyricsData? _currentLyrics;
     private string? _currentLine;
     private string? _lastTitle;
     private string? _lastArtist;
+    private string _lastStatusText = string.Empty;
+    private bool _isCurrentTextStatus = true;
     private TimeSpan _lastMediaPosition;
     private long _lastMediaUpdateTime = Environment.TickCount64;
     private bool _isPlaying;
     private double _playbackRate = 1.0;
     private bool _isLoaded;
     private CancellationTokenSource? _searchCts;
+    private CancellationTokenSource? _textTransitionCts;
     private int _searchVersion;
 
     public LyricsComponent(
@@ -41,6 +52,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         ILogger<LyricsComponent> logger)
     {
         InitializeComponent();
+        _lyricsTextTransform = (TranslateTransform)LyricsText.RenderTransform!;
         _mediaService = mediaService;
         _lyricsSearchService = lyricsSearchService;
         _logger = logger;
@@ -80,11 +92,18 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
         Settings.PropertyChanged -= Settings_OnPropertyChanged;
         CancelCurrentSearch();
+        StopTextTransition();
     }
 
     private void Settings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(LyricsComponentConfig.IsHideWhenEmpty) or nameof(LyricsComponentConfig.IsShowStatusText))
+        if (e.PropertyName == nameof(LyricsComponentConfig.IsShowStatusText))
+        {
+            ApplyCurrentDisplaySettings();
+            return;
+        }
+
+        if (e.PropertyName == nameof(LyricsComponentConfig.IsHideWhenEmpty))
         {
             Dispatcher.UIThread.InvokeAsync(UpdateEmptyVisibility);
         }
@@ -265,6 +284,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void SetStatus(string text)
     {
+        _lastStatusText = text;
         Dispatcher.UIThread.InvokeAsync(() =>
         {
             if (!_isLoaded || Settings == null)
@@ -272,35 +292,137 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
-            SetTextCore(Settings.IsShowStatusText ? text : string.Empty, isStatusText: true);
+            _isCurrentTextStatus = true;
+            SetTextCore(GetVisibleText(text, isStatusText: true), isStatusText: true);
         });
     }
 
     private void SetText(string text, bool isStatusText)
     {
+        if (isStatusText)
+        {
+            _lastStatusText = text;
+        }
+
         Dispatcher.UIThread.InvokeAsync(() =>
         {
-            if (!_isLoaded)
+            if (!_isLoaded || Settings == null)
             {
                 return;
             }
 
-            SetTextCore(text, isStatusText);
+            _isCurrentTextStatus = isStatusText;
+            SetTextCore(GetVisibleText(text, isStatusText), isStatusText);
         });
+    }
+
+    private void ApplyCurrentDisplaySettings()
+    {
+        Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            if (!_isLoaded || Settings == null)
+            {
+                return;
+            }
+
+            if (_isCurrentTextStatus)
+            {
+                SetTextCore(GetVisibleText(_lastStatusText, isStatusText: true), isStatusText: true);
+                return;
+            }
+
+            UpdateEmptyVisibility();
+        });
+    }
+
+    private string GetVisibleText(string text, bool isStatusText)
+    {
+        return isStatusText && !Settings.IsShowStatusText ? string.Empty : text;
     }
 
     private void SetTextCore(string text, bool isStatusText)
     {
         var targetOpacity = isStatusText ? 0.72 : 1.0;
-        if (LyricsText.Text == text && Math.Abs(LyricsText.Opacity - targetOpacity) < 0.001)
+        if (LyricsText.Text == text &&
+            Math.Abs(LyricsText.GetBaseValue(Visual.OpacityProperty).GetValueOrDefault(LyricsText.Opacity) - targetOpacity) < 0.001)
         {
             UpdateEmptyVisibility();
             return;
         }
 
+        StopTextTransition();
         LyricsText.Text = text;
         LyricsText.Opacity = targetOpacity;
+        _lyricsTextTransform.Y = 0;
         UpdateEmptyVisibility();
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            StartTextTransition(targetOpacity);
+        }
+    }
+
+    private void StartTextTransition(double targetOpacity)
+    {
+        var transitionCts = new CancellationTokenSource();
+        _textTransitionCts = transitionCts;
+        _ = RunTextTransitionAsync(targetOpacity, transitionCts);
+    }
+
+    private async Task RunTextTransitionAsync(double targetOpacity, CancellationTokenSource transitionCts)
+    {
+        var opacityAnimation = CreateTextTransition(Visual.OpacityProperty, 0, targetOpacity);
+        var offsetAnimation = CreateTextTransition(TranslateTransform.YProperty, 4, 0);
+
+        try
+        {
+            await Task.WhenAll(
+                opacityAnimation.RunAsync(LyricsText, transitionCts.Token),
+                offsetAnimation.RunAsync(_lyricsTextTransform, transitionCts.Token));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_textTransitionCts, transitionCts))
+            {
+                _textTransitionCts = null;
+                LyricsText.Opacity = targetOpacity;
+                _lyricsTextTransform.Y = 0;
+            }
+
+            transitionCts.Dispose();
+        }
+    }
+
+    private static Animation CreateTextTransition(AvaloniaProperty property, double from, double to)
+    {
+        return new Animation
+        {
+            Duration = LyricsTransitionDuration,
+            Easing = new CubicEaseOut(),
+            FillMode = FillMode.None,
+            Children =
+            {
+                new KeyFrame
+                {
+                    Cue = new Cue(0),
+                    Setters = { new Setter(property, from) }
+                },
+                new KeyFrame
+                {
+                    Cue = new Cue(1),
+                    Setters = { new Setter(property, to) }
+                }
+            }
+        };
+    }
+
+    private void StopTextTransition()
+    {
+        var transitionCts = _textTransitionCts;
+        _textTransitionCts = null;
+        transitionCts?.Cancel();
     }
 
     private void CancelCurrentSearch()

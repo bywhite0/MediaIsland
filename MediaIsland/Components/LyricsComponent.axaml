@@ -26,6 +26,10 @@
                    VerticalAlignment="Center"
                    TextTrimming="CharacterEllipsis"
                    TextWrapping="NoWrap"
-                   FontSize="{DynamicResource MainWindowBodyFontSize}" />
+                   FontSize="{DynamicResource MainWindowBodyFontSize}">
+            <TextBlock.RenderTransform>
+                <TranslateTransform />
+            </TextBlock.RenderTransform>
+        </TextBlock>
     </Grid>
 </ci:ComponentBase>
