@@ -8,6 +8,7 @@ using ClassIsland.Core.Extensions.Registry;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
+using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
 using MediaIsland.Services.Media.SourceDisplay;
@@ -33,9 +34,11 @@ namespace MediaIsland
             services.AddSingleton<IMediaService>(provider => provider.GetRequiredService<MediaService>());
             services.AddSingleton<MediaSourceDisplayService>();
             services.AddSingleton<IMediaSourceDisplayService>(provider => provider.GetRequiredService<MediaSourceDisplayService>());
+            services.AddSingleton<LyricsSearchService>();
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
+            services.AddComponent<LyricsComponent, LyricsComponentSettings>();
             globalConfigFolder = PluginConfigFolder; 
             Settings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"));
             Settings.PropertyChanged += (sender, args) =>
