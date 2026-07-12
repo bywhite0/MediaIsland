@@ -1,0 +1,14 @@
+[package]
+name = "mediaisland_ttml"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+name = "mediaisland_ttml"
+
+[dependencies]
+ttml_processor = { git = "https://github.com/apoint123/ttml-processor-rs", rev = "f1e4586a6d3a18d6572b162d97d70248e275377c" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -5,9 +5,12 @@
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<PlatformTarget>x64</PlatformTarget>
+		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<EnableDynamicLoading>True</EnableDynamicLoading>
 		<WindowsProviderProject>..\MediaIsland.Windows\MediaIsland.Windows.csproj</WindowsProviderProject>
 		<WindowsProviderTargetFramework>net8.0-windows10.0.17763</WindowsProviderTargetFramework>
+		<TtmlNativeManifest>$(MSBuildProjectDirectory)\..\native\ttml-ffi\Cargo.toml</TtmlNativeManifest>
+		<TtmlNativeLibrary>$(MSBuildProjectDirectory)\..\native\ttml-ffi\target\release\mediaisland_ttml.dll</TtmlNativeLibrary>
 	</PropertyGroup>
 
 
@@ -20,6 +23,14 @@
 	</ItemGroup>
 	
 	<ItemGroup>
+		<None Include="..\native\ttml-ffi\target\release\mediaisland_ttml.dll">
+			<Link>runtimes\win-x64\native\mediaisland_ttml.dll</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Include="..\native\ttml-ffi\target\release\mediaisland_ttml.dll">
+			<Link>mediaisland_ttml.dll</Link>
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
 		<None Update="ThirdPartyLicenses.txt">
 			<CopyToOutputDirectory>Always</CopyToOutputDirectory>
 		</None>
@@ -47,6 +58,14 @@
 			<_WindowsProviderOutput Include="$(MSBuildProjectDirectory)\..\MediaIsland.Windows\bin\$(Configuration)\$(WindowsProviderTargetFramework)\MediaIsland.Windows.deps.json" />
 		</ItemGroup>
 		<Copy SourceFiles="@(_WindowsProviderOutput)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" Condition="Exists('%(_WindowsProviderOutput.FullPath)')" />
+	</Target>
+
+	<Target Name="BuildTtmlNative"
+	        BeforeTargets="PrepareForBuild"
+	        Inputs="$(TtmlNativeManifest);$(MSBuildProjectDirectory)\..\native\ttml-ffi\Cargo.lock;$(MSBuildProjectDirectory)\..\native\ttml-ffi\src\lib.rs"
+	        Outputs="$(TtmlNativeLibrary)"
+	        Condition="'$(OS)' == 'Windows_NT' And '$(PlatformTarget)' == 'x64' And Exists('$(TtmlNativeManifest)')">
+		<Exec Command="cargo build --manifest-path &quot;$(TtmlNativeManifest)&quot; --release" />
 	</Target>
 
 </Project>

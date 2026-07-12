@@ -1600,3 +1600,23 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
+
+============================================================
+ttml-processor-rs
+============================================================
+Repository: https://github.com/apoint123/ttml-processor-rs
+Pinned commit: f1e4586a6d3a18d6572b162d97d70248e275377c
+License: MIT
+
+Used via MediaIsland native wrapper crate native/ttml-ffi (mediaisland_ttml)
+for AMLL/Apple Music TTML lyric parsing.
+
+============================================================
+AMLL TTML API / Database
+============================================================
+API: https://github.com/amll-dev/amll-ttml-api
+Database: https://github.com/amll-dev/amll-ttml-db
+License: MIT or Apache-2.0
+
+MediaIsland only calls user-configured HTTP endpoints and does not bundle
+third-party lyric bodies.
