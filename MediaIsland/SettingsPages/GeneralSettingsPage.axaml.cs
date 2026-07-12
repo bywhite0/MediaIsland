@@ -1,4 +1,6 @@
 using System.IO;
+using System.Collections.ObjectModel;
+using System.Net.Http;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Avalonia.Controls;
@@ -13,6 +15,8 @@ using ClassIsland.Core.Enums.SettingsWindow;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
+using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.SourceDisplay;
 
@@ -33,6 +37,7 @@ namespace MediaIsland.SettingsPages
         public PluginSettings Settings { get; }
         private readonly IMediaService _mediaService;
         private readonly IMediaSourceDisplayService _mediaSourceDisplayService;
+        private readonly LyricsSearchService _lyricsSearchService;
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -44,6 +49,10 @@ namespace MediaIsland.SettingsPages
         private string _currentMediaSourceIconStatus = "图标状态：无图标";
         private Bitmap? _currentMediaThumbnail;
         private Bitmap? _currentMediaSourceIcon;
+        private string _amllApiBaseUrl = string.Empty;
+        private string _amllConnectionStatus = "留空表示不使用 AMLL 来源。";
+        private string _currentLyricsSourceDisplay = "当前使用：暂无";
+        private bool _suppressLyricsSave;
 
         private event PropertyChangedEventHandler? NotifyPropertyChanged;
 
@@ -133,24 +142,58 @@ namespace MediaIsland.SettingsPages
 
         public bool HasCurrentMediaSourceIcon => CurrentMediaSourceIcon != null;
 
+        public ObservableCollection<LyricsSourceItemViewModel> LyricsSourceItems { get; } = [];
+
+        public string AmllApiBaseUrl
+        {
+            get => _amllApiBaseUrl;
+            set
+            {
+                if (!SetProperty(ref _amllApiBaseUrl, value))
+                {
+                    return;
+                }
+
+                PersistLyricsSettings();
+            }
+        }
+
+        public string AmllConnectionStatus
+        {
+            get => _amllConnectionStatus;
+            private set => SetProperty(ref _amllConnectionStatus, value);
+        }
+
+        public string CurrentLyricsSourceDisplay
+        {
+            get => _currentLyricsSourceDisplay;
+            private set => SetProperty(ref _currentLyricsSourceDisplay, value);
+        }
+
         public GeneralSettingsPage(
             Plugin plugin,
             IMediaService mediaService,
-            IMediaSourceDisplayService mediaSourceDisplayService)
+            IMediaSourceDisplayService mediaSourceDisplayService,
+            LyricsSearchService lyricsSearchService)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
             _mediaService = mediaService;
             _mediaSourceDisplayService = mediaSourceDisplayService;
+            _lyricsSearchService = lyricsSearchService;
             RemoveNullMediaSources();
             InitializeComponent();
+            LoadLyricsSettings();
             DetachedFromVisualTree += (_, _) =>
             {
                 _isDetached = true;
                 _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+                _lyricsSearchService.CurrentResultChanged -= LyricsSearchService_OnCurrentResultChanged;
             };
             Settings.needRestart += RequestRestart;
             _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+            _lyricsSearchService.CurrentResultChanged += LyricsSearchService_OnCurrentResultChanged;
+            UpdateCurrentLyricsSource(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo));
             StartMediaServiceAsync();
             AddCurrentMediaSourceIfAvailable();
             _ = RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
@@ -183,6 +226,12 @@ namespace MediaIsland.SettingsPages
 
         private void MediaService_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
         {
+            if (e.ChangeKind is MediaInfoChangeKind.CurrentSession or MediaInfoChangeKind.MediaProperties)
+            {
+                Dispatcher.UIThread.Post(() => UpdateCurrentLyricsSource(
+                    _lyricsSearchService.GetCurrentResultFor(e.MediaInfo)));
+            }
+
             _ = RefreshCurrentMediaInfoAsync(e.MediaInfo);
             if (e.MediaInfo == null)
             {
@@ -190,6 +239,21 @@ namespace MediaIsland.SettingsPages
             }
 
             Dispatcher.UIThread.Post(() => AddMediaSource(e.MediaInfo.SourceApp));
+        }
+
+        private void LyricsSearchService_OnCurrentResultChanged(
+            object? sender,
+            LyricsSearchResultChangedEventArgs e)
+        {
+            Dispatcher.UIThread.Post(() => UpdateCurrentLyricsSource(
+                _lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo)));
+        }
+
+        private void UpdateCurrentLyricsSource(LyricsSearchResult? result)
+        {
+            CurrentLyricsSourceDisplay = result == null
+                ? "当前使用：暂无"
+                : $"当前使用：{LyricsSourceItemViewModel.GetDisplayName(result.Source)}";
         }
 
         static bool IsLyricsIslandInstalled()
@@ -518,9 +582,169 @@ namespace MediaIsland.SettingsPages
             return true;
         }
 
+
+        private void LoadLyricsSettings()
+        {
+            _suppressLyricsSave = true;
+            Settings.Lyrics = LyricsSourceSettings.Normalize(Settings.Lyrics);
+            LyricsSourceItems.Clear();
+            foreach (var source in Settings.Lyrics.Sources)
+            {
+                var item = new LyricsSourceItemViewModel(source, PersistLyricsSettings);
+                LyricsSourceItems.Add(item);
+            }
+
+            _amllApiBaseUrl = Settings.Lyrics.AmllApiBaseUrl;
+            OnPropertyChanged(nameof(AmllApiBaseUrl));
+            _suppressLyricsSave = false;
+        }
+
+        private void PersistLyricsSettings()
+        {
+            if (_suppressLyricsSave)
+            {
+                return;
+            }
+
+            Settings.Lyrics = new LyricsSourceSettings
+            {
+                AmllApiBaseUrl = LyricsSourceSettings.NormalizeAmllBaseUrl(AmllApiBaseUrl),
+                Sources = LyricsSourceItems.Select(item => new LyricsSourceEntry
+                {
+                    Id = item.Id,
+                    IsEnabled = item.IsEnabled,
+                    UseWordSyncedLyrics = item.UseWordSyncedLyrics
+                }).ToList()
+            };
+            Settings.Lyrics = LyricsSourceSettings.Normalize(Settings.Lyrics);
+            SaveSettings();
+        }
+
+        private void MoveLyricsSourceUpOnClick(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: LyricsSourceItemViewModel item })
+            {
+                return;
+            }
+
+            var index = LyricsSourceItems.IndexOf(item);
+            if (index <= 0)
+            {
+                return;
+            }
+
+            LyricsSourceItems.Move(index, index - 1);
+            PersistLyricsSettings();
+        }
+
+        private void MoveLyricsSourceDownOnClick(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not Button { Tag: LyricsSourceItemViewModel item })
+            {
+                return;
+            }
+
+            var index = LyricsSourceItems.IndexOf(item);
+            if (index < 0 || index >= LyricsSourceItems.Count - 1)
+            {
+                return;
+            }
+
+            LyricsSourceItems.Move(index, index + 1);
+            PersistLyricsSettings();
+        }
+
+        private async void TestAmllConnectionOnClick(object? sender, RoutedEventArgs e)
+        {
+            var baseUrl = LyricsSourceSettings.NormalizeAmllBaseUrl(AmllApiBaseUrl);
+            if (string.IsNullOrWhiteSpace(baseUrl))
+            {
+                AmllConnectionStatus = "请先填写有效的 http(s) API 地址。";
+                return;
+            }
+
+            AmllConnectionStatus = "正在测试连接...";
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
+                var url = $"{baseUrl}/api/v1/lyrics/search?musicName=ME!&artistName=Taylor%20Swift";
+                using var response = await client.GetAsync(url);
+                AmllConnectionStatus = response.IsSuccessStatusCode
+                    ? $"连接成功：HTTP {(int)response.StatusCode}"
+                    : $"连接失败：HTTP {(int)response.StatusCode}";
+            }
+            catch (Exception ex)
+            {
+                AmllConnectionStatus = $"连接失败：{ex.Message}";
+            }
+        }
+
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         {
             NotifyPropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
+    }
+
+    public sealed class LyricsSourceItemViewModel : INotifyPropertyChanged
+    {
+        private bool _isEnabled;
+        private bool _useWordSyncedLyrics;
+        private readonly Action _onChanged;
+
+        public LyricsSourceItemViewModel(LyricsSourceEntry entry, Action onChanged)
+        {
+            Id = entry.Id;
+            _isEnabled = entry.IsEnabled;
+            _useWordSyncedLyrics = entry.UseWordSyncedLyrics;
+            _onChanged = onChanged;
+        }
+
+        public LyricsSourceId Id { get; }
+
+        public string DisplayName => GetDisplayName(Id);
+
+        public static string GetDisplayName(LyricsSourceId id) => id switch
+        {
+            LyricsSourceId.AmllTtml => "AMLL TTML DB",
+            LyricsSourceId.QqMusic => "QQ 音乐",
+            LyricsSourceId.Kugou => "酷狗音乐",
+            LyricsSourceId.Netease => "网易云音乐",
+            _ => id.ToString()
+        };
+
+        public string Capability => Id switch
+        {
+            LyricsSourceId.AmllTtml => "TTML 逐字",
+            LyricsSourceId.QqMusic => "逐字 QRC / LRC",
+            LyricsSourceId.Kugou => "逐字 KRC",
+            LyricsSourceId.Netease => "LRC",
+            _ => string.Empty
+        };
+
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set
+            {
+                if (_isEnabled == value) return;
+                _isEnabled = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEnabled)));
+                _onChanged();
+            }
+        }
+
+        public bool UseWordSyncedLyrics
+        {
+            get => _useWordSyncedLyrics;
+            set
+            {
+                if (_useWordSyncedLyrics == value) return;
+                _useWordSyncedLyrics = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UseWordSyncedLyrics)));
+                _onChanged();
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
     }
 }

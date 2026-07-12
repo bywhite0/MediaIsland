@@ -4,9 +4,9 @@
                      xmlns:ci="http://classisland.tech/schemas/xaml/core"
                      xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                      xmlns:controls="using:FluentAvalonia.UI.Controls"
-                     xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+                     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                      xmlns:local="clr-namespace:MediaIsland.SettingsPages"
-                     mc:Ignorable="d" 
+                     mc:Ignorable="d"
                      d:DesignHeight="450" d:DesignWidth="800"
                      TextElement.Foreground="{DynamicResource MaterialDesignBody}"
                      Background="{DynamicResource MaterialDesignPaper}"
@@ -184,15 +184,75 @@
                         </StackPanel>
                     </StackPanel>
                 </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}" 
-                                       Header="移除封面的 Spotify 水印" 
+
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE2E0;}"
+                                       Header="歌词来源"
+                                       Description="按列表顺序搜索歌词。可开关来源、逐字歌词偏好，并配置 AMLL TTML API 地址。">
+                <controls:SettingsExpander.Footer>
+                    <TextBlock Text="{Binding CurrentLyricsSourceDisplay}"
+                               FontSize="12" />
+                </controls:SettingsExpander.Footer>
+                <StackPanel Margin="12,6,12,10" Spacing="8">
+                    <ItemsControl ItemsSource="{Binding LyricsSourceItems}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Padding="8,6"
+                                        Margin="0,0,0,6"
+                                        CornerRadius="4"
+                                        Background="{DynamicResource MaterialDesignCardBackground}">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto" RowDefinitions="Auto,Auto">
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding DisplayName}" FontWeight="Medium" />
+                                            <TextBlock Text="{Binding Capability}"
+                                                       Margin="0,2,0,0"
+                                                       FontSize="12" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,8,0" VerticalAlignment="Center">
+                                            <TextBlock Text="启用" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                            <ToggleSwitch IsChecked="{Binding IsEnabled, Mode=TwoWay}" />
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
+                                            <TextBlock Text="逐字" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                            <ToggleSwitch IsChecked="{Binding UseWordSyncedLyrics, Mode=TwoWay}" />
+                                        </StackPanel>
+                                        <Button Grid.Column="3"
+                                                Content="上移"
+                                                Margin="0,0,4,0"
+                                                Tag="{Binding}"
+                                                Click="MoveLyricsSourceUpOnClick" />
+                                        <Button Grid.Column="4"
+                                                Content="下移"
+                                                Margin="0,0,4,0"
+                                                Tag="{Binding}"
+                                                Click="MoveLyricsSourceDownOnClick" />
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="AMLL TTML API 地址（留空不使用）" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBox Grid.Column="0"
+                                 Watermark="https://amll-ttml-api.example.com"
+                                 Text="{Binding AmllApiBaseUrl, Mode=TwoWay}" />
+                        <Button Grid.Column="1"
+                                Margin="8,0,0,0"
+                                Content="测试连接"
+                                Click="TestAmllConnectionOnClick" />
+                    </Grid>
+                    <TextBlock Text="{Binding AmllConnectionStatus}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </controls:SettingsExpander>
+<controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
+                                       Header="移除封面的 Spotify 水印"
                                        Description="部分版本的 Spotify 桌面版会在传给 SMTC 的封面下方加入其商标，如果你在插件呈现的封面上看到了，可以打开这个开关。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}" 
-                                       Header="匿名使用情况分析" 
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
+                                       Header="匿名使用情况分析"
                                        Description="本插件使用 Sentry 收集与本插件相关的使用情况与错误信息，以帮助改善本插件，相关信息将被匿名上传。此功能不会收集您的个人信息。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsTodayEatSentry, Mode=TwoWay}" />

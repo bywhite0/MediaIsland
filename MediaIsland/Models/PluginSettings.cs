@@ -1,8 +1,9 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Text.Json.Serialization;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using ClassIsland.Core.Abstractions;
+using MediaIsland.Services.Lyrics.Models;
 
 namespace MediaIsland.Models
 {
@@ -38,6 +39,22 @@ namespace MediaIsland.Models
         }
 
         public ObservableCollection<MediaSource> MediaSourceList { get; set; } = [];
+
+        private LyricsSourceSettings _lyrics = LyricsSourceSettings.Normalize(new LyricsSourceSettings());
+
+        public LyricsSourceSettings Lyrics
+        {
+            get => _lyrics;
+            set
+            {
+                _lyrics = LyricsSourceSettings.Normalize(value ?? new LyricsSourceSettings());
+                OnPropertyChanged();
+            }
+        }
+
+        [JsonIgnore]
+        public bool HasConfiguredLyricSources => Lyrics.Sources.Any(source => source.IsEnabled);
+
         
         private bool _isTodayEatSentry = true;
 

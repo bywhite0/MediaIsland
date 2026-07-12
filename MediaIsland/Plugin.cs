@@ -9,6 +9,10 @@ using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Models;
+using MediaIsland.Services.Lyrics.Native;
+using MediaIsland.Services.Lyrics.Parsers;
+using MediaIsland.Services.Lyrics.Providers;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
 using MediaIsland.Services.Media.SourceDisplay;
@@ -22,9 +26,11 @@ namespace MediaIsland
     public class Plugin : PluginBase
     {
         public PluginSettings Settings { get; set; } = new();
+        public static Plugin? Instance { get; private set; }
         public static string? globalConfigFolder;
         public override void Initialize(HostBuilderContext context, IServiceCollection services)
         {
+            Instance = this;
             Console.WriteLine("[MI]正在加载 MediaIsland...");
             services.AddSingleton<NoOpMediaSourceInfoProvider>();
             RegisterPlatformProviders(services);
@@ -34,13 +40,25 @@ namespace MediaIsland
             services.AddSingleton<IMediaService>(provider => provider.GetRequiredService<MediaService>());
             services.AddSingleton<MediaSourceDisplayService>();
             services.AddSingleton<IMediaSourceDisplayService>(provider => provider.GetRequiredService<MediaSourceDisplayService>());
-            services.AddSingleton<LyricsSearchService>();
+            services.AddSingleton<TtmlNativeParser>();
+            services.AddSingleton<ILyricsProvider, AmllTtmlLyricsProvider>();
+            services.AddSingleton<ILyricsProvider, QqMusicLyricsProvider>();
+            services.AddSingleton<ILyricsProvider, KugouLyricsProvider>();
+            services.AddSingleton<ILyricsProvider, NeteaseLyricsProvider>();
+            services.AddSingleton<ILyricsPayloadParser, ManagedLyricsPayloadParser>();
+            services.AddSingleton<ILyricsPayloadParser, TtmlLyricsPayloadParser>();
+            services.AddSingleton<LyricsSearchService>(provider => new LyricsSearchService(
+                provider.GetServices<ILyricsProvider>(),
+                provider.GetServices<ILyricsPayloadParser>(),
+                () => (Instance ?? throw new InvalidOperationException("MediaIsland plugin is not initialized.")).Settings.Lyrics,
+                provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsSearchService>>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
             services.AddComponent<LyricsComponent, LyricsComponentSettings>();
             globalConfigFolder = PluginConfigFolder; 
             Settings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"));
+            Settings.Lyrics = LyricsSourceSettings.Normalize(Settings.Lyrics);
             Settings.PropertyChanged += (sender, args) =>
             {
                 ConfigureFileHelper.SaveConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"), Settings);
