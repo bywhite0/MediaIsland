@@ -1,13 +1,16 @@
 using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Animation.Easings;
+using Avalonia.Automation;
+using Avalonia.Controls;
+using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
-using Lyricify.Lyrics.Models;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
 using RoutedEventArgs = Avalonia.Interactivity.RoutedEventArgs;
@@ -23,24 +26,24 @@ namespace MediaIsland.Components;
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
     private static readonly TimeSpan LyricsTransitionDuration = TimeSpan.FromMilliseconds(220);
+    private static readonly TimeSpan WordRenderInterval = TimeSpan.FromMilliseconds(33);
 
     private readonly IMediaService _mediaService;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly ILogger<LyricsComponent> _logger;
     private readonly DispatcherTimer _lyricsTimer;
+    private readonly LyricsPlaybackClock _clock = new();
     private readonly TranslateTransform _lyricsTextTransform;
     private readonly object _syncLock = new();
+    private readonly List<ActiveLineVisual> _activeLineVisuals = [];
 
-    private LyricsData? _currentLyrics;
-    private string? _currentLine;
+    private LyricsDocument? _currentLyrics;
+    private int[] _activeLineIndices = [];
     private string? _lastTitle;
     private string? _lastArtist;
     private string _lastStatusText = string.Empty;
     private bool _isCurrentTextStatus = true;
-    private TimeSpan _lastMediaPosition;
-    private long _lastMediaUpdateTime = Environment.TickCount64;
-    private bool _isPlaying;
-    private double _playbackRate = 1.0;
+    private bool _isWordMode;
     private bool _isLoaded;
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _textTransitionCts;
@@ -70,8 +73,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
         Settings.PropertyChanged += Settings_OnPropertyChanged;
 
-        _lyricsTimer.Start();
         SetStatus("等待媒体信息...");
+        UpdateRenderCadence();
 
         try
         {
@@ -93,6 +96,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         Settings.PropertyChanged -= Settings_OnPropertyChanged;
         CancelCurrentSearch();
         StopTextTransition();
+        lock (_syncLock)
+        {
+            _currentLyrics = null;
+            _activeLineIndices = [];
+            _isWordMode = false;
+        }
+        _clock.Reset();
     }
 
     private void Settings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -122,7 +132,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
-        UpdateMediaClock(e.MediaInfo);
+        _clock.Update(e.MediaInfo);
         switch (e.ChangeKind)
         {
             case MediaInfoChangeKind.CurrentSession:
@@ -131,8 +141,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 break;
             case MediaInfoChangeKind.Playback:
                 _logger.LogInformation("[Lyrics] Playback status: {Status}", e.MediaInfo.PlaybackInfo.PlaybackState);
+                RenderCurrentPositionOnce();
+                UpdateRenderCadence();
                 break;
             case MediaInfoChangeKind.Timeline:
+                RenderCurrentPositionOnce();
                 break;
         }
     }
@@ -147,7 +160,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
-            UpdateMediaClock(info);
+            _clock.Update(info);
             if (string.Equals(info.Title, _lastTitle, StringComparison.Ordinal) &&
                 string.Equals(info.Artist, _lastArtist, StringComparison.Ordinal))
             {
@@ -167,7 +180,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 lock (_syncLock)
                 {
                     _currentLyrics = null;
-                    _currentLine = null;
+                    _activeLineIndices = [];
+                    _isWordMode = false;
                 }
 
                 _logger.LogInformation(
@@ -186,14 +200,17 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     return;
                 }
 
-                var lyrics = result?.Lyrics;
+                var document = result?.Document;
                 lock (_syncLock)
                 {
-                    _currentLyrics = lyrics;
-                    _currentLine = null;
+                    _currentLyrics = document;
+                    _activeLineIndices = [];
+                    _isWordMode = document?.SyncMode == LyricsSyncMode.Word;
                 }
 
-                SetStatus(lyrics == null ? "未找到歌词" : string.Empty);
+                SetStatus(document == null ? "未找到歌词" : string.Empty);
+                RenderCurrentPositionOnce();
+                UpdateRenderCadence();
             }
             finally
             {
@@ -211,55 +228,177 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
     }
 
-    private void UpdateMediaClock(MediaInfo info)
-    {
-        lock (_syncLock)
-        {
-            _lastMediaPosition = info.Position;
-            _lastMediaUpdateTime = Environment.TickCount64;
-            _isPlaying = info.PlaybackInfo.PlaybackState == MediaPlaybackState.Playing;
-            _playbackRate = info.PlaybackInfo.PlaybackRate ?? 1.0;
-        }
-    }
-
     private void LyricsTimer_OnTick(object? sender, EventArgs e)
     {
-        LyricsData? lyrics;
-        double currentMs;
+        RenderCurrentPositionOnce();
+    }
+
+    private void RenderCurrentPositionOnce()
+    {
+        LyricsDocument? lyrics;
+        bool wordMode;
+        TimeSpan position;
 
         lock (_syncLock)
         {
             lyrics = _currentLyrics;
-            if (lyrics == null)
-            {
-                return;
-            }
-
-            currentMs = _lastMediaPosition.TotalMilliseconds;
-            if (_isPlaying)
-            {
-                var elapsed = Environment.TickCount64 - _lastMediaUpdateTime;
-                currentMs += elapsed * _playbackRate;
-            }
+            wordMode = _isWordMode;
         }
 
-        var line = lyrics.Lines?.LastOrDefault(lineInfo => lineInfo.StartTime <= currentMs);
-        if (line == null)
+        if (lyrics == null || lyrics.Lines.Count == 0)
         {
             return;
         }
 
+        position = _clock.GetCurrentPosition();
+        var activeLines = LyricsLineSelector.SelectActive(lyrics, position);
+        if (activeLines.Count == 0)
+        {
+            return;
+        }
+
+        UpdateActiveLines(activeLines, wordMode, position);
+    }
+
+    private void UpdateActiveLines(
+        IReadOnlyList<LyricsLineSelection> activeLines,
+        bool wordMode,
+        TimeSpan position)
+    {
+        var lineIndices = activeLines.Select(item => item.LineIndex).ToArray();
+        bool linesChanged;
         lock (_syncLock)
         {
-            if (line.Text == _currentLine)
+            linesChanged = !_activeLineIndices.SequenceEqual(lineIndices);
+            if (linesChanged)
+            {
+                _activeLineIndices = lineIndices;
+            }
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_isLoaded)
             {
                 return;
             }
 
-            _currentLine = line.Text;
+            LyricsText.IsVisible = false;
+            ActiveLyricsLines.IsVisible = true;
+            if (linesChanged)
+            {
+                RebuildActiveLineVisuals(activeLines, wordMode, position);
+            }
+            else
+            {
+                foreach (var visual in _activeLineVisuals)
+                {
+                    if (visual.WordPresenter != null)
+                    {
+                        visual.WordPresenter.Position = position;
+                    }
+                }
+            }
+
+            _isCurrentTextStatus = false;
+            UpdateEmptyVisibility();
+        });
+    }
+
+    private void RebuildActiveLineVisuals(
+        IReadOnlyList<LyricsLineSelection> activeLines,
+        bool wordMode,
+        TimeSpan position)
+    {
+        StopTextTransition();
+        ActiveLyricsLines.Children.Clear();
+        _activeLineVisuals.Clear();
+        var hasDuet = activeLines.Any(item => item.IsDuetSide);
+
+        foreach (var selection in activeLines)
+        {
+            var line = selection.Line;
+            var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
+                LyricsText.FontSize,
+                activeLines.Count,
+                line.IsBackground);
+            var opacity = line.IsBackground ? 0.72 : 1.0;
+            var textAlignment = selection.IsDuetSide
+                ? TextAlignment.Right
+                : hasDuet
+                    ? TextAlignment.Left
+                    : TextAlignment.Center;
+            WordLyricsPresenter? wordPresenter = null;
+            Control visual;
+            if (wordMode && line.Words.Count > 0)
+            {
+                wordPresenter = new WordLyricsPresenter
+                {
+                    Line = line,
+                    Position = position,
+                    FontSize = fontSize,
+                    Foreground = LyricsText.Foreground,
+                    TextAlignment = textAlignment,
+                    MaxWidth = 520,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Opacity = opacity
+                };
+                AutomationProperties.SetName(wordPresenter, line.Text);
+                visual = wordPresenter;
+            }
+            else
+            {
+                visual = new TextBlock
+                {
+                    Text = line.Text,
+                    FontSize = fontSize,
+                    Foreground = LyricsText.Foreground,
+                    TextAlignment = textAlignment,
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                    TextWrapping = TextWrapping.NoWrap,
+                    MaxWidth = 520,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Opacity = opacity
+                };
+            }
+
+            ActiveLyricsLines.Children.Add(visual);
+            _activeLineVisuals.Add(new ActiveLineVisual(selection.LineIndex, wordPresenter));
         }
 
-        SetText(string.IsNullOrWhiteSpace(line.Text) ? string.Empty : line.Text, isStatusText: false);
+        ActiveLyricsLines.Opacity = 0;
+        StartActiveLinesTransition();
+    }
+
+    private void UpdateRenderCadence()
+    {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            Dispatcher.UIThread.Post(UpdateRenderCadence);
+            return;
+        }
+
+        bool wordMode;
+        bool hasLyrics;
+        lock (_syncLock)
+        {
+            wordMode = _isWordMode;
+            hasLyrics = _currentLyrics is { Lines.Count: > 0 };
+        }
+
+        var playing = _clock.IsPlaying;
+        _lyricsTimer.Interval = wordMode && playing ? WordRenderInterval : TimeSpan.FromMilliseconds(80);
+        if (_isLoaded && hasLyrics && playing)
+        {
+            if (!_lyricsTimer.IsEnabled)
+            {
+                _lyricsTimer.Start();
+            }
+        }
+        else
+        {
+            _lyricsTimer.Stop();
+        }
     }
 
     private void ClearLyrics(string status)
@@ -268,16 +407,26 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         CancelCurrentSearch();
         _lastTitle = null;
         _lastArtist = null;
+        _clock.Reset();
 
         lock (_syncLock)
         {
             _currentLyrics = null;
-            _currentLine = null;
-            _lastMediaPosition = TimeSpan.Zero;
-            _lastMediaUpdateTime = Environment.TickCount64;
-            _isPlaying = false;
-            _playbackRate = 1.0;
+            _activeLineIndices = [];
+            _isWordMode = false;
         }
+        UpdateRenderCadence();
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_isLoaded)
+            {
+                return;
+            }
+
+            ClearActiveLineVisuals();
+            LyricsText.IsVisible = true;
+        });
 
         SetStatus(status);
     }
@@ -292,28 +441,18 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
+            ClearActiveLineVisuals();
+            LyricsText.IsVisible = true;
             _isCurrentTextStatus = true;
             SetTextCore(GetVisibleText(text, isStatusText: true), isStatusText: true);
         });
     }
 
-    private void SetText(string text, bool isStatusText)
+    private void ClearActiveLineVisuals()
     {
-        if (isStatusText)
-        {
-            _lastStatusText = text;
-        }
-
-        Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            if (!_isLoaded || Settings == null)
-            {
-                return;
-            }
-
-            _isCurrentTextStatus = isStatusText;
-            SetTextCore(GetVisibleText(text, isStatusText), isStatusText);
-        });
+        ActiveLyricsLines.IsVisible = false;
+        ActiveLyricsLines.Children.Clear();
+        _activeLineVisuals.Clear();
     }
 
     private void ApplyCurrentDisplaySettings()
@@ -368,6 +507,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _ = RunTextTransitionAsync(targetOpacity, transitionCts);
     }
 
+    private void StartActiveLinesTransition()
+    {
+        var transitionCts = new CancellationTokenSource();
+        _textTransitionCts = transitionCts;
+        _ = RunActiveLinesTransitionAsync(transitionCts);
+    }
+
     private async Task RunTextTransitionAsync(double targetOpacity, CancellationTokenSource transitionCts)
     {
         var opacityAnimation = CreateTextTransition(Visual.OpacityProperty, 0, targetOpacity);
@@ -389,6 +535,28 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 _textTransitionCts = null;
                 LyricsText.Opacity = targetOpacity;
                 _lyricsTextTransform.Y = 0;
+            }
+
+            transitionCts.Dispose();
+        }
+    }
+
+    private async Task RunActiveLinesTransitionAsync(CancellationTokenSource transitionCts)
+    {
+        var opacityAnimation = CreateTextTransition(Visual.OpacityProperty, 0, 1);
+        try
+        {
+            await opacityAnimation.RunAsync(ActiveLyricsLines, transitionCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(_textTransitionCts, transitionCts))
+            {
+                _textTransitionCts = null;
+                ActiveLyricsLines.Opacity = 1;
             }
 
             transitionCts.Dispose();
@@ -449,6 +617,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void UpdateEmptyVisibility()
     {
-        LyricsGrid.IsVisible = !Settings.IsHideWhenEmpty || !string.IsNullOrWhiteSpace(LyricsText.Text);
+        var hasText = ActiveLyricsLines.IsVisible
+            ? _activeLineVisuals.Count > 0
+            : !string.IsNullOrWhiteSpace(LyricsText.Text);
+        LyricsGrid.IsVisible = !Settings.IsHideWhenEmpty || hasText;
     }
+
+    private sealed record ActiveLineVisual(int LineIndex, WordLyricsPresenter? WordPresenter);
 }

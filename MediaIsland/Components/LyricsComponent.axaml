@@ -11,7 +11,7 @@
                   Loaded="LyricsComponent_OnLoaded"
                   Unloaded="LyricsComponent_OnUnloaded">
     <Grid x:Name="LyricsGrid"
-          ColumnDefinitions="Auto,Auto"
+          ColumnDefinitions="Auto,*"
           HorizontalAlignment="Center"
           VerticalAlignment="Center"
           DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:LyricsComponent}}">
@@ -20,16 +20,23 @@
                        FontSize="16"
                        Margin="0 2 4 0"
                        VerticalAlignment="Center" />
-        <TextBlock x:Name="LyricsText"
-                   Grid.Column="1"
-                   MaxWidth="520"
-                   VerticalAlignment="Center"
-                   TextTrimming="CharacterEllipsis"
-                   TextWrapping="NoWrap"
-                   FontSize="{DynamicResource MainWindowBodyFontSize}">
-            <TextBlock.RenderTransform>
-                <TranslateTransform />
-            </TextBlock.RenderTransform>
-        </TextBlock>
+        <Grid Grid.Column="1" MaxWidth="520" VerticalAlignment="Center">
+            <TextBlock x:Name="LyricsText"
+                       MaxWidth="520"
+                       VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"
+                       TextWrapping="NoWrap"
+                       FontSize="{DynamicResource MainWindowBodyFontSize}">
+                <TextBlock.RenderTransform>
+                    <TranslateTransform />
+                </TextBlock.RenderTransform>
+            </TextBlock>
+            <StackPanel x:Name="ActiveLyricsLines"
+                        MaxWidth="520"
+                        Spacing="1"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Center"
+                        IsVisible="False" />
+        </Grid>
     </Grid>
 </ci:ComponentBase>
