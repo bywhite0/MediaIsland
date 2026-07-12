@@ -1,89 +1,150 @@
-using System.Net.Http;
-using System.Text.Json;
-using Lyricify.Lyrics.Models;
-using Lyricify.Lyrics.Parsers;
-using Lyricify.Lyrics.Providers.Web.Netease;
-using Lyricify.Lyrics.Searchers;
+using System.Collections.Concurrent;
+using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
 
 namespace MediaIsland.Services.Lyrics;
 
-public sealed class LyricsSearchService(ILogger<LyricsSearchService>? logger = null)
+/// <summary>
+/// Multi-source lyric search coordinator with deterministic user priority.
+/// </summary>
+public sealed class LyricsSearchService
 {
-    private static readonly HttpClient NeteaseHttpClient = new();
+    private readonly IReadOnlyList<ILyricsProvider> _providers;
+    private readonly IReadOnlyList<ILyricsPayloadParser> _parsers;
+    private readonly Func<LyricsSourceSettings> _settingsFactory;
+    private readonly ILogger<LyricsSearchService>? _logger;
+    private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private string _settingsFingerprint = string.Empty;
+    private LyricsSearchResult? _currentResult;
+    private string? _currentMediaTitle;
+    private string? _currentMediaArtist;
+    private long _searchVersion;
 
-    private readonly NeteaseSearcher _searcher = new();
+    public LyricsSearchResult? CurrentResult => Volatile.Read(ref _currentResult);
+
+    public event EventHandler<LyricsSearchResultChangedEventArgs>? CurrentResultChanged;
+
+    public LyricsSearchResult? GetCurrentResultFor(MediaInfo? info)
+    {
+        var result = CurrentResult;
+        return result != null &&
+               info != null &&
+               string.Equals(info.Title, Volatile.Read(ref _currentMediaTitle), StringComparison.Ordinal) &&
+               string.Equals(info.Artist, Volatile.Read(ref _currentMediaArtist), StringComparison.Ordinal)
+            ? result
+            : null;
+    }
+
+    public LyricsSearchService(
+        IEnumerable<ILyricsProvider> providers,
+        IEnumerable<ILyricsPayloadParser> parsers,
+        Func<LyricsSourceSettings> settingsFactory,
+        ILogger<LyricsSearchService>? logger = null)
+    {
+        _providers = providers.ToArray();
+        _parsers = parsers.ToArray();
+        _settingsFactory = settingsFactory;
+        _logger = logger;
+    }
 
     public async Task<LyricsSearchResult?> SearchAsync(MediaInfo info, CancellationToken cancellationToken = default)
     {
-        try
+        var searchVersion = Interlocked.Increment(ref _searchVersion);
+        Interlocked.Exchange(ref _currentMediaTitle, info.Title);
+        Interlocked.Exchange(ref _currentMediaArtist, info.Artist);
+        PublishCurrentResult(null, searchVersion);
+
+        if (string.IsNullOrWhiteSpace(info.Title))
         {
-            foreach (var query in BuildSearchQueries(info))
+            return null;
+        }
+
+        var settings = LyricsSourceSettings.Normalize(_settingsFactory().Clone());
+        EnsureCacheFingerprint(settings);
+
+        var cacheKey = BuildCacheKey(info, settings);
+        if (_cache.TryGetValue(cacheKey, out var cached))
+        {
+            if (cached.ExpiresAt > DateTimeOffset.UtcNow)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                logger?.LogInformation("[Lyrics] Searching: {Query}", query);
-                var directResult = await SearchNeteaseApiAsync(query, info, cancellationToken);
-                if (directResult != null)
-                {
-                    logger?.LogInformation(
-                        "[Lyrics] Found: {Title} - {Artist} ({Duration}) - {Id}, score {Score}",
-                        directResult.Title,
-                        directResult.Artist,
-                        directResult.Duration,
-                        directResult.Id,
-                        directResult.Score);
-
-                    var directLyrics = await TryParseNeteaseLyricsAsync(directResult.Id, cancellationToken);
-                    if (directLyrics == null)
-                    {
-                        logger?.LogInformation("[Lyrics] Parse failed: no lyric text found in response.");
-                        continue;
-                    }
-
-                    return new LyricsSearchResult(
-                        directLyrics,
-                        directResult.Id.ToString(),
-                        directResult.Title,
-                        directResult.Artist,
-                        directResult.Duration,
-                        directResult.Score,
-                        LyricsSearchSource.DirectNeteaseApi);
-                }
-
-                if (info.Duration > TimeSpan.Zero)
-                {
-                    continue;
-                }
-
-                cancellationToken.ThrowIfCancellationRequested();
-                var searchResults = await _searcher.SearchForResults(query);
-                cancellationToken.ThrowIfCancellationRequested();
-                var result = searchResults?.OfType<NeteaseSearchResult>().FirstOrDefault();
-                if (result == null || !IsTitleLikelyMatch(info.Title, result.Title))
-                {
-                    continue;
-                }
-
-                logger?.LogInformation("[Lyrics] Found by package fallback: {Title} - {Id}", result.Title, result.Id);
-                var packageLyrics = await TryParseNeteaseLyricsAsync(result.Id, cancellationToken);
-                if (packageLyrics == null)
-                {
-                    logger?.LogInformation("[Lyrics] Parse failed: no lyric text found in response.");
-                    continue;
-                }
-
-                return new LyricsSearchResult(
-                    packageLyrics,
-                    result.Id.ToString() ?? string.Empty,
-                    result.Title,
-                    string.Empty,
-                    TimeSpan.Zero,
-                    null,
-                    LyricsSearchSource.PackageFallback);
+                PublishCurrentResult(cached.Result, searchVersion);
+                return cached.Result;
             }
 
-            logger?.LogInformation("[Lyrics] Not found.");
+            _cache.TryRemove(cacheKey, out _);
+        }
+
+        try
+        {
+            var orderedProviders = settings.Sources
+                .Where(source => source.IsEnabled)
+                .Select(source => _providers.FirstOrDefault(provider => provider.Id == source.Id))
+                .Where(provider => provider != null)
+                .Cast<ILyricsProvider>()
+                .ToArray();
+
+            if (orderedProviders.Length == 0)
+            {
+                _logger?.LogInformation("[Lyrics] No enabled lyric sources.");
+                return null;
+            }
+
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            var searchTasks = orderedProviders
+                .Select(provider => SearchProviderCandidatesAsync(provider, info, settings, linkedCts.Token))
+                .ToArray();
+
+            await Task.WhenAll(searchTasks);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var providerCandidates = searchTasks
+                .Select((task, index) => (Provider: orderedProviders[index], Candidates: task.Result))
+                .ToArray();
+
+            foreach (var entry in providerCandidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!settings.PreferWordSync(entry.Provider.Id))
+                {
+                    continue;
+                }
+
+                var result = await TrySelectFromProviderAsync(
+                    entry.Provider,
+                    entry.Candidates,
+                    settings,
+                    preferWordOnly: true,
+                    allowLineFallback: false,
+                    cancellationToken);
+                if (result != null)
+                {
+                    Cache(cacheKey, result, success: true);
+                    PublishCurrentResult(result, searchVersion);
+                    return result;
+                }
+            }
+
+            foreach (var entry in providerCandidates)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var result = await TrySelectFromProviderAsync(
+                    entry.Provider,
+                    entry.Candidates,
+                    settings,
+                    preferWordOnly: false,
+                    allowLineFallback: true,
+                    cancellationToken);
+                if (result != null)
+                {
+                    Cache(cacheKey, result, success: true);
+                    PublishCurrentResult(result, searchVersion);
+                    return result;
+                }
+            }
+
+            _logger?.LogInformation("[Lyrics] Not found for {Title} - {Artist}", info.Title, info.Artist);
+            Cache(cacheKey, null, success: false);
             return null;
         }
         catch (OperationCanceledException)
@@ -92,377 +153,241 @@ public sealed class LyricsSearchService(ILogger<LyricsSearchService>? logger = n
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "[Lyrics] Error while searching lyrics.");
+            _logger?.LogWarning(ex, "[Lyrics] Error while searching lyrics.");
+            PublishCurrentResult(null, searchVersion);
             return null;
         }
     }
 
-    private static async Task<DirectNeteaseSearchResult?> SearchNeteaseApiAsync(
-        string query,
+    public void InvalidateCache()
+    {
+        _cache.Clear();
+        _settingsFingerprint = string.Empty;
+    }
+
+    private async Task<IReadOnlyList<LyricsCandidate>> SearchProviderCandidatesAsync(
+        ILyricsProvider provider,
         MediaInfo info,
+        LyricsSourceSettings settings,
         CancellationToken cancellationToken)
     {
-        var url = $"https://music.163.com/api/search/get/web?s={Uri.EscapeDataString(query)}&type=1&limit=10&offset=0";
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.UserAgent.ParseAdd("Mozilla/5.0");
-        request.Headers.Referrer = new Uri("https://music.163.com/");
-
-        using var response = await NeteaseHttpClient.SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            return null;
+            var candidates = await provider.SearchAsync(info, settings, cancellationToken);
+            return candidates
+                .Where(candidate => candidate.Score >= LyricsCandidateScorer.MinimumScore(info))
+                .OrderByDescending(candidate => candidate.Score)
+                .ToArray();
         }
-
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var json = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        if (json.RootElement.ValueKind != JsonValueKind.Object ||
-            !json.RootElement.TryGetProperty("result", out var result) ||
-            result.ValueKind != JsonValueKind.Object ||
-            !result.TryGetProperty("songs", out var songs) ||
-            songs.ValueKind != JsonValueKind.Array)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return null;
+            _logger?.LogWarning("[Lyrics:{Provider}] Search timed out.", provider.Id);
+            return [];
         }
-
-        DirectNeteaseSearchResult? bestResult = null;
-        foreach (var song in songs.EnumerateArray())
+        catch (OperationCanceledException)
         {
-            if (song.ValueKind != JsonValueKind.Object ||
-                !TryReadInt64Property(song, "id", out var id) ||
-                !TryReadStringProperty(song, "name", out var title))
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "[Lyrics:{Provider}] Search failed.", provider.Id);
+            return [];
+        }
+    }
+
+    private async Task<LyricsSearchResult?> TrySelectFromProviderAsync(
+        ILyricsProvider provider,
+        IReadOnlyList<LyricsCandidate> candidates,
+        LyricsSourceSettings settings,
+        bool preferWordOnly,
+        bool allowLineFallback,
+        CancellationToken cancellationToken)
+    {
+        foreach (var candidate in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (preferWordOnly && !candidate.SupportsWordSync)
             {
                 continue;
             }
 
-            var artist = ReadArtists(song);
-            var album = ReadAlbum(song);
-            var duration = ReadDuration(song);
-            var aliases = ReadStringArray(song, "alias")
-                .Concat(ReadStringArray(song, "transNames"))
-                .ToArray();
-            var score = ScoreNeteaseResult(info, title, aliases, artist, album, duration);
-            var candidate = new DirectNeteaseSearchResult(id, title, artist, album, duration, score);
-            if (bestResult == null || candidate.Score > bestResult.Score)
+            LyricsPayload? payload;
+            try
             {
-                bestResult = candidate;
+                payload = await provider.FetchAsync(candidate, settings, cancellationToken);
             }
-        }
-
-        if (bestResult == null)
-        {
-            return null;
-        }
-
-        var minimumScore = info.Duration > TimeSpan.Zero ? 80 : 60;
-        return bestResult.Score < minimumScore ? null : bestResult;
-    }
-
-    private static int ScoreNeteaseResult(
-        MediaInfo info,
-        string title,
-        IEnumerable<string> aliases,
-        string artist,
-        string album,
-        TimeSpan duration)
-    {
-        var score = 0;
-        var infoTitle = NormalizeComparableText(info.Title);
-        var infoArtist = NormalizeComparableText(info.Artist);
-        var infoAlbum = NormalizeComparableText(info.AlbumTitle);
-        var candidateTitles = aliases
-            .Append(title)
-            .Select(NormalizeComparableText)
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        var candidateTitle = NormalizeComparableText(title);
-        var candidateArtist = NormalizeComparableText(artist);
-        var candidateAlbum = NormalizeComparableText(album);
-
-        if (candidateTitles.Any(value => value.Equals(infoTitle, StringComparison.OrdinalIgnoreCase)))
-        {
-            score += 80;
-        }
-        else if (candidateTitles.Any(value => value.Contains(infoTitle, StringComparison.OrdinalIgnoreCase) ||
-                                             infoTitle.Contains(value, StringComparison.OrdinalIgnoreCase)))
-        {
-            score += 45;
-        }
-        else
-        {
-            score -= 70;
-        }
-
-        if (!string.IsNullOrWhiteSpace(infoArtist) && !string.IsNullOrWhiteSpace(candidateArtist))
-        {
-            if (candidateArtist.Equals(infoArtist, StringComparison.OrdinalIgnoreCase))
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
-                score += 35;
+                _logger?.LogWarning(
+                    "[Lyrics:{Provider}] Fetch timed out for {Id}",
+                    provider.Id,
+                    candidate.ProviderItemId);
+                continue;
             }
-            else if (candidateArtist.Contains(infoArtist, StringComparison.OrdinalIgnoreCase) ||
-                     infoArtist.Contains(candidateArtist, StringComparison.OrdinalIgnoreCase))
+            catch (OperationCanceledException)
             {
-                score += 22;
+                throw;
             }
-        }
-
-        if (!string.IsNullOrWhiteSpace(infoAlbum) && !string.IsNullOrWhiteSpace(candidateAlbum))
-        {
-            if (candidateAlbum.Equals(infoAlbum, StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex)
             {
-                score += 20;
+                _logger?.LogWarning(ex, "[Lyrics:{Provider}] Fetch failed for {Id}", provider.Id, candidate.ProviderItemId);
+                continue;
             }
-            else if (candidateAlbum.Contains(infoAlbum, StringComparison.OrdinalIgnoreCase) ||
-                     infoAlbum.Contains(candidateAlbum, StringComparison.OrdinalIgnoreCase))
+
+            if (payload == null || string.IsNullOrWhiteSpace(payload.Content))
             {
-                score += 12;
+                continue;
             }
-        }
 
-        if (info.Duration > TimeSpan.Zero && duration > TimeSpan.Zero)
-        {
-            var durationDiff = Math.Abs((info.Duration - duration).TotalSeconds);
-            score += durationDiff switch
+            var isWordPayload = payload.Format is LyricsFormat.Qrc or LyricsFormat.Krc or LyricsFormat.Ttml;
+            if (preferWordOnly && !isWordPayload && !allowLineFallback)
             {
-                <= 2 => 45,
-                <= 5 => 35,
-                <= 10 => 25,
-                <= 20 => 10,
-                _ => -80
-            };
-        }
-
-        if (!LooksLikeSameVersion(infoTitle, candidateTitle))
-        {
-            score -= 25;
-        }
-
-        return score;
-    }
-
-    private static bool LooksLikeSameVersion(string infoTitle, string candidateTitle)
-    {
-        var versionWords = new[] { "live", "remix", "cover", "instrumental", "karaoke", "伴奏", "纯音乐" };
-        foreach (var word in versionWords)
-        {
-            var infoHasWord = infoTitle.Contains(word, StringComparison.OrdinalIgnoreCase);
-            var candidateHasWord = candidateTitle.Contains(word, StringComparison.OrdinalIgnoreCase);
-            if (infoHasWord != candidateHasWord)
-            {
-                return false;
+                continue;
             }
-        }
 
-        return true;
-    }
-
-    private static bool IsTitleLikelyMatch(string? expectedTitle, string candidateTitle)
-    {
-        var expected = NormalizeComparableText(expectedTitle);
-        var candidate = NormalizeComparableText(candidateTitle);
-        return !string.IsNullOrWhiteSpace(expected) &&
-               (candidate.Equals(expected, StringComparison.OrdinalIgnoreCase) ||
-                candidate.Contains(expected, StringComparison.OrdinalIgnoreCase) ||
-                expected.Contains(candidate, StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static string ReadArtists(JsonElement song)
-    {
-        if (song.ValueKind != JsonValueKind.Object ||
-            !song.TryGetProperty("artists", out var artists) ||
-            artists.ValueKind != JsonValueKind.Array)
-        {
-            return string.Empty;
-        }
-
-        return string.Join(
-            " ",
-            artists.EnumerateArray()
-                .Select(artist => TryReadStringProperty(artist, "name", out var name) ? name : null)
-                .Where(name => !string.IsNullOrWhiteSpace(name)));
-    }
-
-    private static string ReadAlbum(JsonElement song)
-    {
-        return song.ValueKind == JsonValueKind.Object &&
-               song.TryGetProperty("album", out var album) &&
-               TryReadStringProperty(album, "name", out var name)
-            ? name
-            : string.Empty;
-    }
-
-    private static TimeSpan ReadDuration(JsonElement song)
-    {
-        return TryReadInt64Property(song, "duration", out var duration)
-            ? TimeSpan.FromMilliseconds(duration)
-            : TimeSpan.Zero;
-    }
-
-    private static IEnumerable<string> ReadStringArray(JsonElement element, string propertyName)
-    {
-        if (element.ValueKind != JsonValueKind.Object ||
-            !element.TryGetProperty(propertyName, out var property) ||
-            property.ValueKind != JsonValueKind.Array)
-        {
-            yield break;
-        }
-
-        foreach (var value in property.EnumerateArray())
-        {
-            var text = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-            if (!string.IsNullOrWhiteSpace(text))
+            var parser = _parsers.FirstOrDefault(item => item.CanParse(payload.Format));
+            if (parser == null)
             {
-                yield return text;
+                _logger?.LogWarning("[Lyrics:{Provider}] No parser for format {Format}", provider.Id, payload.Format);
+                continue;
             }
-        }
-    }
 
-    private static bool TryReadInt64Property(JsonElement element, string propertyName, out long value)
-    {
-        value = default;
-        return element.ValueKind == JsonValueKind.Object &&
-               element.TryGetProperty(propertyName, out var property) &&
-               property.ValueKind == JsonValueKind.Number &&
-               property.TryGetInt64(out value);
-    }
-
-    private static bool TryReadStringProperty(JsonElement element, string propertyName, out string value)
-    {
-        value = string.Empty;
-        if (element.ValueKind != JsonValueKind.Object ||
-            !element.TryGetProperty(propertyName, out var property) ||
-            property.ValueKind != JsonValueKind.String)
-        {
-            return false;
-        }
-
-        value = property.GetString() ?? string.Empty;
-        return !string.IsNullOrWhiteSpace(value);
-    }
-
-    private static IEnumerable<string> BuildSearchQueries(MediaInfo info)
-    {
-        var title = NormalizeSearchText(info.Title);
-        var artist = NormalizeSearchText(info.Artist);
-        var album = NormalizeSearchText(info.AlbumTitle);
-
-        if (string.IsNullOrWhiteSpace(title))
-        {
-            yield break;
-        }
-
-        var queries = new[]
-        {
-            string.IsNullOrWhiteSpace(artist) ? null : $"{title} - {artist}",
-            string.IsNullOrWhiteSpace(artist) ? null : $"{title} {artist}",
-            string.IsNullOrWhiteSpace(artist) ? null : $"{artist} - {title} {album}",
-            string.IsNullOrWhiteSpace(album) ? null : $"{title} {album}",
-            title
-        };
-
-        var usedQueries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var query in queries)
-        {
-            var normalizedQuery = NormalizeSearchText(query);
-            if (!string.IsNullOrWhiteSpace(normalizedQuery) && usedQueries.Add(normalizedQuery))
+            LyricsDocument document;
+            try
             {
-                yield return normalizedQuery;
+                document = await parser.ParseAsync(payload, cancellationToken);
             }
-        }
-    }
-
-    private static string NormalizeSearchText(string? text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return string.Empty;
-        }
-
-        return string.Join(
-            " ",
-            text.Replace('/', ' ')
-                .Replace('\\', ' ')
-                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-    }
-
-    private static string NormalizeComparableText(string? text)
-    {
-        return NormalizeSearchText(NormalizeSearchText(text)
-            .Replace("　", " ")
-            .Replace("・", " ")
-            .Replace("-", " ")
-            .Replace("_", " ")
-            .Replace("(", " ")
-            .Replace(")", " ")
-            .Replace("[", " ")
-            .Replace("]", " "));
-    }
-
-    private static async Task<LyricsData?> TryParseNeteaseLyricsAsync(object id, CancellationToken cancellationToken)
-    {
-        var lyricsString = await GetNeteaseLyricsAsync(id, cancellationToken);
-        cancellationToken.ThrowIfCancellationRequested();
-        return string.IsNullOrWhiteSpace(lyricsString)
-            ? null
-            : LrcParser.Parse(lyricsString.AsSpan());
-    }
-
-    private static async Task<string?> GetNeteaseLyricsAsync(object id, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        dynamic api = new Api();
-        dynamic response = await api.GetLyric(id.ToString());
-        cancellationToken.ThrowIfCancellationRequested();
-
-        try
-        {
-            string? lyric = response?.Lrc?.Lyric;
-            if (!string.IsNullOrWhiteSpace(lyric))
+            catch (OperationCanceledException)
             {
-                return lyric;
+                throw;
             }
-        }
-        catch
-        {
-            // Different provider versions expose different response shapes.
-        }
-
-        try
-        {
-            string? lyric = response?.Lyric;
-            if (!string.IsNullOrWhiteSpace(lyric))
+            catch (Exception ex)
             {
-                return lyric;
+                _logger?.LogWarning(ex, "[Lyrics:{Provider}] Parse failed for {Id}", provider.Id, candidate.ProviderItemId);
+                continue;
             }
-        }
-        catch
-        {
-            // ignored
+
+            if (document.Lines.Count == 0)
+            {
+                continue;
+            }
+
+            if (preferWordOnly && document.SyncMode != LyricsSyncMode.Word && !allowLineFallback)
+            {
+                continue;
+            }
+
+            if (!settings.PreferWordSync(provider.Id) && document.SyncMode == LyricsSyncMode.Word)
+            {
+                document = LyricsDocumentNormalizer.Create(
+                    document.Lines,
+                    document.Metadata,
+                    document.Source,
+                    document.ProviderItemId,
+                    document.Format,
+                    preferWordSync: false);
+            }
+
+            _logger?.LogInformation(
+                "[Lyrics] Selected {Source}/{Format} sync={Sync} id={Id} score={Score} title={Title}",
+                document.Source,
+                document.Format,
+                document.SyncMode,
+                document.ProviderItemId,
+                candidate.Score,
+                candidate.Title);
+
+            return new LyricsSearchResult(
+                document,
+                document.ProviderItemId,
+                candidate.Title,
+                candidate.Artist,
+                candidate.Duration,
+                candidate.Score,
+                document.Source);
         }
 
         return null;
     }
 
-    private sealed record DirectNeteaseSearchResult(
-        long Id,
-        string Title,
-        string Artist,
-        string Album,
-        TimeSpan Duration,
-        int Score);
+    private void EnsureCacheFingerprint(LyricsSourceSettings settings)
+    {
+        var fingerprint = string.Join(
+            "|",
+            settings.Sources.Select(source => $"{source.Id}:{source.IsEnabled}:{source.UseWordSyncedLyrics}"))
+            + "|" + settings.AmllApiBaseUrl;
+        if (!string.Equals(fingerprint, _settingsFingerprint, StringComparison.Ordinal))
+        {
+            _cache.Clear();
+            _settingsFingerprint = fingerprint;
+        }
+    }
+
+    private static string BuildCacheKey(MediaInfo info, LyricsSourceSettings settings)
+    {
+        var durationBucket = info.Duration > TimeSpan.Zero
+            ? ((int)Math.Round(info.Duration.TotalSeconds / 5.0) * 5).ToString()
+            : "0";
+        var sourceFlags = string.Join(
+            ",",
+            settings.Sources.Select(source => $"{source.Id}:{(source.IsEnabled ? 1 : 0)}:{(source.UseWordSyncedLyrics ? 1 : 0)}"));
+        return string.Join(
+            "\u001f",
+            LyricsTextNormalizer.NormalizeComparableText(info.Title),
+            LyricsTextNormalizer.NormalizeComparableText(info.Artist),
+            LyricsTextNormalizer.NormalizeComparableText(info.AlbumTitle),
+            durationBucket,
+            sourceFlags,
+            settings.AmllApiBaseUrl);
+    }
+
+    private void Cache(string key, LyricsSearchResult? result, bool success)
+    {
+        var ttl = success ? TimeSpan.FromMinutes(30) : TimeSpan.FromMinutes(2);
+        _cache[key] = new CacheEntry(result, DateTimeOffset.UtcNow.Add(ttl));
+    }
+
+    private void PublishCurrentResult(LyricsSearchResult? result, long searchVersion)
+    {
+        if (searchVersion != Volatile.Read(ref _searchVersion))
+        {
+            return;
+        }
+
+        var previous = Interlocked.Exchange(ref _currentResult, result);
+        var handlers = CurrentResultChanged;
+        if (Equals(previous, result) || handlers == null)
+        {
+            return;
+        }
+
+        var args = new LyricsSearchResultChangedEventArgs(result);
+        foreach (EventHandler<LyricsSearchResultChangedEventArgs> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, args);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[Lyrics] Current result subscriber failed.");
+            }
+        }
+    }
+
+    private sealed record CacheEntry(LyricsSearchResult? Result, DateTimeOffset ExpiresAt);
 }
 
 public sealed record LyricsSearchResult(
-    LyricsData Lyrics,
+    LyricsDocument Document,
     string Id,
     string Title,
     string Artist,
     TimeSpan Duration,
     int? Score,
-    LyricsSearchSource Source);
+    LyricsSourceId Source);
 
-public enum LyricsSearchSource
+public sealed class LyricsSearchResultChangedEventArgs(LyricsSearchResult? result) : EventArgs
 {
-    DirectNeteaseApi,
-    PackageFallback
+    public LyricsSearchResult? Result { get; } = result;
 }
