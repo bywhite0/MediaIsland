@@ -55,6 +55,19 @@ namespace MediaIsland.Models
         [JsonIgnore]
         public bool HasConfiguredLyricSources => Lyrics.Sources.Any(source => source.IsEnabled);
 
+        private bool _isWordLyricsLiftEnabled = true;
+
+        public bool IsWordLyricsLiftEnabled
+        {
+            get => _isWordLyricsLiftEnabled;
+            set
+            {
+                if (_isWordLyricsLiftEnabled == value) return;
+                _isWordLyricsLiftEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
         
         private bool _isTodayEatSentry = true;
 

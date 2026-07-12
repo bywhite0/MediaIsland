@@ -244,6 +244,13 @@
                                TextWrapping="Wrap" />
                 </StackPanel>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
+                                       Header="启用逐字歌词动态效果"
+                                       Description="整行切换使用阻尼弹簧，当前单字弹起后保持抬升，并以柔和边缘推进高亮。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsLiftEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
 <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
                                        Header="移除封面的 Spotify 水印"
                                        Description="部分版本的 Spotify 桌面版会在传给 SMTC 的封面下方加入其商标，如果你在插件呈现的封面上看到了，可以打开这个开关。">

@@ -10,6 +10,11 @@ namespace MediaIsland.Components;
 /// </summary>
 public sealed class WordLyricsPresenter : Control
 {
+    private const double SpringDamping = 5.5;
+    private const double SpringAngularFrequency = 9.5;
+    private const double SpringOvershootRatio = 0.2;
+    private const double LineSpringDurationMilliseconds = 480;
+
     public static readonly StyledProperty<LyricsLine?> LineProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, LyricsLine?>(nameof(Line));
 
@@ -24,6 +29,9 @@ public sealed class WordLyricsPresenter : Control
 
     public static readonly StyledProperty<TextAlignment> TextAlignmentProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, TextAlignment>(nameof(TextAlignment), TextAlignment.Center);
+
+    public static readonly StyledProperty<bool> IsLiftEnabledProperty =
+        AvaloniaProperty.Register<WordLyricsPresenter, bool>(nameof(IsLiftEnabled), true);
 
     private string? _cachedText;
     private double _cachedFontSize;
@@ -62,6 +70,12 @@ public sealed class WordLyricsPresenter : Control
         set => SetValue(TextAlignmentProperty, value);
     }
 
+    public bool IsLiftEnabled
+    {
+        get => GetValue(IsLiftEnabledProperty);
+        set => SetValue(IsLiftEnabledProperty, value);
+    }
+
     static WordLyricsPresenter()
     {
         AffectsRender<WordLyricsPresenter>(
@@ -69,8 +83,9 @@ public sealed class WordLyricsPresenter : Control
             PositionProperty,
             FontSizeProperty,
             ForegroundProperty,
-            TextAlignmentProperty);
-        AffectsMeasure<WordLyricsPresenter>(LineProperty, FontSizeProperty, ForegroundProperty);
+            TextAlignmentProperty,
+            IsLiftEnabledProperty);
+        AffectsMeasure<WordLyricsPresenter>(LineProperty, FontSizeProperty, ForegroundProperty, IsLiftEnabledProperty);
     }
 
     protected override Size MeasureOverride(Size availableSize)
@@ -84,7 +99,8 @@ public sealed class WordLyricsPresenter : Control
         var width = double.IsFinite(availableSize.Width) && availableSize.Width > 0
             ? Math.Min(_fullText.Width, availableSize.Width)
             : _fullText.Width;
-        return new Size(width, Math.Max(_fullText.Height, FontSize * 1.2));
+        var motionSpace = IsLiftEnabled ? GetMotionSpace() : 0;
+        return new Size(width, Math.Max(_fullText.Height, FontSize * 1.2) + motionSpace);
     }
 
     public override void Render(DrawingContext context)
@@ -97,11 +113,15 @@ public sealed class WordLyricsPresenter : Control
 
         var foreground = Foreground ?? Brushes.White;
         var mutedBrush = CreateMutedBrush(foreground);
+        var motionSpace = IsLiftEnabled ? GetMotionSpace() : 0;
         var origin = new Point(GetHorizontalOrigin(_fullText.Width),
-            Math.Max(0, (Bounds.Height - _fullText.Height) / 2));
+            Math.Max(0, (Bounds.Height - _fullText.Height + motionSpace) / 2));
+        var animatedOrigin = IsLiftEnabled
+            ? new Point(origin.X, origin.Y + GetLineLiftOffset(Position))
+            : origin;
 
         var mutedText = CreateFormatted(Line.Text ?? string.Empty, mutedBrush);
-        context.DrawText(mutedText, origin);
+        context.DrawText(mutedText, animatedOrigin);
 
         var filledWidth = ComputeFilledWidth(Position);
         if (filledWidth <= 0)
@@ -110,11 +130,156 @@ public sealed class WordLyricsPresenter : Control
         }
 
         var activeText = CreateFormatted(Line.Text ?? string.Empty, foreground);
-        var clipRect = new Rect(origin.X, origin.Y, filledWidth, Math.Max(activeText.Height, Bounds.Height));
+        if (IsLiftEnabled && Line.Words.Count > 0 && _wordStarts.Length == Line.Words.Count)
+        {
+            DrawAnimatedHighlight(context, activeText, animatedOrigin, Position);
+            return;
+        }
+
+        var clipRect = new Rect(
+            animatedOrigin.X,
+            animatedOrigin.Y,
+            filledWidth,
+            Math.Max(activeText.Height, Bounds.Height));
         using (context.PushClip(clipRect))
         {
-            context.DrawText(activeText, origin);
+            context.DrawText(activeText, animatedOrigin);
         }
+    }
+
+    private void DrawAnimatedHighlight(
+        DrawingContext context,
+        FormattedText activeText,
+        Point origin,
+        TimeSpan position)
+    {
+        var words = Line!.Words;
+        double completedWidth = 0;
+        for (var i = 0; i < words.Count; i++)
+        {
+            var progress = GetProgress(position, words[i].StartTime, words[i].EndTime);
+            if (progress <= 0)
+            {
+                break;
+            }
+
+            if (progress >= 1)
+            {
+                completedWidth = _wordStarts[i] + _wordWidths[i];
+            }
+        }
+
+        if (completedWidth > 0)
+        {
+            var completedClip = new Rect(origin.X, 0, completedWidth, Bounds.Height);
+            var completedOrigin = new Point(origin.X, origin.Y - GetWordLiftDistance());
+            using (context.PushClip(completedClip))
+            {
+                context.DrawText(activeText, completedOrigin);
+            }
+        }
+
+        for (var i = 0; i < words.Count; i++)
+        {
+            var progress = GetProgress(position, words[i].StartTime, words[i].EndTime);
+            if (progress <= 0)
+            {
+                break;
+            }
+
+            if (progress >= 1)
+            {
+                continue;
+            }
+
+            DrawFeatheredWord(
+                context,
+                activeText,
+                origin,
+                _wordStarts[i],
+                _wordWidths[i],
+                progress);
+        }
+    }
+
+    private void DrawFeatheredWord(
+        DrawingContext context,
+        FormattedText activeText,
+        Point lineOrigin,
+        double wordStart,
+        double wordWidth,
+        double progress)
+    {
+        var filledWidth = wordWidth * progress;
+        var edgeWidth = Math.Clamp(FontSize * 0.45, 4.0, 7.0);
+        var opaqueWidth = Math.Max(0, filledWidth - (edgeWidth * 0.35));
+        var maskedWidth = Math.Min(wordWidth, filledWidth + (edgeWidth * 0.65));
+        if (maskedWidth <= 0)
+        {
+            return;
+        }
+
+        var fadeStart = Math.Clamp(opaqueWidth / maskedWidth, 0, 1);
+        var edgeMask = new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
+            EndPoint = new RelativePoint(1, 0.5, RelativeUnit.Relative)
+        };
+        edgeMask.GradientStops.Add(new GradientStop(Colors.White, 0));
+        edgeMask.GradientStops.Add(new GradientStop(Colors.White, fadeStart));
+        edgeMask.GradientStops.Add(new GradientStop(Colors.Transparent, 1));
+
+        var maskBounds = new Rect(lineOrigin.X + wordStart, 0, maskedWidth, Bounds.Height);
+        var wordOrigin = new Point(lineOrigin.X, lineOrigin.Y + GetWordLiftOffset(progress));
+        using (context.PushClip(maskBounds))
+        using (context.PushOpacityMask(edgeMask, maskBounds))
+        {
+            context.DrawText(activeText, wordOrigin);
+        }
+    }
+
+    private double GetLiftDistance()
+    {
+        return Math.Clamp(FontSize * 0.12, 1.25, 2.0);
+    }
+
+    private double GetMotionSpace()
+    {
+        return (GetLiftDistance() * (1 + SpringOvershootRatio)) +
+               GetWordLiftDistance() +
+               GetBaselineOffset();
+    }
+
+    private double GetLineLiftOffset(TimeSpan position)
+    {
+        var elapsed = Math.Max(0, (position - Line!.StartTime).TotalMilliseconds);
+        var progress = Math.Clamp(elapsed / LineSpringDurationMilliseconds, 0, 1);
+        return -GetLiftDistance() * GetSpringResponse(progress);
+    }
+
+    private static double GetSpringResponse(double progress)
+    {
+        var response = 1 - (Math.Exp(-SpringDamping * progress) *
+                            Math.Cos(SpringAngularFrequency * progress));
+        var finalResponse = 1 - (Math.Exp(-SpringDamping) * Math.Cos(SpringAngularFrequency));
+        return response / finalResponse;
+    }
+
+    private double GetWordLiftDistance()
+    {
+        return Math.Clamp(FontSize * 0.07, 0.75, 1.15);
+    }
+
+    private double GetWordLiftOffset(double progress)
+    {
+        var normalized = Math.Clamp(progress, 0, 1);
+        var easedProgress = 1 - Math.Pow(1 - normalized, 3);
+        return -GetWordLiftDistance() * easedProgress;
+    }
+
+    private double GetBaselineOffset()
+    {
+        return Math.Clamp(FontSize * 0.06, 0.75, 1.25);
     }
 
     private double ComputeFilledWidth(TimeSpan position)

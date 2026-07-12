@@ -9,6 +9,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
+using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
@@ -45,6 +46,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private bool _isCurrentTextStatus = true;
     private bool _isWordMode;
     private bool _isLoaded;
+    private PluginSettings? _pluginSettings;
     private CancellationTokenSource? _searchCts;
     private CancellationTokenSource? _textTransitionCts;
     private int _searchVersion;
@@ -72,6 +74,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
         _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
         Settings.PropertyChanged += Settings_OnPropertyChanged;
+        _pluginSettings = Plugin.Instance?.Settings;
+        if (_pluginSettings != null)
+        {
+            _pluginSettings.PropertyChanged -= PluginSettings_OnPropertyChanged;
+            _pluginSettings.PropertyChanged += PluginSettings_OnPropertyChanged;
+        }
 
         SetStatus("等待媒体信息...");
         UpdateRenderCadence();
@@ -94,6 +102,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _lyricsTimer.Stop();
         _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
         Settings.PropertyChanged -= Settings_OnPropertyChanged;
+        if (_pluginSettings != null)
+        {
+            _pluginSettings.PropertyChanged -= PluginSettings_OnPropertyChanged;
+            _pluginSettings = null;
+        }
         CancelCurrentSearch();
         StopTextTransition();
         lock (_syncLock)
@@ -117,6 +130,26 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         {
             Dispatcher.UIThread.InvokeAsync(UpdateEmptyVisibility);
         }
+    }
+
+    private void PluginSettings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(PluginSettings.IsWordLyricsLiftEnabled))
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            var isEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true;
+            foreach (var visual in _activeLineVisuals)
+            {
+                if (visual.WordPresenter != null)
+                {
+                    visual.WordPresenter.IsLiftEnabled = isEnabled;
+                }
+            }
+        });
     }
 
     private async void MediaService_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
@@ -314,6 +347,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         ActiveLyricsLines.Children.Clear();
         _activeLineVisuals.Clear();
         var hasDuet = activeLines.Any(item => item.IsDuetSide);
+        var isMultiLine = activeLines.Count > 1;
+        ActiveLyricsLines.Spacing = isMultiLine ? 0 : 1;
 
         foreach (var selection in activeLines)
         {
@@ -339,6 +374,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     FontSize = fontSize,
                     Foreground = LyricsText.Foreground,
                     TextAlignment = textAlignment,
+                    IsLiftEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true,
                     MaxWidth = 520,
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     Opacity = opacity
@@ -360,6 +396,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     Opacity = opacity
                 };
+            }
+
+            if (isMultiLine)
+            {
+                visual.Margin = new Thickness(0, -1, 0, -1);
             }
 
             ActiveLyricsLines.Children.Add(visual);
