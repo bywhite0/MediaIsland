@@ -19,7 +19,7 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
         LyricsData data = payload.Format switch
         {
             LyricsFormat.Lrc => LrcParser.Parse(payload.Content.AsSpan()),
-            LyricsFormat.Qrc => QrcParser.Parse(payload.Content),
+            LyricsFormat.Qrc => QrcParser.Parse(NormalizeQrcContent(payload.Content)),
             LyricsFormat.Krc => KrcParser.Parse(NormalizeKrcContent(payload.Content)),
             _ => throw new NotSupportedException($"Unsupported managed lyrics format: {payload.Format}")
         };
@@ -31,7 +31,7 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
             {
                 try
                 {
-                    var translated = QrcParser.Parse(payload.TranslationContent);
+                    var translated = QrcParser.Parse(NormalizeQrcContent(payload.TranslationContent));
                     translations = translated.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
                 }
                 catch
@@ -113,6 +113,16 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(IsTimedKrcLine);
         return string.Join('\n', timedLines);
+    }
+
+    internal static string NormalizeQrcContent(string content)
+    {
+        return content
+            .Replace("\\r\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\n", "\n", StringComparison.Ordinal)
+            .Replace("\\r", "\n", StringComparison.Ordinal)
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace('\r', '\n');
     }
 
     private static bool IsTimedKrcLine(string line)

@@ -29,4 +29,44 @@ public class ManagedLyricsPayloadParserTests
         Assert.Single(document.Lines);
         Assert.Equal(2, document.Lines[0].Words.Count);
     }
+
+    [Fact]
+    public async Task ParseAsync_Qrc_ProducesWordSyncedLines()
+    {
+        const string content = "[0,1000]Hello(0,500) world(500,500)";
+        var payload = new LyricsPayload(
+            LyricsFormat.Qrc,
+            content,
+            LyricsSourceId.QqMusic,
+            "test",
+            new LyricsMetadata("Song", "Artist", null, TimeSpan.FromSeconds(3)));
+
+        var document = await new ManagedLyricsPayloadParser().ParseAsync(payload, CancellationToken.None);
+
+        Assert.Equal(LyricsSyncMode.Word, document.SyncMode);
+        Assert.Single(document.Lines);
+        Assert.Equal("Hello world", document.Lines[0].Text);
+        Assert.Equal(2, document.Lines[0].Words.Count);
+        Assert.Equal(TimeSpan.FromMilliseconds(500), document.Lines[0].Words[0].EndTime);
+    }
+
+    [Fact]
+    public async Task ParseAsync_Qrc_SeparatesEscapedLineBreaksBeforeParsingWords()
+    {
+        const string content = "[0,1000]Hello(0,500) world(500,500)\\n[1000,1000]Again(1000,1000)";
+        var payload = new LyricsPayload(
+            LyricsFormat.Qrc,
+            content,
+            LyricsSourceId.QqMusic,
+            "test",
+            new LyricsMetadata("Song", "Artist", null, TimeSpan.FromSeconds(3)));
+
+        var document = await new ManagedLyricsPayloadParser().ParseAsync(payload, CancellationToken.None);
+
+        Assert.Equal(LyricsSyncMode.Word, document.SyncMode);
+        Assert.Equal(2, document.Lines.Count);
+        Assert.Equal("Hello world", document.Lines[0].Text);
+        Assert.Equal("Again", document.Lines[1].Text);
+        Assert.DoesNotContain("[1000,1000]", document.Lines[0].Text);
+    }
 }
