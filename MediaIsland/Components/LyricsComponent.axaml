@@ -20,9 +20,8 @@
                        FontSize="16"
                        Margin="0 2 4 0"
                        VerticalAlignment="Center" />
-        <Grid Grid.Column="1" MaxWidth="520" VerticalAlignment="Center">
+        <Grid Grid.Column="1" VerticalAlignment="Center">
             <TextBlock x:Name="LyricsText"
-                       MaxWidth="520"
                        VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"
                        TextWrapping="NoWrap"
@@ -32,7 +31,6 @@
                 </TextBlock.RenderTransform>
             </TextBlock>
             <StackPanel x:Name="ActiveLyricsLines"
-                        MaxWidth="520"
                         Spacing="1"
                         HorizontalAlignment="Stretch"
                         VerticalAlignment="Center"
