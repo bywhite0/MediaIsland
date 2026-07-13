@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Documents;
 using Avalonia.Media;
 using MediaIsland.Services.Lyrics.Models;
 
@@ -24,6 +25,10 @@ public sealed class WordLyricsPresenter : Control
     public static readonly StyledProperty<double> FontSizeProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, double>(nameof(FontSize), 14);
 
+    // 继承 ClassIsland 的自定义字体，确保歌词字体与普通文本一致
+    public static readonly StyledProperty<FontFamily> FontFamilyProperty =
+        TextElement.FontFamilyProperty.AddOwner<WordLyricsPresenter>();
+
     public static readonly StyledProperty<IBrush?> ForegroundProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, IBrush?>(nameof(Foreground));
 
@@ -35,7 +40,8 @@ public sealed class WordLyricsPresenter : Control
 
     private string? _cachedText;
     private double _cachedFontSize;
-    private Typeface _typeface = new(FontFamily.Default);
+    private FontFamily _cachedFontFamily = Avalonia.Media.FontFamily.Default;
+    private Typeface _typeface = new(Avalonia.Media.FontFamily.Default);
     private FormattedText? _fullText;
     private double[] _wordStarts = [];
     private double[] _wordWidths = [];
@@ -56,6 +62,12 @@ public sealed class WordLyricsPresenter : Control
     {
         get => GetValue(FontSizeProperty);
         set => SetValue(FontSizeProperty, value);
+    }
+
+    public FontFamily FontFamily
+    {
+        get => GetValue(FontFamilyProperty);
+        set => SetValue(FontFamilyProperty, value);
     }
 
     public IBrush? Foreground
@@ -82,10 +94,16 @@ public sealed class WordLyricsPresenter : Control
             LineProperty,
             PositionProperty,
             FontSizeProperty,
+            FontFamilyProperty,
             ForegroundProperty,
             TextAlignmentProperty,
             IsLiftEnabledProperty);
-        AffectsMeasure<WordLyricsPresenter>(LineProperty, FontSizeProperty, ForegroundProperty, IsLiftEnabledProperty);
+        AffectsMeasure<WordLyricsPresenter>(
+            LineProperty,
+            FontSizeProperty,
+            FontFamilyProperty,
+            ForegroundProperty,
+            IsLiftEnabledProperty);
     }
 
     protected override Size MeasureOverride(Size availableSize)
@@ -338,14 +356,16 @@ public sealed class WordLyricsPresenter : Control
         var text = line?.Text ?? string.Empty;
         if (_fullText != null &&
             string.Equals(_cachedText, text, StringComparison.Ordinal) &&
-            Math.Abs(_cachedFontSize - FontSize) < 0.01)
+            Math.Abs(_cachedFontSize - FontSize) < 0.01 &&
+            Equals(_cachedFontFamily, FontFamily))
         {
             return;
         }
 
         _cachedText = text;
         _cachedFontSize = FontSize;
-        _typeface = new Typeface(FontFamily.Default);
+        _cachedFontFamily = FontFamily;
+        _typeface = new Typeface(FontFamily);
         var brush = Foreground ?? Brushes.White;
         _fullText = CreateFormatted(text, brush);
         BuildWordMetrics(line, brush);
