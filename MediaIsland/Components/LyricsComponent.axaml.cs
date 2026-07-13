@@ -73,6 +73,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _isLoaded = true;
         _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
         _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+        _lyricsSearchService.CandidateApplied -= LyricsSearchService_OnCandidateApplied;
+        _lyricsSearchService.CandidateApplied += LyricsSearchService_OnCandidateApplied;
         Settings.PropertyChanged += Settings_OnPropertyChanged;
         _pluginSettings = Plugin.Instance?.Settings;
         if (_pluginSettings != null)
@@ -101,6 +103,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _isLoaded = false;
         _lyricsTimer.Stop();
         _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+        _lyricsSearchService.CandidateApplied -= LyricsSearchService_OnCandidateApplied;
         Settings.PropertyChanged -= Settings_OnPropertyChanged;
         if (_pluginSettings != null)
         {
@@ -259,6 +262,38 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _logger.LogError(ex, "[歌词] 处理媒体信息时发生错误。");
             ClearLyrics("查找歌词失败");
         }
+    }
+
+    private void LyricsSearchService_OnCandidateApplied(
+        object? sender,
+        LyricsSearchResultChangedEventArgs e)
+    {
+        if (e.Result == null)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_isLoaded ||
+                !ReferenceEquals(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo), e.Result))
+            {
+                return;
+            }
+
+            Interlocked.Increment(ref _searchVersion);
+            CancelCurrentSearch();
+            lock (_syncLock)
+            {
+                _currentLyrics = e.Result.Document;
+                _activeLineIndices = [];
+                _isWordMode = e.Result.Document.SyncMode == LyricsSyncMode.Word;
+            }
+
+            SetStatus(string.Empty);
+            RenderCurrentPositionOnce();
+            UpdateRenderCadence();
+        });
     }
 
     private void LyricsTimer_OnTick(object? sender, EventArgs e)

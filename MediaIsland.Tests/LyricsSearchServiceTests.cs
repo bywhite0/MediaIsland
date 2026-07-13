@@ -197,6 +197,85 @@ public class LyricsSearchServiceTests
         Assert.Equal(3, amll.SearchCallCount);
     }
 
+    [Fact]
+    public async Task SearchAsync_PropagatesRequestedCancellation()
+    {
+        var settings = CreateSettings();
+        var service = new LyricsSearchService(
+        [new FakeProvider(LyricsSourceId.QqMusic, LyricsFormat.Qrc, supportsWordSync: true)],
+        [new FakeParser()],
+        () => settings);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            service.SearchAsync(CreateMediaInfo(), cancellation.Token));
+    }
+
+    [Fact]
+    public async Task SearchCandidatesAsync_ReturnsAllEnabledSourceCandidatesSortedByScore()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry { Id = LyricsSourceId.Netease, IsEnabled = true },
+                new LyricsSourceEntry { Id = LyricsSourceId.QqMusic, IsEnabled = true },
+                new LyricsSourceEntry { Id = LyricsSourceId.Kugou, IsEnabled = false }
+            ]
+        };
+        var netease = new FakeProvider(LyricsSourceId.Netease, LyricsFormat.Lrc, supportsWordSync: false, score: 40);
+        var qqMusic = new FakeProvider(LyricsSourceId.QqMusic, LyricsFormat.Qrc, supportsWordSync: true, score: 150);
+        var kugou = new ThrowingProvider(LyricsSourceId.Kugou);
+        var service = new LyricsSearchService([netease, qqMusic, kugou], [new FakeParser()], () => settings);
+
+        var candidates = await service.SearchCandidatesAsync(CreateMediaInfo());
+
+        Assert.Collection(
+            candidates,
+            candidate =>
+            {
+                Assert.Equal(LyricsSourceId.QqMusic, candidate.Source);
+                Assert.Equal(150, candidate.Score);
+            },
+            candidate =>
+            {
+                Assert.Equal(LyricsSourceId.Netease, candidate.Source);
+                Assert.Equal(40, candidate.Score);
+            });
+        Assert.Equal(1, netease.SearchCallCount);
+        Assert.Equal(1, qqMusic.SearchCallCount);
+        Assert.Equal(0, kugou.SearchCallCount);
+    }
+
+    [Fact]
+    public async Task ApplyCandidateAsync_PublishesTheSelectedCandidate()
+    {
+        var settings = CreateSettings();
+        var provider = new FakeProvider(LyricsSourceId.QqMusic, LyricsFormat.Qrc, supportsWordSync: true);
+        var service = new LyricsSearchService([provider], [new FakeParser()], () => settings);
+        LyricsSearchResult? applied = null;
+        service.CandidateApplied += (_, args) => applied = args.Result;
+        var media = CreateMediaInfo();
+        var candidate = new LyricsCandidate(
+            LyricsSourceId.QqMusic,
+            "manual-choice",
+            "Manual Song",
+            "Manual Artist",
+            "Manual Album",
+            TimeSpan.FromSeconds(180),
+            40,
+            SupportsWordSync: true);
+
+        var result = await service.ApplyCandidateAsync(media, candidate);
+
+        Assert.NotNull(result);
+        Assert.Equal("manual-choice", result.Id);
+        Assert.Equal(LyricsSourceId.QqMusic, result.Source);
+        Assert.Same(result, service.CurrentResult);
+        Assert.Same(result, applied);
+    }
+
     private static LyricsSourceSettings CreateSettings() => new()
     {
         Sources =
@@ -232,7 +311,8 @@ public class LyricsSearchServiceTests
         LyricsFormat format,
         bool supportsWordSync,
         bool returnsPayload = true,
-        int emptySearchCount = 0) : ILyricsProvider
+        int emptySearchCount = 0,
+        int score = 150) : ILyricsProvider
     {
         public int SearchCallCount { get; private set; }
 
@@ -258,7 +338,7 @@ public class LyricsSearchServiceTests
                     media.Artist ?? string.Empty,
                     media.AlbumTitle ?? string.Empty,
                     media.Duration,
-                    150,
+                    score,
                     supportsWordSync)
             ];
             return Task.FromResult(candidates);

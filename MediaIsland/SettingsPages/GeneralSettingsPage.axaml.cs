@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
@@ -52,6 +53,10 @@ namespace MediaIsland.SettingsPages
         private string _amllApiBaseUrl = string.Empty;
         private string _amllConnectionStatus = "留空表示不使用 AMLL 来源。";
         private string _currentLyricsSourceDisplay = "当前使用：暂无";
+        private string _currentLyricsCandidatesStatus = "播放媒体后将在此处显示已启用歌词源的搜索候选。";
+        private CancellationTokenSource? _lyricsCandidatesCancellation;
+        private CancellationTokenSource? _lyricsCandidateApplyCancellation;
+        private long _lyricsCandidatesSearchVersion;
         private bool _suppressLyricsSave;
 
         private event PropertyChangedEventHandler? NotifyPropertyChanged;
@@ -144,6 +149,8 @@ namespace MediaIsland.SettingsPages
 
         public ObservableCollection<LyricsSourceItemViewModel> LyricsSourceItems { get; } = [];
 
+        public ObservableCollection<LyricsCandidateItemViewModel> LyricsCandidateItems { get; } = [];
+
         public string AmllApiBaseUrl
         {
             get => _amllApiBaseUrl;
@@ -170,6 +177,12 @@ namespace MediaIsland.SettingsPages
             private set => SetProperty(ref _currentLyricsSourceDisplay, value);
         }
 
+        public string CurrentLyricsCandidatesStatus
+        {
+            get => _currentLyricsCandidatesStatus;
+            private set => SetProperty(ref _currentLyricsCandidatesStatus, value);
+        }
+
         public GeneralSettingsPage(
             Plugin plugin,
             IMediaService mediaService,
@@ -189,11 +202,14 @@ namespace MediaIsland.SettingsPages
                 _isDetached = true;
                 _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
                 _lyricsSearchService.CurrentResultChanged -= LyricsSearchService_OnCurrentResultChanged;
+                CancelLyricsCandidateSearch();
+                CancelLyricsCandidateApply();
             };
             Settings.needRestart += RequestRestart;
             _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
             _lyricsSearchService.CurrentResultChanged += LyricsSearchService_OnCurrentResultChanged;
             UpdateCurrentLyricsSource(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo));
+            _ = RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
             StartMediaServiceAsync();
             AddCurrentMediaSourceIfAvailable();
             _ = RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
@@ -217,6 +233,7 @@ namespace MediaIsland.SettingsPages
                 await _mediaService.EnsureStartedAsync();
                 AddCurrentMediaSourceIfAvailable();
                 await RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
+                await RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
             }
             catch
             {
@@ -230,6 +247,8 @@ namespace MediaIsland.SettingsPages
             {
                 Dispatcher.UIThread.Post(() => UpdateCurrentLyricsSource(
                     _lyricsSearchService.GetCurrentResultFor(e.MediaInfo)));
+                CancelLyricsCandidateApply();
+                _ = RefreshLyricsCandidatesAsync(e.MediaInfo);
             }
 
             _ = RefreshCurrentMediaInfoAsync(e.MediaInfo);
@@ -254,6 +273,144 @@ namespace MediaIsland.SettingsPages
             CurrentLyricsSourceDisplay = result == null
                 ? "当前使用：暂无"
                 : $"当前使用：{LyricsSourceItemViewModel.GetDisplayName(result.Source)}";
+        }
+
+        private async Task RefreshLyricsCandidatesAsync(MediaInfo? info)
+        {
+            var searchVersion = Interlocked.Increment(ref _lyricsCandidatesSearchVersion);
+            CancelLyricsCandidateSearch();
+
+            if (info == null || string.IsNullOrWhiteSpace(info.Title))
+            {
+                await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("播放媒体后将在此处显示已启用歌词源的搜索候选。"));
+                return;
+            }
+
+            if (!Settings.Lyrics.Sources.Any(source => source.IsEnabled))
+            {
+                await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("没有启用的歌词来源。"));
+                return;
+            }
+
+            var cancellation = new CancellationTokenSource();
+            _lyricsCandidatesCancellation = cancellation;
+            await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("正在搜索已启用歌词源的候选..."));
+
+            try
+            {
+                var candidates = await _lyricsSearchService.SearchCandidatesAsync(info, cancellation.Token);
+                if (_isDetached || cancellation.IsCancellationRequested ||
+                    searchVersion != Volatile.Read(ref _lyricsCandidatesSearchVersion))
+                {
+                    return;
+                }
+
+                await UpdateCurrentMediaUiAsync(() =>
+                {
+                    LyricsCandidateItems.Clear();
+                    foreach (var candidate in candidates)
+                    {
+                        LyricsCandidateItems.Add(new LyricsCandidateItemViewModel(candidate));
+                    }
+
+                    CurrentLyricsCandidatesStatus = candidates.Count == 0
+                        ? "各已启用歌词源未返回歌词候选。"
+                        : $"已找到 {candidates.Count} 个候选，按得分从高到低排序。";
+                });
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                // A newer media event or page unload superseded this search.
+            }
+            catch
+            {
+                if (!_isDetached && searchVersion == Volatile.Read(ref _lyricsCandidatesSearchVersion))
+                {
+                    await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("搜索歌词候选时发生错误。"));
+                }
+            }
+            finally
+            {
+                if (ReferenceEquals(_lyricsCandidatesCancellation, cancellation))
+                {
+                    _lyricsCandidatesCancellation = null;
+                    cancellation.Dispose();
+                }
+            }
+        }
+
+        private void RefreshLyricsCandidatesOnClick(object? sender, RoutedEventArgs e)
+        {
+            _ = RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
+        }
+
+        private async void ApplyLyricsCandidateOnDoubleTapped(object? sender, TappedEventArgs e)
+        {
+            if (e.Source is not Control { DataContext: LyricsCandidateItemViewModel item } ||
+                _mediaService.CurrentMediaInfo is not { } mediaInfo)
+            {
+                return;
+            }
+
+            CancelLyricsCandidateApply();
+            var cancellation = new CancellationTokenSource();
+            _lyricsCandidateApplyCancellation = cancellation;
+            CurrentLyricsCandidatesStatus = $"正在应用 {item.Source} 的歌词候选...";
+
+            try
+            {
+                var result = await _lyricsSearchService.ApplyCandidateAsync(
+                    mediaInfo,
+                    item.Candidate,
+                    cancellation.Token);
+                if (_isDetached || cancellation.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                CurrentLyricsCandidatesStatus = result == null
+                    ? "未能应用所选歌词候选。"
+                    : $"已应用：{item.Source} - {item.Title}（评分 {item.Score}）。";
+            }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+            {
+                // A newer media event or selection superseded this request.
+            }
+            catch
+            {
+                if (!_isDetached)
+                {
+                    CurrentLyricsCandidatesStatus = "应用所选歌词候选时发生错误。";
+                }
+            }
+            finally
+            {
+                if (ReferenceEquals(_lyricsCandidateApplyCancellation, cancellation))
+                {
+                    _lyricsCandidateApplyCancellation = null;
+                    cancellation.Dispose();
+                }
+            }
+        }
+
+        private void CancelLyricsCandidateSearch()
+        {
+            var cancellation = Interlocked.Exchange(ref _lyricsCandidatesCancellation, null);
+            cancellation?.Cancel();
+            cancellation?.Dispose();
+        }
+
+        private void CancelLyricsCandidateApply()
+        {
+            var cancellation = Interlocked.Exchange(ref _lyricsCandidateApplyCancellation, null);
+            cancellation?.Cancel();
+            cancellation?.Dispose();
+        }
+
+        private void ClearLyricsCandidates(string status)
+        {
+            LyricsCandidateItems.Clear();
+            CurrentLyricsCandidatesStatus = status;
         }
 
         static bool IsLyricsIslandInstalled()
@@ -781,5 +938,33 @@ namespace MediaIsland.SettingsPages
         }
 
         public event PropertyChangedEventHandler? PropertyChanged;
+    }
+
+    public sealed class LyricsCandidateItemViewModel
+    {
+        public LyricsCandidateItemViewModel(LyricsCandidate candidate)
+        {
+            Candidate = candidate;
+            Source = LyricsSourceItemViewModel.GetDisplayName(candidate.Source);
+            Title = string.IsNullOrWhiteSpace(candidate.Title) ? "未知标题" : candidate.Title;
+            Artist = string.IsNullOrWhiteSpace(candidate.Artist) ? "未知艺术家" : candidate.Artist;
+            Album = string.IsNullOrWhiteSpace(candidate.Album) ? "-" : candidate.Album;
+            Score = candidate.Score;
+            SyncCapability = candidate.SupportsWordSync ? "支持逐字" : "行级歌词";
+        }
+
+        public string Source { get; }
+
+        public LyricsCandidate Candidate { get; }
+
+        public string Title { get; }
+
+        public string Artist { get; }
+
+        public string Album { get; }
+
+        public int Score { get; }
+
+        public string SyncCapability { get; }
     }
 }

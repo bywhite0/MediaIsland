@@ -256,6 +256,37 @@
                     </Grid>
                     <TextBlock Text="{Binding AmllConnectionStatus}"
                                TextWrapping="Wrap" />
+                    <Grid Margin="0,8,0,0" ColumnDefinitions="*,Auto">
+                        <TextBlock Text="当前歌词候选"
+                                   FontWeight="Medium"
+                                   VerticalAlignment="Center" />
+                        <Button Grid.Column="1"
+                                Content="刷新"
+                                Click="RefreshLyricsCandidatesOnClick" />
+                    </Grid>
+                    <TextBlock Text="{Binding CurrentLyricsCandidatesStatus}"
+                               FontSize="12"
+                               TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding LyricsCandidateItems}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              CanUserResizeColumns="False"
+                              CanUserReorderColumns="False"
+                              CanUserSortColumns="False"
+                              DoubleTapped="ApplyLyricsCandidateOnDoubleTapped"
+                              Height="220">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="来源" Width="Auto" Binding="{Binding Source}" />
+                            <DataGridTextColumn Header="评分" Width="Auto" Binding="{Binding Score}" />
+                            <DataGridTextColumn Header="标题" Width="*" Binding="{Binding Title}" />
+                            <DataGridTextColumn Header="艺术家" Width="*" Binding="{Binding Artist}" />
+                            <DataGridTextColumn Header="专辑" Width="*" Binding="{Binding Album}" />
+                            <DataGridTextColumn Header="同步" Width="Auto" Binding="{Binding SyncCapability}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="双击可应用该歌词至组件"
+                               FontSize="12"
+                               TextWrapping="Wrap" />
                 </StackPanel>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"

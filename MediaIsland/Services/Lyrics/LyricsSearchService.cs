@@ -27,6 +27,8 @@ public sealed class LyricsSearchService
 
     public event EventHandler<LyricsSearchResultChangedEventArgs>? CurrentResultChanged;
 
+    public event EventHandler<LyricsSearchResultChangedEventArgs>? CandidateApplied;
+
     public LyricsSearchResult? GetCurrentResultFor(MediaInfo? info)
     {
         var result = CurrentResult;
@@ -129,6 +131,99 @@ public sealed class LyricsSearchService
         }
     }
 
+    public async Task<IReadOnlyList<LyricsCandidate>> SearchCandidatesAsync(
+        MediaInfo info,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(info.Title))
+        {
+            return [];
+        }
+
+        var settings = LyricsSourceSettings.Normalize(_settingsFactory().Clone());
+        var orderedProviders = settings.Sources
+            .Where(source => source.IsEnabled)
+            .Select(source => _providers.FirstOrDefault(provider => provider.Id == source.Id))
+            .Where(provider => provider != null)
+            .Cast<ILyricsProvider>()
+            .ToArray();
+        if (orderedProviders.Length == 0)
+        {
+            return [];
+        }
+
+        var candidatesByProvider = await Task.WhenAll(orderedProviders.Select(provider =>
+            SearchProviderCandidatesAsync(
+                provider,
+                info,
+                settings,
+                cancellationToken,
+                includeBelowMinimumScore: true)));
+        return candidatesByProvider
+            .SelectMany(candidates => candidates)
+            .OrderByDescending(candidate => candidate.Score)
+            .ToArray();
+    }
+
+    public async Task<LyricsSearchResult?> ApplyCandidateAsync(
+        MediaInfo info,
+        LyricsCandidate candidate,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(info.Title))
+        {
+            return null;
+        }
+
+        var settings = LyricsSourceSettings.Normalize(_settingsFactory().Clone());
+        if (!settings.IsSourceEnabled(candidate.Source))
+        {
+            return null;
+        }
+
+        var provider = _providers.FirstOrDefault(item => item.Id == candidate.Source);
+        if (provider == null)
+        {
+            return null;
+        }
+
+        var searchVersion = Interlocked.Increment(ref _searchVersion);
+        Interlocked.Exchange(ref _currentMediaTitle, info.Title);
+        Interlocked.Exchange(ref _currentMediaArtist, info.Artist);
+        EnsureCacheFingerprint(settings);
+
+        var result = await TrySelectFromProviderAsync(
+            provider,
+            [candidate],
+            settings,
+            preferWordOnly: false,
+            allowLineFallback: true,
+            cancellationToken);
+        if (result == null)
+        {
+            return null;
+        }
+
+        if (searchVersion != Volatile.Read(ref _searchVersion))
+        {
+            return null;
+        }
+
+        Cache(BuildCacheKey(info, settings), result);
+        PublishCurrentResult(result, searchVersion);
+        if (!ReferenceEquals(CurrentResult, result))
+        {
+            return null;
+        }
+
+        if (searchVersion == Volatile.Read(ref _searchVersion))
+        {
+            PublishCandidateApplied(result);
+        }
+
+        return result;
+    }
+
     private async Task<LyricsSearchResult?> SearchOnceAsync(
         IReadOnlyList<ILyricsProvider> orderedProviders,
         MediaInfo info,
@@ -189,15 +284,19 @@ public sealed class LyricsSearchService
         ILyricsProvider provider,
         MediaInfo info,
         LyricsSourceSettings settings,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeBelowMinimumScore = false)
     {
         try
         {
             var candidates = await provider.SearchAsync(info, settings, cancellationToken);
-            return candidates
-                .Where(candidate => candidate.Score >= LyricsCandidateScorer.MinimumScore(info))
-                .OrderByDescending(candidate => candidate.Score)
-                .ToArray();
+            var orderedCandidates = candidates
+                .OrderByDescending(candidate => candidate.Score);
+            return includeBelowMinimumScore
+                ? orderedCandidates.ToArray()
+                : orderedCandidates
+                    .Where(candidate => candidate.Score >= LyricsCandidateScorer.MinimumScore(info))
+                    .ToArray();
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -390,6 +489,28 @@ public sealed class LyricsSearchService
             catch (Exception ex)
             {
                 _logger?.LogWarning(ex, "[歌词] 当前结果订阅者执行失败。");
+            }
+        }
+    }
+
+    private void PublishCandidateApplied(LyricsSearchResult result)
+    {
+        var handlers = CandidateApplied;
+        if (handlers == null)
+        {
+            return;
+        }
+
+        var args = new LyricsSearchResultChangedEventArgs(result);
+        foreach (EventHandler<LyricsSearchResultChangedEventArgs> handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                handler(this, args);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[歌词] 手动应用歌词订阅者执行失败。");
             }
         }
     }
