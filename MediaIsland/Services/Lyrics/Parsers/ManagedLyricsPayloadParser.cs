@@ -5,21 +5,33 @@ using QrcDecrypter = Lyricify.Lyrics.Decrypter.Qrc.Decrypter;
 using Lyricify.Lyrics.Models;
 using Lyricify.Lyrics.Parsers;
 using MediaIsland.Services.Lyrics.Models;
+using System.Text.RegularExpressions;
 
 namespace MediaIsland.Services.Lyrics.Parsers;
 
 public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
 {
+    private static readonly Regex QrcLineRegex = new(
+        @"^\s*\[(?<start>\d+)\s*,\s*(?<duration>\d+)\](?<content>.*)$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex QrcWordRegex = new(
+        @"(?<text>.*?)(?:\((?<start>\d+)\s*,\s*(?<duration>\d+)\))",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     public bool CanParse(LyricsFormat format) =>
         format is LyricsFormat.Lrc or LyricsFormat.Qrc or LyricsFormat.Krc;
 
     public ValueTask<LyricsDocument> ParseAsync(LyricsPayload payload, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (payload.Format == LyricsFormat.Qrc)
+        {
+            return ValueTask.FromResult(ParseQrc(payload));
+        }
+
         LyricsData data = payload.Format switch
         {
             LyricsFormat.Lrc => LrcParser.Parse(payload.Content.AsSpan()),
-            LyricsFormat.Qrc => QrcParser.Parse(NormalizeQrcContent(payload.Content)),
             LyricsFormat.Krc => KrcParser.Parse(NormalizeKrcContent(payload.Content)),
             _ => throw new NotSupportedException($"Unsupported managed lyrics format: {payload.Format}")
         };
@@ -27,37 +39,14 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
         IReadOnlyList<string>? translations = null;
         if (!string.IsNullOrWhiteSpace(payload.TranslationContent))
         {
-            if (payload.Format == LyricsFormat.Qrc)
+            try
             {
-                try
-                {
-                    var translated = QrcParser.Parse(NormalizeQrcContent(payload.TranslationContent));
-                    translations = translated.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
-                }
-                catch
-                {
-                    try
-                    {
-                        var translated = LrcParser.Parse(payload.TranslationContent.AsSpan());
-                        translations = translated.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
-                    }
-                    catch
-                    {
-                        translations = null;
-                    }
-                }
+                var translated = LrcParser.Parse(payload.TranslationContent.AsSpan());
+                translations = translated.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
             }
-            else
+            catch
             {
-                try
-                {
-                    var translated = LrcParser.Parse(payload.TranslationContent.AsSpan());
-                    translations = translated.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
-                }
-                catch
-                {
-                    translations = null;
-                }
+                translations = null;
             }
         }
 
@@ -71,6 +60,94 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
             preferWordSync,
             translations);
         return ValueTask.FromResult(document);
+    }
+
+    private static LyricsDocument ParseQrc(LyricsPayload payload)
+    {
+        var lines = ParseQrcLines(payload.Content).ToArray();
+        var translations = ParseQrcTranslationLines(payload.TranslationContent);
+        if (translations != null)
+        {
+            lines = lines.Select((line, index) => index < translations.Count
+                ? line with { Translation = translations[index] }
+                : line).ToArray();
+        }
+
+        return LyricsDocumentNormalizer.Create(
+            lines,
+            payload.Metadata,
+            payload.Source,
+            payload.ProviderItemId,
+            payload.Format,
+            preferWordSync: true);
+    }
+
+    private static IReadOnlyList<LyricsLine> ParseQrcLines(string content)
+    {
+        var lines = new List<LyricsLine>();
+        foreach (var rawLine in NormalizeQrcContent(content).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var lineMatch = QrcLineRegex.Match(rawLine);
+            if (!lineMatch.Success ||
+                !int.TryParse(lineMatch.Groups["start"].Value, out var startMilliseconds) ||
+                !int.TryParse(lineMatch.Groups["duration"].Value, out var durationMilliseconds))
+            {
+                continue;
+            }
+
+            var contentText = lineMatch.Groups["content"].Value;
+            var words = new List<LyricsWord>();
+            foreach (Match wordMatch in QrcWordRegex.Matches(contentText))
+            {
+                if (!int.TryParse(wordMatch.Groups["start"].Value, out var wordStartMilliseconds) ||
+                    !int.TryParse(wordMatch.Groups["duration"].Value, out var wordDurationMilliseconds))
+                {
+                    continue;
+                }
+
+                var wordStart = TimeSpan.FromMilliseconds(Math.Max(0, wordStartMilliseconds));
+                words.Add(new LyricsWord(
+                    wordStart,
+                    wordStart.Add(TimeSpan.FromMilliseconds(Math.Max(0, wordDurationMilliseconds))),
+                    wordMatch.Groups["text"].Value));
+            }
+
+            var lineStart = TimeSpan.FromMilliseconds(Math.Max(0, startMilliseconds));
+            var text = words.Count > 0
+                ? string.Concat(words.Select(word => word.Text))
+                : contentText.Trim();
+            lines.Add(new LyricsLine(
+                lineStart,
+                lineStart.Add(TimeSpan.FromMilliseconds(Math.Max(0, durationMilliseconds))),
+                text,
+                words));
+        }
+
+        return lines;
+    }
+
+    private static IReadOnlyList<string>? ParseQrcTranslationLines(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        var qrcLines = ParseQrcLines(content);
+        if (qrcLines.Count > 0)
+        {
+            return qrcLines.Select(line => line.Text).ToArray();
+        }
+
+        try
+        {
+            var translated = LrcParser.Parse(content.AsSpan());
+            return translated.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public static string? DecryptQrc(string encrypted)

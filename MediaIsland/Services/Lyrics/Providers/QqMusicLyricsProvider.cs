@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -12,11 +13,19 @@ namespace MediaIsland.Services.Lyrics.Providers;
 
 public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger = null) : ILyricsProvider
 {
+    private const int MaxSearchRequestAttempts = 3;
+    private static readonly TimeSpan SearchRetryDelay = TimeSpan.FromMilliseconds(500);
     private static readonly HttpClient HttpClient = LyricsHttp.CreateClient("qqmusic");
     private static readonly Regex JsonpRegex = new(@"^[^{]*(\{.*\})[^}]*$", RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex MalformedEmptyElementRegex = new(
         "<[A-Za-z_][\\w:.-]*=\"[^\"]*\"\\s*/>",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
+    private static readonly Regex QrcLyricElementRegex = new(
+        "<Lyric_1\\b(?<attributes>[^>]*)>",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Singleline);
+    private static readonly Regex QrcLyricContentAttributeRegex = new(
+        "\\bLyricContent\\s*=\\s*\"(?<content>[^\"]*)\"",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Singleline);
 
     public LyricsSourceId Id => LyricsSourceId.QqMusic;
 
@@ -35,6 +44,7 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         {
             cancellationToken.ThrowIfCancellationRequested();
             var page = await SearchSongsAsync(query, cancellationToken);
+            logger?.LogDebug("[歌词:QqMusic] 查询 {Query} 返回 {Count} 个歌曲候选。", query, page.Count);
             if (page.Count == 0)
             {
                 continue;
@@ -125,6 +135,31 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
 
     private async Task<IReadOnlyList<QqSong>> SearchSongsAsync(string query, CancellationToken cancellationToken)
     {
+        for (var attempt = 1; attempt <= MaxSearchRequestAttempts; attempt++)
+        {
+            var results = await SearchSongsOnceAsync(query, cancellationToken);
+            if (results.Count > 0)
+            {
+                return results;
+            }
+
+            if (attempt < MaxSearchRequestAttempts)
+            {
+                logger?.LogDebug(
+                    "[歌词:QqMusic] 查询 {Query} 未返回候选，将进行第 {Attempt}/{Total} 次请求。",
+                    query,
+                    attempt + 1,
+                    MaxSearchRequestAttempts);
+                await Task.Delay(SearchRetryDelay, cancellationToken);
+            }
+        }
+
+        logger?.LogDebug("[歌词:QqMusic] 主搜索接口未返回候选，改用兼容搜索接口：{Query}", query);
+        return await SearchSongsFallbackAsync(query, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<QqSong>> SearchSongsOnceAsync(string query, CancellationToken cancellationToken)
+    {
         var payload = new Dictionary<string, object>
         {
             ["music.search.SearchCgiService"] = new
@@ -148,6 +183,8 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
             Content = content
         };
         request.Headers.Referrer = new Uri("https://y.qq.com/");
+        request.Headers.AcceptLanguage.ParseAdd("zh-CN,zh;q=0.9,en;q=0.8");
+        request.Headers.TryAddWithoutValidation("Origin", "https://y.qq.com");
 
         using var response = await HttpClient.SendAsync(
             request,
@@ -216,6 +253,92 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         }
 
         return results;
+    }
+
+    private async Task<IReadOnlyList<QqSong>> SearchSongsFallbackAsync(string query, CancellationToken cancellationToken)
+    {
+        var url =
+            $"https://c.y.qq.com/soso/fcgi-bin/search_for_qq_cp?format=json&w={Uri.EscapeDataString(query)}&n=10&p=1";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Referrer = new Uri("https://y.qq.com/");
+        request.Headers.AcceptLanguage.ParseAdd("zh-CN,zh;q=0.9,en;q=0.8");
+
+        using var response = await HttpClient.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            LyricsHttp.LogHttpFailure(logger, "QqMusic", response.StatusCode, "fallback-song-search");
+            return [];
+        }
+
+        var body = await LyricsHttp.ReadBoundedStringAsync(response, LyricsHttp.DefaultMaxBytes, cancellationToken);
+        return ParseFallbackSearchResponseBody(body);
+    }
+
+    internal static IReadOnlyList<QqSong> ParseFallbackSearchResponseBody(string? body)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return [];
+        }
+
+        var match = JsonpRegex.Match(body);
+        var jsonText = match.Success ? match.Groups[1].Value : body;
+        try
+        {
+            using var document = JsonDocument.Parse(jsonText);
+            if (!document.RootElement.TryGetProperty("data", out var data) ||
+                data.ValueKind != JsonValueKind.Object ||
+                !data.TryGetProperty("song", out var song) ||
+                song.ValueKind != JsonValueKind.Object ||
+                !song.TryGetProperty("list", out var list) ||
+                list.ValueKind != JsonValueKind.Array)
+            {
+                return [];
+            }
+
+            var results = new List<QqSong>();
+            foreach (var item in list.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var id = item.TryGetProperty("songid", out var idNode) ? idNode.ToString() : string.Empty;
+                var mid = item.TryGetProperty("songmid", out var midNode) ? midNode.GetString() ?? string.Empty : string.Empty;
+                var title = item.TryGetProperty("songname", out var titleNode) ? titleNode.GetString() ?? string.Empty : string.Empty;
+                var album = item.TryGetProperty("albumname", out var albumNode) ? albumNode.GetString() ?? string.Empty : string.Empty;
+                var artist = string.Empty;
+                if (item.TryGetProperty("singer", out var singers) && singers.ValueKind == JsonValueKind.Array)
+                {
+                    artist = string.Join(" ", singers.EnumerateArray()
+                        .Select(s => s.TryGetProperty("name", out var n) ? n.GetString() : null)
+                        .Where(v => !string.IsNullOrWhiteSpace(v)));
+                }
+
+                var duration = TimeSpan.Zero;
+                if (item.TryGetProperty("interval", out var interval) && interval.TryGetInt32(out var seconds))
+                {
+                    duration = TimeSpan.FromSeconds(seconds);
+                }
+
+                if (string.IsNullOrWhiteSpace(id) && string.IsNullOrWhiteSpace(mid))
+                {
+                    continue;
+                }
+
+                results.Add(new QqSong(id, mid, title, artist, album, duration));
+            }
+
+            return results;
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
     }
 
     private async Task<LyricsPayload?> TryFetchQrcAsync(string id, CancellationToken cancellationToken)
@@ -336,6 +459,24 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
             return decrypted;
         }
 
+        var content = ExtractQrcLyricContent(decrypted);
+        return string.IsNullOrWhiteSpace(content) ? decrypted : content;
+    }
+
+    internal static string? ExtractQrcLyricContent(string decrypted)
+    {
+        var lyricElementMatch = QrcLyricElementRegex.Match(decrypted);
+        if (lyricElementMatch.Success)
+        {
+            var contentMatch = QrcLyricContentAttributeRegex.Match(lyricElementMatch.Groups["attributes"].Value);
+            if (contentMatch.Success)
+            {
+                // XML attribute parsing normalizes literal newlines to spaces. Extract the raw value first so
+                // QRC's individual timed lines stay separable by the QRC parser.
+                return WebUtility.HtmlDecode(contentMatch.Groups["content"].Value);
+            }
+        }
+
         try
         {
             var document = XDocument.Parse(decrypted, LoadOptions.None);
@@ -344,11 +485,11 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
             var content = lyricNode?.Attributes()
                 .FirstOrDefault(attribute => attribute.Name.LocalName.Equals("LyricContent", StringComparison.OrdinalIgnoreCase))
                 ?.Value;
-            return string.IsNullOrWhiteSpace(content) ? decrypted : content;
+            return string.IsNullOrWhiteSpace(content) ? null : content;
         }
         catch
         {
-            return decrypted;
+            return null;
         }
     }
 
@@ -418,5 +559,5 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
             translation);
     }
 
-    private sealed record QqSong(string Id, string Mid, string Title, string Artist, string Album, TimeSpan Duration);
+    internal sealed record QqSong(string Id, string Mid, string Title, string Artist, string Album, TimeSpan Duration);
 }

@@ -69,4 +69,29 @@ public class ManagedLyricsPayloadParserTests
         Assert.Equal("Again", document.Lines[1].Text);
         Assert.DoesNotContain("[1000,1000]", document.Lines[0].Text);
     }
+
+    [Fact]
+    public async Task ParseAsync_Qrc_ParsesTimingAndWordsWithoutKeepingQrcTags()
+    {
+        const string content = """
+            [ti:Song]
+            [0,1000]Hello(0,500) world(500,500)
+            [1000,1000]Again(1000,500) now(1500,500)
+            """;
+        var payload = new LyricsPayload(
+            LyricsFormat.Qrc,
+            content,
+            LyricsSourceId.QqMusic,
+            "test",
+            new LyricsMetadata("Song", "Artist", null, TimeSpan.FromSeconds(3)));
+
+        var document = await new ManagedLyricsPayloadParser().ParseAsync(payload, CancellationToken.None);
+
+        Assert.Equal(LyricsSyncMode.Word, document.SyncMode);
+        Assert.Equal(2, document.Lines.Count);
+        Assert.Equal("Hello world", document.Lines[0].Text);
+        Assert.Equal("Again now", document.Lines[1].Text);
+        Assert.Equal(TimeSpan.FromSeconds(1), document.Lines[1].StartTime);
+        Assert.DoesNotContain("[", document.Lines[0].Text);
+    }
 }
