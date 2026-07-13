@@ -284,9 +284,8 @@
                             <DataGridTextColumn Header="同步" Width="Auto" Binding="{Binding SyncCapability}" />
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBlock Text="双击可应用该歌词至组件"
-                               FontSize="12"
-                               TextWrapping="Wrap" />
+                    <TextBlock Text="双击可应用该歌词至组件。"
+                               FontWeight="Medium" />
                 </StackPanel>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
