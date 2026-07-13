@@ -613,7 +613,8 @@ namespace MediaIsland.SettingsPages
                 {
                     Id = item.Id,
                     IsEnabled = item.IsEnabled,
-                    UseWordSyncedLyrics = item.UseWordSyncedLyrics
+                    UseWordSyncedLyrics = item.UseWordSyncedLyrics,
+                    GlobalOffsetMilliseconds = item.GlobalOffsetMilliseconds
                 }).ToList()
             };
             Settings.Lyrics = LyricsSourceSettings.Normalize(Settings.Lyrics);
@@ -689,6 +690,8 @@ namespace MediaIsland.SettingsPages
     {
         private bool _isEnabled;
         private bool _useWordSyncedLyrics;
+        private int _globalOffsetMilliseconds;
+        private string _globalOffsetMillisecondsText;
         private readonly Action _onChanged;
 
         public LyricsSourceItemViewModel(LyricsSourceEntry entry, Action onChanged)
@@ -696,6 +699,8 @@ namespace MediaIsland.SettingsPages
             Id = entry.Id;
             _isEnabled = entry.IsEnabled;
             _useWordSyncedLyrics = entry.UseWordSyncedLyrics;
+            _globalOffsetMilliseconds = entry.GlobalOffsetMilliseconds;
+            _globalOffsetMillisecondsText = _globalOffsetMilliseconds.ToString();
             _onChanged = onChanged;
         }
 
@@ -742,6 +747,36 @@ namespace MediaIsland.SettingsPages
                 _useWordSyncedLyrics = value;
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UseWordSyncedLyrics)));
                 _onChanged();
+            }
+        }
+
+        public int GlobalOffsetMilliseconds
+        {
+            get => _globalOffsetMilliseconds;
+            set
+            {
+                if (_globalOffsetMilliseconds == value) return;
+                _globalOffsetMilliseconds = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GlobalOffsetMilliseconds)));
+                _onChanged();
+            }
+        }
+
+        public string GlobalOffsetMillisecondsText
+        {
+            get => _globalOffsetMillisecondsText;
+            set
+            {
+                if (_globalOffsetMillisecondsText == value) return;
+                _globalOffsetMillisecondsText = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GlobalOffsetMillisecondsText)));
+
+                if (string.IsNullOrWhiteSpace(value) || !int.TryParse(value, out var offset))
+                {
+                    return;
+                }
+
+                GlobalOffsetMilliseconds = offset;
             }
         }
 

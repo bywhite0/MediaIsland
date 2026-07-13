@@ -225,6 +225,20 @@
                                                 Margin="0,0,4,0"
                                                 Tag="{Binding}"
                                                 Click="MoveLyricsSourceDownOnClick" />
+                                        <StackPanel Grid.Row="1"
+                                                    Grid.Column="0"
+                                                    Grid.ColumnSpan="5"
+                                                    Orientation="Horizontal"
+                                                    Margin="0,8,0,0"
+                                                    Spacing="6">
+                                            <TextBlock Text="歌词延迟（毫秒）" VerticalAlignment="Center" />
+                                            <TextBox Width="88"
+                                                     Watermark="0"
+                                                     Text="{Binding GlobalOffsetMillisecondsText, Mode=TwoWay}" />
+                                            <TextBlock Text="正值提前/负值延后"
+                                                       VerticalAlignment="Center"
+                                                       FontSize="12" />
+                                        </StackPanel>
                                     </Grid>
                                 </Border>
                             </DataTemplate>

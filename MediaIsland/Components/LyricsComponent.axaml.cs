@@ -283,7 +283,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
-        position = _clock.GetCurrentPosition();
+        position = _clock.GetCurrentPosition() +
+                   (_pluginSettings?.Lyrics.GetGlobalOffset(lyrics.Source) ?? TimeSpan.Zero);
         var activeLines = LyricsLineSelector.SelectActive(lyrics, position);
         if (activeLines.Count == 0)
         {

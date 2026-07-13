@@ -79,6 +79,7 @@ public sealed class LyricsSourceEntry
     public LyricsSourceId Id { get; set; } = LyricsSourceId.Netease;
     public bool IsEnabled { get; set; } = true;
     public bool UseWordSyncedLyrics { get; set; } = true;
+    public int GlobalOffsetMilliseconds { get; set; }
 }
 
 public sealed class LyricsSourceSettings
@@ -104,7 +105,8 @@ public sealed class LyricsSourceSettings
             {
                 Id = source.Id,
                 IsEnabled = source.IsEnabled,
-                UseWordSyncedLyrics = source.UseWordSyncedLyrics
+                UseWordSyncedLyrics = source.UseWordSyncedLyrics,
+                GlobalOffsetMilliseconds = source.GlobalOffsetMilliseconds
             }).ToList()
         };
     }
@@ -127,7 +129,8 @@ public sealed class LyricsSourceSettings
             {
                 Id = source.Id,
                 IsEnabled = source.IsEnabled,
-                UseWordSyncedLyrics = source.UseWordSyncedLyrics
+                UseWordSyncedLyrics = source.UseWordSyncedLyrics,
+                GlobalOffsetMilliseconds = source.GlobalOffsetMilliseconds
             });
         }
 
@@ -139,7 +142,8 @@ public sealed class LyricsSourceSettings
                 {
                     Id = source.Id,
                     IsEnabled = source.IsEnabled,
-                    UseWordSyncedLyrics = source.UseWordSyncedLyrics
+                    UseWordSyncedLyrics = source.UseWordSyncedLyrics,
+                    GlobalOffsetMilliseconds = source.GlobalOffsetMilliseconds
                 });
             }
         }
@@ -171,4 +175,7 @@ public sealed class LyricsSourceSettings
 
     public bool PreferWordSync(LyricsSourceId id) =>
         Sources.FirstOrDefault(source => source.Id == id)?.UseWordSyncedLyrics == true;
+
+    public TimeSpan GetGlobalOffset(LyricsSourceId id) =>
+        TimeSpan.FromMilliseconds(Sources.FirstOrDefault(source => source.Id == id)?.GlobalOffsetMilliseconds ?? 0);
 }
