@@ -10,6 +10,8 @@ namespace MediaIsland.Services.Lyrics;
 /// </summary>
 public sealed class LyricsSearchService
 {
+    private const int MaxSearchAttempts = 3;
+    private static readonly TimeSpan SearchRetryDelay = TimeSpan.FromMilliseconds(300);
     private readonly IReadOnlyList<ILyricsProvider> _providers;
     private readonly IReadOnlyList<ILyricsPayloadParser> _parsers;
     private readonly Func<LyricsSourceSettings> _settingsFactory;
@@ -90,53 +92,29 @@ public sealed class LyricsSearchService
                 return null;
             }
 
-            var providerCandidates = new List<(ILyricsProvider Provider, IReadOnlyList<LyricsCandidate> Candidates)>();
-            foreach (var provider in orderedProviders)
+            for (var attempt = 1; attempt <= MaxSearchAttempts; attempt++)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var candidates = await SearchProviderCandidatesAsync(provider, info, settings, cancellationToken);
-                providerCandidates.Add((provider, candidates));
-
-                if (!settings.PreferWordSync(provider.Id))
-                {
-                    continue;
-                }
-
-                var result = await TrySelectFromProviderAsync(
-                    provider,
-                    candidates,
-                    settings,
-                    preferWordOnly: true,
-                    allowLineFallback: false,
-                    cancellationToken);
+                var result = await SearchOnceAsync(orderedProviders, info, settings, cancellationToken);
                 if (result != null)
                 {
-                    Cache(cacheKey, result, success: true);
+                    Cache(cacheKey, result);
                     PublishCurrentResult(result, searchVersion);
                     return result;
                 }
-            }
 
-            foreach (var entry in providerCandidates)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var result = await TrySelectFromProviderAsync(
-                    entry.Provider,
-                    entry.Candidates,
-                    settings,
-                    preferWordOnly: false,
-                    allowLineFallback: true,
-                    cancellationToken);
-                if (result != null)
+                if (attempt < MaxSearchAttempts)
                 {
-                    Cache(cacheKey, result, success: true);
-                    PublishCurrentResult(result, searchVersion);
-                    return result;
+                    _logger?.LogInformation(
+                        "[歌词] 第 {Attempt}/{Total} 次搜索未找到歌词，准备重试：{Title} - {Artist}",
+                        attempt,
+                        MaxSearchAttempts,
+                        info.Title,
+                        info.Artist);
+                    await Task.Delay(SearchRetryDelay, cancellationToken);
                 }
             }
 
             _logger?.LogInformation("[歌词] 未找到歌词：{Title} - {Artist}", info.Title, info.Artist);
-            Cache(cacheKey, null, success: false);
             return null;
         }
         catch (OperationCanceledException)
@@ -149,6 +127,56 @@ public sealed class LyricsSearchService
             PublishCurrentResult(null, searchVersion);
             return null;
         }
+    }
+
+    private async Task<LyricsSearchResult?> SearchOnceAsync(
+        IReadOnlyList<ILyricsProvider> orderedProviders,
+        MediaInfo info,
+        LyricsSourceSettings settings,
+        CancellationToken cancellationToken)
+    {
+        var providerCandidates = new List<(ILyricsProvider Provider, IReadOnlyList<LyricsCandidate> Candidates)>();
+        foreach (var provider in orderedProviders)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var candidates = await SearchProviderCandidatesAsync(provider, info, settings, cancellationToken);
+            providerCandidates.Add((provider, candidates));
+
+            if (!settings.PreferWordSync(provider.Id))
+            {
+                continue;
+            }
+
+            var result = await TrySelectFromProviderAsync(
+                provider,
+                candidates,
+                settings,
+                preferWordOnly: true,
+                allowLineFallback: false,
+                cancellationToken);
+            if (result != null)
+            {
+                return result;
+            }
+        }
+
+        foreach (var entry in providerCandidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await TrySelectFromProviderAsync(
+                entry.Provider,
+                entry.Candidates,
+                settings,
+                preferWordOnly: false,
+                allowLineFallback: true,
+                cancellationToken);
+            if (result != null)
+            {
+                return result;
+            }
+        }
+
+        return null;
     }
 
     public void InvalidateCache()
@@ -333,10 +361,9 @@ public sealed class LyricsSearchService
             settings.AmllApiBaseUrl);
     }
 
-    private void Cache(string key, LyricsSearchResult? result, bool success)
+    private void Cache(string key, LyricsSearchResult result)
     {
-        var ttl = success ? TimeSpan.FromMinutes(30) : TimeSpan.FromMinutes(2);
-        _cache[key] = new CacheEntry(result, DateTimeOffset.UtcNow.Add(ttl));
+        _cache[key] = new CacheEntry(result, DateTimeOffset.UtcNow.AddMinutes(30));
     }
 
     private void PublishCurrentResult(LyricsSearchResult? result, long searchVersion)
@@ -367,7 +394,7 @@ public sealed class LyricsSearchService
         }
     }
 
-    private sealed record CacheEntry(LyricsSearchResult? Result, DateTimeOffset ExpiresAt);
+    private sealed record CacheEntry(LyricsSearchResult Result, DateTimeOffset ExpiresAt);
 }
 
 public sealed record LyricsSearchResult(

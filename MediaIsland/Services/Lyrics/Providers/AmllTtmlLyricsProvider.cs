@@ -461,6 +461,12 @@ public sealed class AmllTtmlLyricsProvider(
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
         }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            response?.Dispose();
+            logger?.LogWarning("[歌词:Amll] 请求超时，将继续后续来源或重试。");
+            return null;
+        }
         catch (OperationCanceledException)
         {
             response?.Dispose();

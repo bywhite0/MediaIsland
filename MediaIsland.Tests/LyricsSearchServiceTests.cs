@@ -108,6 +108,95 @@ public class LyricsSearchServiceTests
         Assert.Equal(1, laterProvider.SearchCallCount);
     }
 
+    [Fact]
+    public async Task SearchAsync_RetriesEnabledSourcesBeforeReportingNoLyrics()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.QqMusic,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = true
+                }
+            ]
+        };
+        var provider = new FakeProvider(
+            LyricsSourceId.QqMusic,
+            LyricsFormat.Qrc,
+            supportsWordSync: true,
+            emptySearchCount: 2);
+        var service = new LyricsSearchService([provider], [new FakeParser()], () => settings);
+
+        var result = await service.SearchAsync(CreateMediaInfo());
+
+        Assert.NotNull(result);
+        Assert.Equal(3, provider.SearchCallCount);
+    }
+
+    [Fact]
+    public async Task SearchAsync_SkipsDisabledAmllAndRetriesOtherEnabledSources()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.AmllTtml,
+                    IsEnabled = false,
+                    UseWordSyncedLyrics = true
+                },
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.QqMusic,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = true
+                }
+            ]
+        };
+        var amll = new ThrowingProvider(LyricsSourceId.AmllTtml);
+        var qqMusic = new FakeProvider(
+            LyricsSourceId.QqMusic,
+            LyricsFormat.Qrc,
+            supportsWordSync: true,
+            emptySearchCount: 2);
+        var service = new LyricsSearchService([amll, qqMusic], [new FakeParser()], () => settings);
+
+        var result = await service.SearchAsync(CreateMediaInfo());
+
+        Assert.NotNull(result);
+        Assert.Equal(0, amll.SearchCallCount);
+        Assert.Equal(3, qqMusic.SearchCallCount);
+    }
+
+    [Fact]
+    public async Task SearchAsync_RetriesAfterAmllTimeout()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.AmllTtml,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = true
+                }
+            ]
+        };
+        var amll = new TimeoutThenSuccessProvider(LyricsSourceId.AmllTtml, timeoutCount: 2);
+        var service = new LyricsSearchService([amll], [new FakeParser()], () => settings);
+
+        var result = await service.SearchAsync(CreateMediaInfo());
+
+        Assert.NotNull(result);
+        Assert.Equal(LyricsSourceId.AmllTtml, result.Source);
+        Assert.Equal(3, amll.SearchCallCount);
+    }
+
     private static LyricsSourceSettings CreateSettings() => new()
     {
         Sources =
@@ -142,7 +231,8 @@ public class LyricsSearchServiceTests
         LyricsSourceId id,
         LyricsFormat format,
         bool supportsWordSync,
-        bool returnsPayload = true) : ILyricsProvider
+        bool returnsPayload = true,
+        int emptySearchCount = 0) : ILyricsProvider
     {
         public int SearchCallCount { get; private set; }
 
@@ -154,6 +244,11 @@ public class LyricsSearchServiceTests
             CancellationToken cancellationToken)
         {
             SearchCallCount++;
+            if (SearchCallCount <= emptySearchCount)
+            {
+                return Task.FromResult<IReadOnlyList<LyricsCandidate>>([]);
+            }
+
             IReadOnlyList<LyricsCandidate> candidates =
             [
                 new LyricsCandidate(
@@ -252,5 +347,71 @@ public class LyricsSearchServiceTests
             Task.FromResult<LyricsPayload?>(null);
 
         public void CompleteSearch() => _searchCompleted.TrySetResult();
+    }
+
+    private sealed class ThrowingProvider(LyricsSourceId id) : ILyricsProvider
+    {
+        public int SearchCallCount { get; private set; }
+
+        public LyricsSourceId Id => id;
+
+        public Task<IReadOnlyList<LyricsCandidate>> SearchAsync(
+            MediaInfo media,
+            LyricsSourceSettings settings,
+            CancellationToken cancellationToken)
+        {
+            SearchCallCount++;
+            throw new InvalidOperationException("This provider should not be queried.");
+        }
+
+        public Task<LyricsPayload?> FetchAsync(
+            LyricsCandidate candidate,
+            LyricsSourceSettings settings,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<LyricsPayload?>(null);
+    }
+
+    private sealed class TimeoutThenSuccessProvider(LyricsSourceId id, int timeoutCount) : ILyricsProvider
+    {
+        public int SearchCallCount { get; private set; }
+
+        public LyricsSourceId Id => id;
+
+        public Task<IReadOnlyList<LyricsCandidate>> SearchAsync(
+            MediaInfo media,
+            LyricsSourceSettings settings,
+            CancellationToken cancellationToken)
+        {
+            SearchCallCount++;
+            if (SearchCallCount <= timeoutCount)
+            {
+                return Task.FromException<IReadOnlyList<LyricsCandidate>>(new TaskCanceledException("AMLL timeout"));
+            }
+
+            IReadOnlyList<LyricsCandidate> candidates =
+            [
+                new LyricsCandidate(
+                    id,
+                    "amll",
+                    media.Title ?? string.Empty,
+                    media.Artist ?? string.Empty,
+                    media.AlbumTitle ?? string.Empty,
+                    media.Duration,
+                    150,
+                    SupportsWordSync: true)
+            ];
+            return Task.FromResult(candidates);
+        }
+
+        public Task<LyricsPayload?> FetchAsync(
+            LyricsCandidate candidate,
+            LyricsSourceSettings settings,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<LyricsPayload?>(new LyricsPayload(
+                LyricsFormat.Qrc,
+                "payload",
+                id,
+                candidate.ProviderItemId,
+                new LyricsMetadata(candidate.Title, candidate.Artist, candidate.Album, candidate.Duration)));
     }
 }
