@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - 'MediaIsland/**'
+      - 'native/ttml-ffi/**'
+      - '.github/workflows/build.yml'
   workflow_dispatch: 
 
 jobs:
@@ -19,6 +21,19 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.x
+
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/ttml-ffi -> target
+
+      - name: Test native TTML library
+        run: cargo test --locked --manifest-path ./native/ttml-ffi/Cargo.toml
           
       - name: Cache NuGet Packages
         uses: actions/cache@v4
