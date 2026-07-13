@@ -90,29 +90,21 @@ public sealed class LyricsSearchService
                 return null;
             }
 
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            var searchTasks = orderedProviders
-                .Select(provider => SearchProviderCandidatesAsync(provider, info, settings, linkedCts.Token))
-                .ToArray();
-
-            await Task.WhenAll(searchTasks);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var providerCandidates = searchTasks
-                .Select((task, index) => (Provider: orderedProviders[index], Candidates: task.Result))
-                .ToArray();
-
-            foreach (var entry in providerCandidates)
+            var providerCandidates = new List<(ILyricsProvider Provider, IReadOnlyList<LyricsCandidate> Candidates)>();
+            foreach (var provider in orderedProviders)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!settings.PreferWordSync(entry.Provider.Id))
+                var candidates = await SearchProviderCandidatesAsync(provider, info, settings, cancellationToken);
+                providerCandidates.Add((provider, candidates));
+
+                if (!settings.PreferWordSync(provider.Id))
                 {
                     continue;
                 }
 
                 var result = await TrySelectFromProviderAsync(
-                    entry.Provider,
-                    entry.Candidates,
+                    provider,
+                    candidates,
                     settings,
                     preferWordOnly: true,
                     allowLineFallback: false,

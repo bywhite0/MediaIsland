@@ -85,6 +85,29 @@ public class LyricsSearchServiceTests
         Assert.Equal(LyricsSourceId.QqMusic, result.Source);
     }
 
+    [Fact]
+    public async Task SearchAsync_WaitsForFirstSourceToFinishBeforeTryingLaterSources()
+    {
+        var settings = CreateSettings();
+        var firstProvider = new BlockingEmptyProvider(LyricsSourceId.Netease);
+        var laterProvider = new FakeProvider(LyricsSourceId.QqMusic, LyricsFormat.Qrc, supportsWordSync: true);
+        var service = new LyricsSearchService(
+        [firstProvider, laterProvider],
+        [new FakeParser()],
+        () => settings);
+
+        var searchTask = service.SearchAsync(CreateMediaInfo());
+        await firstProvider.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(0, laterProvider.SearchCallCount);
+
+        firstProvider.CompleteSearch();
+        var result = await searchTask;
+
+        Assert.NotNull(result);
+        Assert.Equal(LyricsSourceId.QqMusic, result.Source);
+        Assert.Equal(1, laterProvider.SearchCallCount);
+    }
+
     private static LyricsSourceSettings CreateSettings() => new()
     {
         Sources =
@@ -121,6 +144,8 @@ public class LyricsSearchServiceTests
         bool supportsWordSync,
         bool returnsPayload = true) : ILyricsProvider
     {
+        public int SearchCallCount { get; private set; }
+
         public LyricsSourceId Id => id;
 
         public Task<IReadOnlyList<LyricsCandidate>> SearchAsync(
@@ -128,6 +153,7 @@ public class LyricsSearchServiceTests
             LyricsSourceSettings settings,
             CancellationToken cancellationToken)
         {
+            SearchCallCount++;
             IReadOnlyList<LyricsCandidate> candidates =
             [
                 new LyricsCandidate(
@@ -199,5 +225,32 @@ public class LyricsSearchServiceTests
             LyricsSourceSettings settings,
             CancellationToken cancellationToken) =>
             Task.FromResult<LyricsPayload?>(null);
+    }
+
+    private sealed class BlockingEmptyProvider(LyricsSourceId id) : ILyricsProvider
+    {
+        private readonly TaskCompletionSource _searchCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SearchStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public LyricsSourceId Id => id;
+
+        public async Task<IReadOnlyList<LyricsCandidate>> SearchAsync(
+            MediaInfo media,
+            LyricsSourceSettings settings,
+            CancellationToken cancellationToken)
+        {
+            SearchStarted.TrySetResult();
+            await _searchCompleted.Task.WaitAsync(cancellationToken);
+            return [];
+        }
+
+        public Task<LyricsPayload?> FetchAsync(
+            LyricsCandidate candidate,
+            LyricsSourceSettings settings,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<LyricsPayload?>(null);
+
+        public void CompleteSearch() => _searchCompleted.TrySetResult();
     }
 }
