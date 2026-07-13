@@ -38,6 +38,7 @@ public sealed class WordLyricsPresenter : Control
     public static readonly StyledProperty<bool> IsLiftEnabledProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, bool>(nameof(IsLiftEnabled), true);
 
+    // 缓存当前排版结果，避免播放期间逐帧重复测量
     private string? _cachedText;
     private double _cachedFontSize;
     private FontFamily _cachedFontFamily = Avalonia.Media.FontFamily.Default;
@@ -90,6 +91,7 @@ public sealed class WordLyricsPresenter : Control
 
     static WordLyricsPresenter()
     {
+        // 排版相关属性改变时，需要重新测量和绘制
         AffectsRender<WordLyricsPresenter>(
             LineProperty,
             PositionProperty,
@@ -138,6 +140,7 @@ public sealed class WordLyricsPresenter : Control
             ? new Point(origin.X, origin.Y + GetLineLiftOffset(Position))
             : origin;
 
+        // 先用灰色绘制整行歌词，再覆盖已播放部分
         var mutedText = CreateFormatted(Line.Text ?? string.Empty, mutedBrush);
         context.DrawText(mutedText, animatedOrigin);
 
@@ -171,6 +174,7 @@ public sealed class WordLyricsPresenter : Control
         Point origin,
         TimeSpan position)
     {
+        // 已完成词整体抬升，当前词使用羽化裁剪
         var words = Line!.Words;
         double completedWidth = 0;
         for (var i = 0; i < words.Count; i++)
@@ -228,6 +232,7 @@ public sealed class WordLyricsPresenter : Control
         double wordWidth,
         double progress)
     {
+        // 渐变边缘向未填充区域延伸，避免进度跳动时出现硬切线
         var filledWidth = wordWidth * progress;
         var edgeWidth = Math.Clamp(FontSize * 0.45, 4.0, 7.0);
         var opaqueWidth = Math.Max(0, filledWidth - (edgeWidth * 0.35));
@@ -277,6 +282,7 @@ public sealed class WordLyricsPresenter : Control
 
     private static double GetSpringResponse(double progress)
     {
+        // 以终点值归一化，避免阻尼余量使动画无法精确停在终点
         var response = 1 - (Math.Exp(-SpringDamping * progress) *
                             Math.Cos(SpringAngularFrequency * progress));
         var finalResponse = 1 - (Math.Exp(-SpringDamping) * Math.Cos(SpringAngularFrequency));
@@ -305,6 +311,7 @@ public sealed class WordLyricsPresenter : Control
         var words = Line?.Words;
         if (words == null || words.Count == 0 || _wordStarts.Length != words.Count)
         {
+            // 没有逐字时间轴时，按整行进度回退
             if (_fullText == null || Line == null)
             {
                 return 0;
@@ -373,6 +380,7 @@ public sealed class WordLyricsPresenter : Control
 
     private void BuildWordMetrics(LyricsLine? line, IBrush brush)
     {
+        // 记录每个词的宽度和起点，供逐字高亮裁剪使用
         if (line == null || line.Words.Count == 0)
         {
             _wordStarts = [];
@@ -388,6 +396,7 @@ public sealed class WordLyricsPresenter : Control
             var wordText = line.Words[i].Text ?? string.Empty;
             var layout = CreateFormatted(wordText, brush);
             _wordStarts[i] = cursor;
+            // 保留词尾空白，避免后续词的高亮起点提前
             _wordWidths[i] = layout.WidthIncludingTrailingWhitespace;
             if (_wordWidths[i] <= 0)
             {
@@ -399,6 +408,7 @@ public sealed class WordLyricsPresenter : Control
 
         if (_fullText != null && cursor > 0 && Math.Abs(_fullText.Width - cursor) > 1)
         {
+            // 独立词宽会受字距影响，与整行排版不一致时按整行宽度校正
             var scale = _fullText.Width / cursor;
             double scaled = 0;
             for (var i = 0; i < _wordWidths.Length; i++)
