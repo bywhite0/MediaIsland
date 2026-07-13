@@ -13,11 +13,11 @@ public sealed class TtmlLyricsPayloadParser(TtmlNativeParser nativeParser) : ILy
         cancellationToken.ThrowIfCancellationRequested();
         if (!nativeParser.IsAvailable)
         {
-            throw new InvalidOperationException(nativeParser.FailureReason ?? "Native TTML parser unavailable.");
+            throw new InvalidOperationException(nativeParser.FailureReason ?? "原生 TTML 解析器不可用。");
         }
 
         var json = nativeParser.ParseToAmllJson(payload.Content)
-                   ?? throw new InvalidOperationException("Native TTML parser returned empty result.");
+                   ?? throw new InvalidOperationException("原生 TTML 解析器返回了空结果。");
 
         cancellationToken.ThrowIfCancellationRequested();
         var document = AmllJsonConverter.ToDocument(
@@ -164,7 +164,7 @@ internal static class AmllJsonConverter
 
             if (node.ValueKind == JsonValueKind.Array)
             {
-                // Some AMLL shapes store words as string arrays.
+                // 某些 AMLL 数据结构会将单词存储为字符串数组
                 var parts = node.EnumerateArray()
                     .Select(item => item.ValueKind == JsonValueKind.String ? item.GetString() : null)
                     .Where(item => !string.IsNullOrEmpty(item));

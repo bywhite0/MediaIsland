@@ -109,7 +109,7 @@ public sealed class KugouLyricsProvider(ILogger<KugouLyricsProvider>? logger = n
         var decrypted = ManagedLyricsPayloadParser.DecryptKrc(encrypted);
         if (string.IsNullOrWhiteSpace(decrypted))
         {
-            logger?.LogWarning("[Lyrics:Kugou] Failed to decrypt KRC for {Id}", lyricCandidate.Id);
+            logger?.LogWarning("[歌词:Kugou] KRC 解密失败，ID={Id}", lyricCandidate.Id);
             return null;
         }
 

@@ -101,7 +101,7 @@ public sealed class AmllTtmlLyricsProvider(
                 AddFirstValue(extra, "spotifyId", ReadStringValues(item, "spotifyIds", "spotifyId"));
                 AddFirstValue(extra, "isrc", ReadStringValues(item, "isrcs", "isrc"));
 
-                // Flatten nested platform ids when present.
+                // 存在嵌套的平台 ID 时将其展开
                 if (item.TryGetProperty("platformIds", out var platformIds) &&
                     platformIds.ValueKind == JsonValueKind.Object)
                 {
@@ -133,7 +133,7 @@ public sealed class AmllTtmlLyricsProvider(
             if (candidates.Count > 0)
             {
                 logger?.LogInformation(
-                    "[Lyrics:Amll] Search succeeded on attempt {Attempt}/{Total} with {Count} candidates.",
+                    "[歌词:Amll] 第 {Attempt}/{Total} 次搜索成功，找到 {Count} 个候选项。",
                     attempt + 1,
                     searchQueries.Count,
                     candidates.Count);
@@ -144,7 +144,7 @@ public sealed class AmllTtmlLyricsProvider(
         if (candidates.Count == 0)
         {
             logger?.LogInformation(
-                "[Lyrics:Amll] No acceptable candidates after {Count} metadata search attempts.",
+                "[歌词:Amll] 完成 {Count} 次元数据搜索后，没有找到可接受的候选项。",
                 searchQueries.Count);
         }
 
@@ -168,7 +168,7 @@ public sealed class AmllTtmlLyricsProvider(
         if (!ttmlNativeParser.IsAvailable)
         {
             logger?.LogWarning(
-                "[Lyrics:Amll] Native TTML parser unavailable; skipping. Reason: {Reason}",
+                "[歌词:Amll] 原生 TTML 解析器不可用，跳过此次处理。原因：{Reason}",
                 ttmlNativeParser.FailureReason);
             return null;
         }
@@ -271,7 +271,7 @@ public sealed class AmllTtmlLyricsProvider(
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "[Lyrics:Amll] Failed to parse get response envelope.");
+            logger?.LogWarning(ex, "[歌词:Amll] 解析 get 响应封装失败。");
         }
 
         return null;
@@ -279,7 +279,7 @@ public sealed class AmllTtmlLyricsProvider(
 
     internal static string? ParseTtmlResponseBody(string body)
     {
-        // Some deployments return raw TTML, others wrap JSON.
+        // 有些部署直接返回原始 TTML，有些则封装在 JSON 中
         var trimmed = body.TrimStart();
         if (trimmed.StartsWith('<'))
         {
@@ -469,7 +469,7 @@ public sealed class AmllTtmlLyricsProvider(
         catch (Exception ex)
         {
             response?.Dispose();
-            logger?.LogWarning(ex, "[Lyrics:Amll] Transport failure.");
+            logger?.LogWarning(ex, "[歌词:Amll] 传输失败。");
             return null;
         }
     }

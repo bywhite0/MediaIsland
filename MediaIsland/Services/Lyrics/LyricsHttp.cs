@@ -44,7 +44,7 @@ internal static class LyricsHttp
             total += read;
             if (total > maxBytes)
             {
-                throw new InvalidOperationException($"Response exceeded max size of {maxBytes} bytes.");
+                throw new InvalidOperationException($"响应超过最大大小 {maxBytes} 字节。");
             }
 
             memory.Write(buffer, 0, read);
@@ -74,7 +74,7 @@ internal static class LyricsHttp
         string? reason = null)
     {
         logger?.LogWarning(
-            "[Lyrics:{Provider}] HTTP failure status={Status} reason={Reason}",
+            "[歌词:{Provider}] HTTP 请求失败，状态码={Status}，原因={Reason}",
             provider,
             (int)statusCode,
             reason ?? statusCode.ToString());

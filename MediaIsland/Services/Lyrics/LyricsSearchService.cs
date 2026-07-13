@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging;
 namespace MediaIsland.Services.Lyrics;
 
 /// <summary>
-/// Multi-source lyric search coordinator with deterministic user priority.
+/// 多来源歌词搜索协调器，按用户设置顺序确定性执行。
 /// </summary>
 public sealed class LyricsSearchService
 {
@@ -86,7 +86,7 @@ public sealed class LyricsSearchService
 
             if (orderedProviders.Length == 0)
             {
-                _logger?.LogInformation("[Lyrics] No enabled lyric sources.");
+                _logger?.LogInformation("[歌词] 没有启用的歌词来源。");
                 return null;
             }
 
@@ -143,7 +143,7 @@ public sealed class LyricsSearchService
                 }
             }
 
-            _logger?.LogInformation("[Lyrics] Not found for {Title} - {Artist}", info.Title, info.Artist);
+            _logger?.LogInformation("[歌词] 未找到歌词：{Title} - {Artist}", info.Title, info.Artist);
             Cache(cacheKey, null, success: false);
             return null;
         }
@@ -153,7 +153,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[Lyrics] Error while searching lyrics.");
+            _logger?.LogWarning(ex, "[歌词] 搜索歌词时发生错误。");
             PublishCurrentResult(null, searchVersion);
             return null;
         }
@@ -181,7 +181,7 @@ public sealed class LyricsSearchService
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _logger?.LogWarning("[Lyrics:{Provider}] Search timed out.", provider.Id);
+            _logger?.LogWarning("[歌词:{Provider}] 搜索超时。", provider.Id);
             return [];
         }
         catch (OperationCanceledException)
@@ -190,7 +190,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[Lyrics:{Provider}] Search failed.", provider.Id);
+            _logger?.LogWarning(ex, "[歌词:{Provider}] 搜索失败。", provider.Id);
             return [];
         }
     }
@@ -219,7 +219,7 @@ public sealed class LyricsSearchService
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 _logger?.LogWarning(
-                    "[Lyrics:{Provider}] Fetch timed out for {Id}",
+                    "[歌词:{Provider}] 获取歌词超时，ID={Id}",
                     provider.Id,
                     candidate.ProviderItemId);
                 continue;
@@ -230,7 +230,7 @@ public sealed class LyricsSearchService
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "[Lyrics:{Provider}] Fetch failed for {Id}", provider.Id, candidate.ProviderItemId);
+                _logger?.LogWarning(ex, "[歌词:{Provider}] 获取歌词失败，ID={Id}", provider.Id, candidate.ProviderItemId);
                 continue;
             }
 
@@ -248,7 +248,7 @@ public sealed class LyricsSearchService
             var parser = _parsers.FirstOrDefault(item => item.CanParse(payload.Format));
             if (parser == null)
             {
-                _logger?.LogWarning("[Lyrics:{Provider}] No parser for format {Format}", provider.Id, payload.Format);
+                _logger?.LogWarning("[歌词:{Provider}] 没有适用于格式 {Format} 的解析器。", provider.Id, payload.Format);
                 continue;
             }
 
@@ -263,7 +263,7 @@ public sealed class LyricsSearchService
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "[Lyrics:{Provider}] Parse failed for {Id}", provider.Id, candidate.ProviderItemId);
+                _logger?.LogWarning(ex, "[歌词:{Provider}] 解析歌词失败，ID={Id}", provider.Id, candidate.ProviderItemId);
                 continue;
             }
 
@@ -289,7 +289,7 @@ public sealed class LyricsSearchService
             }
 
             _logger?.LogInformation(
-                "[Lyrics] Selected {Source}/{Format} sync={Sync} id={Id} score={Score} title={Title}",
+                "[歌词] 已选择 {Source}/{Format}，同步方式={Sync}，ID={Id}，评分={Score}，标题={Title}",
                 document.Source,
                 document.Format,
                 document.SyncMode,
@@ -370,7 +370,7 @@ public sealed class LyricsSearchService
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "[Lyrics] Current result subscriber failed.");
+                _logger?.LogWarning(ex, "[歌词] 当前结果订阅者执行失败。");
             }
         }
     }

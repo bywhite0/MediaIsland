@@ -57,14 +57,14 @@ public sealed class NeteaseLyricsProvider(ILogger<NeteaseLyricsProvider>? logger
             return null;
         }
 
-        // Validate that LRC can be parsed lightly.
+        // 简单验证 LRC 是否可解析。
         try
         {
             _ = LrcParser.Parse(lyrics.Value.Lyric.AsSpan());
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "[Lyrics:Netease] Failed to parse LRC for {Id}", candidate.ProviderItemId);
+            logger?.LogWarning(ex, "[歌词:Netease] LRC 解析失败，ID={Id}", candidate.ProviderItemId);
             return null;
         }
 

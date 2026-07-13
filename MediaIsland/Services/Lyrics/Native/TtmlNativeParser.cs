@@ -61,7 +61,7 @@ public sealed partial class TtmlNativeParser
                 var error = buffer.Ptr != nint.Zero && buffer.Len > 0
                     ? Encoding.UTF8.GetString(ReadNativeBytes(buffer.Ptr, buffer.Len))
                     : $"status={buffer.Status}";
-                _logger?.LogWarning("[Lyrics:TtmlNative] Parse failed: {Error}", Truncate(error, 240));
+                _logger?.LogWarning("[歌词:原生TTML] 解析失败：{Error}", Truncate(error, 240));
                 return null;
             }
 
@@ -72,12 +72,12 @@ public sealed partial class TtmlNativeParser
         {
             _available = false;
             _failureReason = ex.Message;
-            _logger?.LogWarning(ex, "[Lyrics:TtmlNative] Native library missing.");
+            _logger?.LogWarning(ex, "[歌词:原生TTML] 缺少原生库。");
             return null;
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[Lyrics:TtmlNative] Unexpected parse failure.");
+            _logger?.LogWarning(ex, "[歌词:原生TTML] 解析时发生未知错误。");
             return null;
         }
         finally
@@ -117,8 +117,8 @@ public sealed partial class TtmlNativeParser
                 if (version != ExpectedAbiVersion)
                 {
                     _available = false;
-                    _failureReason = $"ABI mismatch: expected {ExpectedAbiVersion}, got {version}";
-                    _logger?.LogWarning("[Lyrics:TtmlNative] {Reason}", _failureReason);
+                    _failureReason = $"ABI 版本不匹配：期望 {ExpectedAbiVersion}，实际为 {version}";
+                    _logger?.LogWarning("[歌词:原生TTML] {Reason}", _failureReason);
                     return;
                 }
 
@@ -128,14 +128,14 @@ public sealed partial class TtmlNativeParser
             catch (DllNotFoundException ex)
             {
                 _available = false;
-                _failureReason = "mediaisland_ttml native library not found";
-                _logger?.LogWarning(ex, "[Lyrics:TtmlNative] {Reason}", _failureReason);
+                _failureReason = "找不到 mediaisland_ttml 原生库";
+                _logger?.LogWarning(ex, "[歌词:原生TTML] {Reason}", _failureReason);
             }
             catch (Exception ex)
             {
                 _available = false;
                 _failureReason = ex.Message;
-                _logger?.LogWarning(ex, "[Lyrics:TtmlNative] Failed to resolve native library.");
+                _logger?.LogWarning(ex, "[歌词:原生TTML] 无法解析原生库。");
             }
         }
     }

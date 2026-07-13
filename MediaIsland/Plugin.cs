@@ -50,7 +50,7 @@ namespace MediaIsland
             services.AddSingleton<LyricsSearchService>(provider => new LyricsSearchService(
                 provider.GetServices<ILyricsProvider>(),
                 provider.GetServices<ILyricsPayloadParser>(),
-                () => (Instance ?? throw new InvalidOperationException("MediaIsland plugin is not initialized.")).Settings.Lyrics,
+                () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings.Lyrics,
                 provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsSearchService>>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();

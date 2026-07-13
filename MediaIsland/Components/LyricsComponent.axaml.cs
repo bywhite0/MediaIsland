@@ -91,7 +91,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[Lyrics] Failed to start media service.");
+            _logger.LogError(ex, "[歌词] 启动媒体服务失败。");
             ClearLyrics("无法获取媒体信息");
         }
     }
@@ -173,7 +173,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 await HandleMediaInfoAsync(e.MediaInfo);
                 break;
             case MediaInfoChangeKind.Playback:
-                _logger.LogInformation("[Lyrics] Playback status: {Status}", e.MediaInfo.PlaybackInfo.PlaybackState);
+                _logger.LogInformation("[歌词] 播放状态：{Status}", e.MediaInfo.PlaybackInfo.PlaybackState);
                 RenderCurrentPositionOnce();
                 UpdateRenderCadence();
                 break;
@@ -218,7 +218,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 }
 
                 _logger.LogInformation(
-                    "[Lyrics] Metadata: {Title} - {Artist} ({Album}), duration {Duration}, source {Source}",
+                    "[歌词] 媒体信息：{Title} - {Artist}（{Album}），时长 {Duration}，来源 {Source}",
                     info.Title,
                     info.Artist,
                     info.AlbumTitle,
@@ -256,7 +256,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[Lyrics] Error while handling media info.");
+            _logger.LogError(ex, "[歌词] 处理媒体信息时发生错误。");
             ClearLyrics("查找歌词失败");
         }
     }

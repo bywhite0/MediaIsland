@@ -6,7 +6,7 @@ using MediaIsland.Services.Lyrics.Models;
 namespace MediaIsland.Components;
 
 /// <summary>
-/// Custom single-line word-synced lyric renderer.
+/// 自定义的单行逐字歌词渲染器。
 /// </summary>
 public sealed class WordLyricsPresenter : Control
 {

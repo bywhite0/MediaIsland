@@ -279,7 +279,7 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            logger?.LogWarning("[Lyrics:QqMusic] QRC fetch timed out for id={Id}", id);
+            logger?.LogWarning("[歌词:QqMusic] 获取 QRC 超时，ID={Id}", id);
             return null;
         }
         catch (OperationCanceledException)
@@ -288,7 +288,7 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "[Lyrics:QqMusic] QRC fetch failed for id={Id}", id);
+            logger?.LogWarning(ex, "[歌词:QqMusic] 获取 QRC 失败，ID={Id}", id);
             return null;
         }
     }
