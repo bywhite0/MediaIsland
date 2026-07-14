@@ -290,23 +290,23 @@
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
                                        Header="启用逐字高亮上浮"
-                                       Description="高亮推进时，当前单词的暗色与高亮文字同步轻微上浮，并使用柔和边缘过渡。">
+                                       Description="高亮推进时，单词内字符依次轻微上浮，暗色与高亮文字同步移动。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsLiftEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
-                                       Header="启用整行弹簧动画"
-                                       Description="整行在歌词有效时间内上升、轻微过冲并自然回落。">
+                                       Header="启用歌词切换过渡效果"
+                                       Description="切换当前歌词时使用柔和淡入过渡。">
                 <controls:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsLineSpringEnabled, Mode=TwoWay}" />
+                    <ToggleSwitch IsChecked="{Binding Settings.IsLyricsTransitionEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
-                                       Header="启用长尾词强调效果"
-                                       Description="行末单词持续超过 1 秒时，使用类 Apple Music 的轻微呼吸强调。">
+                                       Header="启用长词强调效果"
+                                       Description="任意单词持续超过 1 秒时，按持续时长对单词内字符使用类 Apple Music 的波浪缩放与轻微漂浮。">
                 <controls:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEndingEmphasisEnabled, Mode=TwoWay}" />
+                    <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"

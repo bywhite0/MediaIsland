@@ -68,28 +68,28 @@ namespace MediaIsland.Models
             }
         }
 
-        private bool _isWordLyricsLineSpringEnabled = true;
+        private bool _isLyricsTransitionEnabled = true;
 
-        public bool IsWordLyricsLineSpringEnabled
+        public bool IsLyricsTransitionEnabled
         {
-            get => _isWordLyricsLineSpringEnabled;
+            get => _isLyricsTransitionEnabled;
             set
             {
-                if (_isWordLyricsLineSpringEnabled == value) return;
-                _isWordLyricsLineSpringEnabled = value;
+                if (_isLyricsTransitionEnabled == value) return;
+                _isLyricsTransitionEnabled = value;
                 OnPropertyChanged();
             }
         }
 
-        private bool _isWordLyricsEndingEmphasisEnabled = true;
+        private bool _isWordLyricsEmphasisEnabled = true;
 
-        public bool IsWordLyricsEndingEmphasisEnabled
+        public bool IsWordLyricsEmphasisEnabled
         {
-            get => _isWordLyricsEndingEmphasisEnabled;
+            get => _isWordLyricsEmphasisEnabled;
             set
             {
-                if (_isWordLyricsEndingEmphasisEnabled == value) return;
-                _isWordLyricsEndingEmphasisEnabled = value;
+                if (_isWordLyricsEmphasisEnabled == value) return;
+                _isWordLyricsEmphasisEnabled = value;
                 OnPropertyChanged();
             }
         }

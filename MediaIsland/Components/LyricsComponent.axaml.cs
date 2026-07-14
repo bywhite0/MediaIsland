@@ -138,9 +138,20 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void PluginSettings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(PluginSettings.IsLyricsTransitionEnabled))
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!IsLyricsTransitionEnabled)
+                {
+                    FinishLyricsTransition();
+                }
+            });
+            return;
+        }
+
         if (e.PropertyName != nameof(PluginSettings.IsWordLyricsLiftEnabled) &&
-            e.PropertyName != nameof(PluginSettings.IsWordLyricsLineSpringEnabled) &&
-            e.PropertyName != nameof(PluginSettings.IsWordLyricsEndingEmphasisEnabled))
+            e.PropertyName != nameof(PluginSettings.IsWordLyricsEmphasisEnabled))
         {
             return;
         }
@@ -459,15 +470,23 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _activeLineVisuals.Add(new ActiveLineVisual(selection.LineIndex, wordPresenter));
         }
 
-        ActiveLyricsLines.Opacity = 0;
-        StartActiveLinesTransition();
+        if (IsLyricsTransitionEnabled)
+        {
+            ActiveLyricsLines.Opacity = 0;
+            StartActiveLinesTransition();
+        }
+        else
+        {
+            ActiveLyricsLines.Opacity = 1;
+        }
     }
+
+    private bool IsLyricsTransitionEnabled => _pluginSettings?.IsLyricsTransitionEnabled ?? true;
 
     private void ApplyWordLyricsAnimationSettings(WordLyricsPresenter presenter)
     {
         presenter.IsWordLiftEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true;
-        presenter.IsLineSpringEnabled = _pluginSettings?.IsWordLyricsLineSpringEnabled ?? true;
-        presenter.IsEndingEmphasisEnabled = _pluginSettings?.IsWordLyricsEndingEmphasisEnabled ?? true;
+        presenter.IsWordEmphasisEnabled = _pluginSettings?.IsWordLyricsEmphasisEnabled ?? true;
     }
 
     private void UpdateRenderCadence()
@@ -594,7 +613,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         LyricsText.Opacity = targetOpacity;
         _lyricsTextTransform.Y = 0;
         UpdateEmptyVisibility();
-        if (!string.IsNullOrWhiteSpace(text))
+        if (!string.IsNullOrWhiteSpace(text) && IsLyricsTransitionEnabled)
         {
             StartTextTransition(targetOpacity);
         }
@@ -691,6 +710,14 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         var transitionCts = _textTransitionCts;
         _textTransitionCts = null;
         transitionCts?.Cancel();
+    }
+
+    private void FinishLyricsTransition()
+    {
+        StopTextTransition();
+        LyricsText.Opacity = _isCurrentTextStatus ? 0.72 : 1.0;
+        _lyricsTextTransform.Y = 0;
+        ActiveLyricsLines.Opacity = 1;
     }
 
     private void CancelCurrentSearch()
