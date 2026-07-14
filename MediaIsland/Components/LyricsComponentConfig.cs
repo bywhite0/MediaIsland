@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace MediaIsland.Components;
@@ -6,6 +7,7 @@ public class LyricsComponentConfig : ObservableRecipient
 {
     private bool _isHideWhenEmpty;
     private bool _isShowStatusText = true;
+    private int _renderFrameRate = 30;
 
     public bool IsHideWhenEmpty
     {
@@ -27,5 +29,25 @@ public class LyricsComponentConfig : ObservableRecipient
             _isShowStatusText = value;
             OnPropertyChanged();
         }
+    }
+
+    public int RenderFrameRate
+    {
+        get => _renderFrameRate;
+        set
+        {
+            var normalizedValue = value == 60 ? 60 : 30;
+            if (_renderFrameRate == normalizedValue) return;
+            _renderFrameRate = normalizedValue;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RenderFrameRateIndex));
+        }
+    }
+
+    [JsonIgnore]
+    public int RenderFrameRateIndex
+    {
+        get => RenderFrameRate == 60 ? 1 : 0;
+        set => RenderFrameRate = value == 1 ? 60 : 30;
     }
 }

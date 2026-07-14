@@ -28,7 +28,7 @@ namespace MediaIsland.Components;
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
     private static readonly TimeSpan LyricsTransitionDuration = TimeSpan.FromMilliseconds(220);
-    private static readonly TimeSpan WordRenderInterval = TimeSpan.FromMilliseconds(33);
+    private static readonly TimeSpan LineRenderInterval = TimeSpan.FromMilliseconds(80);
 
     private readonly IMediaService _mediaService;
     private readonly LyricsSearchService _lyricsSearchService;
@@ -64,7 +64,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _logger = logger;
         _lyricsTimer = new DispatcherTimer
         {
-            Interval = TimeSpan.FromMilliseconds(80)
+            Interval = LineRenderInterval
         };
         _lyricsTimer.Tick += LyricsTimer_OnTick;
     }
@@ -133,6 +133,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         if (e.PropertyName == nameof(LyricsComponentConfig.IsHideWhenEmpty))
         {
             Dispatcher.UIThread.InvokeAsync(UpdateEmptyVisibility);
+            return;
+        }
+
+        if (e.PropertyName == nameof(LyricsComponentConfig.RenderFrameRate))
+        {
+            UpdateRenderCadence();
         }
     }
 
@@ -506,7 +512,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
 
         var playing = _clock.IsPlaying;
-        _lyricsTimer.Interval = wordMode && playing ? WordRenderInterval : TimeSpan.FromMilliseconds(80);
+        _lyricsTimer.Interval = wordMode && playing
+            ? TimeSpan.FromSeconds(1d / Settings.RenderFrameRate)
+            : LineRenderInterval;
         if (_isLoaded && hasLyrics && playing)
         {
             if (!_lyricsTimer.IsEnabled)

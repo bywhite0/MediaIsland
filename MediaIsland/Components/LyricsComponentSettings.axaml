@@ -25,6 +25,17 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowStatusText, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBC9;}"
+                                       Header="渲染帧率"
+                                       Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">
+                <controls:SettingsExpander.Footer>
+                    <ComboBox MinWidth="110"
+                              SelectedIndex="{Binding Settings.RenderFrameRateIndex, Mode=TwoWay}">
+                        <ComboBoxItem>30 FPS</ComboBoxItem>
+                        <ComboBoxItem>60 FPS</ComboBoxItem>
+                    </ComboBox>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
                 Powered by MediaIsland
             </Label>
