@@ -9,6 +9,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
+using MediaIsland.Helpers;
 using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
@@ -168,6 +169,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
+        if (!MediaSourceFilter.IsEnabled(e.MediaInfo.SourceApp, _pluginSettings?.MediaSourceList))
+        {
+            _logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，跳过歌词搜索", e.MediaInfo.SourceApp);
+            ClearLyrics("当前媒体来源已禁用");
+            return;
+        }
+
         _clock.Update(e.MediaInfo);
         switch (e.ChangeKind)
         {
@@ -193,6 +201,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             if (info == null)
             {
                 ClearLyrics("没有可用的媒体会话");
+                return;
+            }
+
+            if (!MediaSourceFilter.IsEnabled(info.SourceApp, _pluginSettings?.MediaSourceList))
+            {
+                _logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，跳过歌词搜索", info.SourceApp);
+                ClearLyrics("当前媒体来源已禁用");
                 return;
             }
 

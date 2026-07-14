@@ -286,6 +286,12 @@ namespace MediaIsland.SettingsPages
                 return;
             }
 
+            if (!MediaSourceFilter.IsEnabled(info.SourceApp, Settings.MediaSourceList))
+            {
+                await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("当前媒体来源已禁用，不搜索歌词候选。"));
+                return;
+            }
+
             if (!Settings.Lyrics.Sources.Any(source => source.IsEnabled))
             {
                 await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("没有启用的歌词来源。"));
@@ -349,6 +355,12 @@ namespace MediaIsland.SettingsPages
             if (e.Source is not Control { DataContext: LyricsCandidateItemViewModel item } ||
                 _mediaService.CurrentMediaInfo is not { } mediaInfo)
             {
+                return;
+            }
+
+            if (!MediaSourceFilter.IsEnabled(mediaInfo.SourceApp, Settings.MediaSourceList))
+            {
+                CurrentLyricsCandidatesStatus = "当前媒体来源已禁用，不能应用歌词候选。";
                 return;
             }
 
