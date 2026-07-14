@@ -138,19 +138,20 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void PluginSettings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName != nameof(PluginSettings.IsWordLyricsLiftEnabled))
+        if (e.PropertyName != nameof(PluginSettings.IsWordLyricsLiftEnabled) &&
+            e.PropertyName != nameof(PluginSettings.IsWordLyricsLineSpringEnabled) &&
+            e.PropertyName != nameof(PluginSettings.IsWordLyricsEndingEmphasisEnabled))
         {
             return;
         }
 
         Dispatcher.UIThread.Post(() =>
         {
-            var isEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true;
             foreach (var visual in _activeLineVisuals)
             {
                 if (visual.WordPresenter != null)
                 {
-                    visual.WordPresenter.IsLiftEnabled = isEnabled;
+                    ApplyWordLyricsAnimationSettings(visual.WordPresenter);
                 }
             }
         });
@@ -425,11 +426,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     FontSize = fontSize,
                     Foreground = LyricsText.Foreground,
                     TextAlignment = textAlignment,
-                    IsLiftEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true,
                     MaxWidth = 520,
                     HorizontalAlignment = HorizontalAlignment.Stretch,
                     Opacity = opacity
                 };
+                ApplyWordLyricsAnimationSettings(wordPresenter);
                 AutomationProperties.SetName(wordPresenter, line.Text);
                 visual = wordPresenter;
             }
@@ -460,6 +461,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         ActiveLyricsLines.Opacity = 0;
         StartActiveLinesTransition();
+    }
+
+    private void ApplyWordLyricsAnimationSettings(WordLyricsPresenter presenter)
+    {
+        presenter.IsWordLiftEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true;
+        presenter.IsLineSpringEnabled = _pluginSettings?.IsWordLyricsLineSpringEnabled ?? true;
+        presenter.IsEndingEmphasisEnabled = _pluginSettings?.IsWordLyricsEndingEmphasisEnabled ?? true;
     }
 
     private void UpdateRenderCadence()
