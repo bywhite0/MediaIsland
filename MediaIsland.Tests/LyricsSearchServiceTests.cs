@@ -46,6 +46,42 @@ public class LyricsSearchServiceTests
     }
 
     [Fact]
+    public async Task SearchAsync_PrefersLineSyncedSource_WhenWordSyncIsDisabled()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.Kugou,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = false
+                },
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.Netease,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = false
+                }
+            ]
+        };
+        var service = new LyricsSearchService(
+        [
+            new FakeProvider(LyricsSourceId.Kugou, LyricsFormat.Krc, supportsWordSync: true),
+            new FakeProvider(LyricsSourceId.Netease, LyricsFormat.Lrc, supportsWordSync: false)
+        ],
+        [new FakeParser()],
+        () => settings);
+
+        var result = await service.SearchAsync(CreateMediaInfo());
+
+        Assert.NotNull(result);
+        Assert.Equal(LyricsSourceId.Netease, result.Source);
+        Assert.Equal(LyricsSyncMode.Line, result.Document.SyncMode);
+    }
+
+    [Fact]
     public async Task SearchAsync_PublishesCurrentSelectedSource()
     {
         var settings = CreateSettings();
@@ -369,7 +405,8 @@ public class LyricsSearchServiceTests
             LyricsPayload payload,
             CancellationToken cancellationToken)
         {
-            IReadOnlyList<LyricsWord> words = payload.Format == LyricsFormat.Qrc
+            var isWordSynced = payload.Format is LyricsFormat.Qrc or LyricsFormat.Krc;
+            IReadOnlyList<LyricsWord> words = isWordSynced
                 ? [new LyricsWord(TimeSpan.Zero, TimeSpan.FromSeconds(1), "Song")]
                 : [];
             var document = LyricsDocumentNormalizer.Create(
@@ -380,7 +417,7 @@ public class LyricsSearchServiceTests
             payload.Source,
             payload.ProviderItemId,
             payload.Format,
-            preferWordSync: payload.Format == LyricsFormat.Qrc);
+            preferWordSync: isWordSynced);
             return ValueTask.FromResult(document);
         }
     }

@@ -12,6 +12,14 @@ public sealed class LyricsSearchService
 {
     private const int MaxSearchAttempts = 3;
     private static readonly TimeSpan SearchRetryDelay = TimeSpan.FromMilliseconds(300);
+
+    private enum LyricsSelectionMode
+    {
+        Any,
+        LineOnly,
+        WordOnly
+    }
+
     private readonly IReadOnlyList<ILyricsProvider> _providers;
     private readonly IReadOnlyList<ILyricsPayloadParser> _parsers;
     private readonly Func<LyricsSourceSettings> _settingsFactory;
@@ -196,8 +204,7 @@ public sealed class LyricsSearchService
             provider,
             [candidate],
             settings,
-            preferWordOnly: false,
-            allowLineFallback: true,
+            LyricsSelectionMode.Any,
             cancellationToken);
         if (result == null)
         {
@@ -246,8 +253,7 @@ public sealed class LyricsSearchService
                 provider,
                 candidates,
                 settings,
-                preferWordOnly: true,
-                allowLineFallback: false,
+                LyricsSelectionMode.WordOnly,
                 cancellationToken);
             if (result != null)
             {
@@ -262,8 +268,22 @@ public sealed class LyricsSearchService
                 entry.Provider,
                 entry.Candidates,
                 settings,
-                preferWordOnly: false,
-                allowLineFallback: true,
+                LyricsSelectionMode.LineOnly,
+                cancellationToken);
+            if (result != null)
+            {
+                return result;
+            }
+        }
+
+        foreach (var entry in providerCandidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await TrySelectFromProviderAsync(
+                entry.Provider,
+                entry.Candidates,
+                settings,
+                LyricsSelectionMode.Any,
                 cancellationToken);
             if (result != null)
             {
@@ -318,14 +338,13 @@ public sealed class LyricsSearchService
         ILyricsProvider provider,
         IReadOnlyList<LyricsCandidate> candidates,
         LyricsSourceSettings settings,
-        bool preferWordOnly,
-        bool allowLineFallback,
+        LyricsSelectionMode selectionMode,
         CancellationToken cancellationToken)
     {
         foreach (var candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (preferWordOnly && !candidate.SupportsWordSync)
+            if (selectionMode == LyricsSelectionMode.WordOnly && !candidate.SupportsWordSync)
             {
                 continue;
             }
@@ -359,7 +378,7 @@ public sealed class LyricsSearchService
             }
 
             var isWordPayload = payload.Format is LyricsFormat.Qrc or LyricsFormat.Krc or LyricsFormat.Ttml;
-            if (preferWordOnly && !isWordPayload && !allowLineFallback)
+            if (selectionMode == LyricsSelectionMode.WordOnly && !isWordPayload)
             {
                 continue;
             }
@@ -391,12 +410,19 @@ public sealed class LyricsSearchService
                 continue;
             }
 
-            if (preferWordOnly && document.SyncMode != LyricsSyncMode.Word && !allowLineFallback)
+            if (selectionMode == LyricsSelectionMode.WordOnly && document.SyncMode != LyricsSyncMode.Word)
             {
                 continue;
             }
 
-            if (!settings.PreferWordSync(provider.Id) && document.SyncMode == LyricsSyncMode.Word)
+            if (selectionMode == LyricsSelectionMode.LineOnly && document.SyncMode != LyricsSyncMode.Line)
+            {
+                continue;
+            }
+
+            if (selectionMode != LyricsSelectionMode.LineOnly &&
+                !settings.PreferWordSync(provider.Id) &&
+                document.SyncMode == LyricsSyncMode.Word)
             {
                 document = LyricsDocumentNormalizer.Create(
                     document.Lines,
