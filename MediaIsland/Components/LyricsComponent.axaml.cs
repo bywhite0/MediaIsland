@@ -42,6 +42,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private string _lastStatusText = string.Empty;
     private bool _isCurrentTextStatus = true;
     private bool _isWordMode;
+    private bool _isInterludeAnimationActive;
     private bool _isLoaded;
     private PluginSettings? _pluginSettings;
     private CancellationTokenSource? _searchCts;
@@ -111,6 +112,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _currentLyrics = null;
             _activeLineIndices = [];
             _isWordMode = false;
+            _isInterludeAnimationActive = false;
         }
         _clock.Reset();
     }
@@ -144,6 +146,22 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 lock (_syncLock)
                 {
                     _activeLineIndices = [];
+                }
+
+                RenderCurrentPositionOnce();
+                UpdateRenderCadence();
+            });
+            return;
+        }
+
+        if (e.PropertyName == nameof(PluginSettings.IsLyricsInterludeAnimationEnabled))
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                lock (_syncLock)
+                {
+                    _activeLineIndices = [];
+                    _isInterludeAnimationActive = false;
                 }
 
                 RenderCurrentPositionOnce();
@@ -247,6 +265,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     _currentLyrics = null;
                     _activeLineIndices = [];
                     _isWordMode = false;
+                    _isInterludeAnimationActive = false;
                 }
 
                 _logger.LogInformation(
@@ -271,6 +290,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     _currentLyrics = document;
                     _activeLineIndices = [];
                     _isWordMode = document?.SyncMode == LyricsSyncMode.Word;
+                    _isInterludeAnimationActive = false;
                 }
 
                 SetStatus(document == null ? "未找到歌词" : string.Empty);
@@ -317,6 +337,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 _currentLyrics = e.Result.Document;
                 _activeLineIndices = [];
                 _isWordMode = e.Result.Document.SyncMode == LyricsSyncMode.Word;
+                _isInterludeAnimationActive = false;
             }
 
             SetStatus(string.Empty);
@@ -344,14 +365,41 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         if (lyrics == null || lyrics.Lines.Count == 0)
         {
+            SetInterludeAnimationActive(false);
             return;
         }
 
         position = _clock.GetCurrentPosition() +
                    (_pluginSettings?.Lyrics.GetGlobalOffset(lyrics.Source) ?? TimeSpan.Zero);
         var activeLines = LyricsLineSelector.SelectActive(lyrics, position);
+        var currentIndex = activeLines.Count > 0 ? activeLines[0].LineIndex : 0;
+        var interlude = IsLyricsInterludeAnimationEnabled
+            ? LyricsInterludeDetector.ComputeCurrentInterlude(lyrics.Lines, position, currentIndex)
+            : null;
+        var nextLinePreview = IsLyricsInterludeAnimationEnabled
+            ? LyricsInterludeDetector.ComputeNextLinePreview(lyrics.Lines, position, currentIndex)
+            : null;
+        SetInterludeAnimationActive(interlude != null);
+        if (interlude != null)
+        {
+            lock (_syncLock)
+            {
+                _activeLineIndices = [];
+            }
+
+            UpdateInterlude(interlude, position);
+            return;
+        }
+
+        if (nextLinePreview != null)
+        {
+            UpdateActiveLines([nextLinePreview], wordMode, position);
+            return;
+        }
+
         if (activeLines.Count == 0)
         {
+            HideInterludeDots();
             return;
         }
 
@@ -381,6 +429,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
+            InterludeDots.IsVisible = false;
             LyricsText.IsVisible = false;
             ActiveLyricsLines.IsVisible = true;
             if (linesChanged)
@@ -399,6 +448,49 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             }
 
             _isCurrentTextStatus = false;
+            UpdateEmptyVisibility();
+        });
+    }
+
+    private void UpdateInterlude(LyricsInterlude interlude, TimeSpan position)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_isLoaded)
+            {
+                return;
+            }
+
+            if (ActiveLyricsLines.IsVisible || _activeLineVisuals.Count > 0)
+            {
+                ClearActiveLineVisuals();
+            }
+
+            LyricsText.IsVisible = false;
+            InterludeDots.Foreground = LyricsText.Foreground;
+            InterludeDots.FontSize = LyricsText.FontSize;
+            InterludeDots.HorizontalAlignment = interlude.IsNextDuet
+                ? HorizontalAlignment.Right
+                : HorizontalAlignment.Center;
+            InterludeDots.StartTime = interlude.StartTime;
+            InterludeDots.EndTime = interlude.EndTime;
+            InterludeDots.Position = position;
+            InterludeDots.IsVisible = true;
+            _isCurrentTextStatus = false;
+            UpdateEmptyVisibility();
+        });
+    }
+
+    private void HideInterludeDots()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!InterludeDots.IsVisible)
+            {
+                return;
+            }
+
+            InterludeDots.IsVisible = false;
             UpdateEmptyVisibility();
         });
     }
@@ -475,6 +567,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private bool IsWordLyricsEnabled => _pluginSettings?.IsWordLyricsEnabled ?? true;
 
+    private bool IsLyricsInterludeAnimationEnabled =>
+        _pluginSettings?.IsLyricsInterludeAnimationEnabled ?? true;
+
     private void ApplyWordLyricsAnimationSettings(WordLyricsPresenter presenter)
     {
         presenter.IsWordLiftEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true;
@@ -491,14 +586,16 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         bool wordMode;
         bool hasLyrics;
+        bool isInterludeAnimationActive;
         lock (_syncLock)
         {
             wordMode = _isWordMode && IsWordLyricsEnabled;
             hasLyrics = _currentLyrics is { Lines.Count: > 0 };
+            isInterludeAnimationActive = _isInterludeAnimationActive;
         }
 
         var playing = _clock.IsPlaying;
-        _lyricsTimer.Interval = wordMode && playing
+        _lyricsTimer.Interval = (wordMode || isInterludeAnimationActive) && playing
             ? TimeSpan.FromSeconds(1d / Settings.RenderFrameRate)
             : LineRenderInterval;
         if (_isLoaded && hasLyrics && playing)
@@ -527,6 +624,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _currentLyrics = null;
             _activeLineIndices = [];
             _isWordMode = false;
+            _isInterludeAnimationActive = false;
         }
         UpdateRenderCadence();
 
@@ -563,6 +661,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void ClearActiveLineVisuals()
     {
+        InterludeDots.IsVisible = false;
         ActiveLyricsLines.IsVisible = false;
         ActiveLyricsLines.Children.Clear();
         _activeLineVisuals.Clear();
@@ -631,10 +730,29 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void UpdateEmptyVisibility()
     {
-        var hasText = ActiveLyricsLines.IsVisible
+        var hasText = InterludeDots.IsVisible ||
+                      (ActiveLyricsLines.IsVisible
             ? _activeLineVisuals.Count > 0
-            : !string.IsNullOrWhiteSpace(LyricsText.Text);
+            : !string.IsNullOrWhiteSpace(LyricsText.Text));
         LyricsGrid.IsVisible = !Settings.IsHideWhenEmpty || hasText;
+    }
+
+    private void SetInterludeAnimationActive(bool isActive)
+    {
+        var changed = false;
+        lock (_syncLock)
+        {
+            if (_isInterludeAnimationActive != isActive)
+            {
+                _isInterludeAnimationActive = isActive;
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            UpdateRenderCadence();
+        }
     }
 
     private sealed record ActiveLineVisual(int LineIndex, WordLyricsPresenter? WordPresenter);

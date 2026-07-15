@@ -295,6 +295,13 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0BA;}"
+                                       Header="显示歌词间奏点动画"
+                                       Description="相邻歌词行之间出现超过 4 秒的空档时，以呼吸效果显示三个提示点。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsLyricsInterludeAnimationEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
                                        Header="启用逐字上浮效果"
                                        Description="逐字歌词推进时，单词内字符依次轻微上浮。">

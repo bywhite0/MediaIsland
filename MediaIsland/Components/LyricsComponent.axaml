@@ -31,6 +31,10 @@
                         HorizontalAlignment="Stretch"
                         VerticalAlignment="Center"
                         IsVisible="False" />
+            <local:InterludeDotsPresenter x:Name="InterludeDots"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          IsVisible="False" />
         </Grid>
     </Grid>
 </ci:ComponentBase>

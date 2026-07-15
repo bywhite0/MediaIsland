@@ -68,6 +68,19 @@ namespace MediaIsland.Models
             }
         }
 
+        private bool _isLyricsInterludeAnimationEnabled = true;
+
+        public bool IsLyricsInterludeAnimationEnabled
+        {
+            get => _isLyricsInterludeAnimationEnabled;
+            set
+            {
+                if (_isLyricsInterludeAnimationEnabled == value) return;
+                _isLyricsInterludeAnimationEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
         private bool _isWordLyricsLiftEnabled = true;
 
         public bool IsWordLyricsLiftEnabled

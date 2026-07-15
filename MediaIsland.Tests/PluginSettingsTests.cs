@@ -23,4 +23,22 @@ public class PluginSettingsTests
         Assert.NotNull(restored);
         Assert.False(restored.IsWordLyricsEnabled);
     }
+
+    [Fact]
+    public void LyricsInterludeAnimationEnabled_DefaultsToTrueAndPersists()
+    {
+        Assert.True(new PluginSettings().IsLyricsInterludeAnimationEnabled);
+
+        var settings = new PluginSettings
+        {
+            IsLyricsInterludeAnimationEnabled = false
+        };
+
+        var json = JsonSerializer.Serialize(settings);
+        var restored = JsonSerializer.Deserialize<PluginSettings>(json);
+
+        Assert.Contains("\"IsLyricsInterludeAnimationEnabled\":false", json);
+        Assert.NotNull(restored);
+        Assert.False(restored.IsLyricsInterludeAnimationEnabled);
+    }
 }
