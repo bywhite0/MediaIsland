@@ -296,8 +296,8 @@
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
-                                       Header="启用逐字高亮上浮"
-                                       Description="高亮推进时，单词内字符依次轻微上浮，暗色与高亮文字同步移动。">
+                                       Header="启用逐字上浮效果"
+                                       Description="逐字歌词推进时，单词内字符依次轻微上浮。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsLiftEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
@@ -309,9 +309,9 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsLyricsTransitionEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
-                                       Header="启用长词强调效果"
-                                       Description="任意单词持续超过 1 秒时，按持续时长对单词内字符使用类 Apple Music 的波浪缩放与轻微漂浮。">
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE29E;}"
+                                       Header="启用强调效果"
+                                       Description="任意单词持续超过 1 秒时，呈现缩放效果。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
