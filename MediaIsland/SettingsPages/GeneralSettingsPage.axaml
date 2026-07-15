@@ -288,6 +288,13 @@
                                FontWeight="Medium" />
                 </StackPanel>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE285;}"
+                                       Header="启用逐字歌词"
+                                       Description="启用逐字歌词效果，关闭则展示逐行歌词。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
                                        Header="启用逐字高亮上浮"
                                        Description="高亮推进时，单词内字符依次轻微上浮，暗色与高亮文字同步移动。">

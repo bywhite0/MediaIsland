@@ -156,6 +156,21 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
+        if (e.PropertyName == nameof(PluginSettings.IsWordLyricsEnabled))
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                lock (_syncLock)
+                {
+                    _activeLineIndices = [];
+                }
+
+                RenderCurrentPositionOnce();
+                UpdateRenderCadence();
+            });
+            return;
+        }
+
         if (e.PropertyName != nameof(PluginSettings.IsWordLyricsLiftEnabled) &&
             e.PropertyName != nameof(PluginSettings.IsWordLyricsEmphasisEnabled))
         {
@@ -343,7 +358,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         lock (_syncLock)
         {
             lyrics = _currentLyrics;
-            wordMode = _isWordMode;
+            wordMode = _isWordMode && IsWordLyricsEnabled;
         }
 
         if (lyrics == null || lyrics.Lines.Count == 0)
@@ -489,6 +504,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private bool IsLyricsTransitionEnabled => _pluginSettings?.IsLyricsTransitionEnabled ?? true;
 
+    private bool IsWordLyricsEnabled => _pluginSettings?.IsWordLyricsEnabled ?? true;
+
     private void ApplyWordLyricsAnimationSettings(WordLyricsPresenter presenter)
     {
         presenter.IsWordLiftEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true;
@@ -507,7 +524,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         bool hasLyrics;
         lock (_syncLock)
         {
-            wordMode = _isWordMode;
+            wordMode = _isWordMode && IsWordLyricsEnabled;
             hasLyrics = _currentLyrics is { Lines.Count: > 0 };
         }
 
