@@ -81,19 +81,6 @@ namespace MediaIsland.Models
             }
         }
 
-        private bool _isLyricsTransitionEnabled = true;
-
-        public bool IsLyricsTransitionEnabled
-        {
-            get => _isLyricsTransitionEnabled;
-            set
-            {
-                if (_isLyricsTransitionEnabled == value) return;
-                _isLyricsTransitionEnabled = value;
-                OnPropertyChanged();
-            }
-        }
-
         private bool _isWordLyricsEmphasisEnabled = true;
 
         public bool IsWordLyricsEmphasisEnabled

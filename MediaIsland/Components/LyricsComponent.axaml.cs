@@ -1,6 +1,4 @@
 using Avalonia;
-using Avalonia.Animation;
-using Avalonia.Animation.Easings;
 using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -27,7 +25,6 @@ namespace MediaIsland.Components;
 )]
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
-    private static readonly TimeSpan LyricsTransitionDuration = TimeSpan.FromMilliseconds(220);
     private static readonly TimeSpan LineRenderInterval = TimeSpan.FromMilliseconds(80);
 
     private readonly IMediaService _mediaService;
@@ -35,7 +32,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private readonly ILogger<LyricsComponent> _logger;
     private readonly DispatcherTimer _lyricsTimer;
     private readonly LyricsPlaybackClock _clock = new();
-    private readonly TranslateTransform _lyricsTextTransform;
     private readonly object _syncLock = new();
     private readonly List<ActiveLineVisual> _activeLineVisuals = [];
 
@@ -49,7 +45,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private bool _isLoaded;
     private PluginSettings? _pluginSettings;
     private CancellationTokenSource? _searchCts;
-    private CancellationTokenSource? _textTransitionCts;
     private int _searchVersion;
 
     public LyricsComponent(
@@ -58,7 +53,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         ILogger<LyricsComponent> logger)
     {
         InitializeComponent();
-        _lyricsTextTransform = (TranslateTransform)LyricsText.RenderTransform!;
         _mediaService = mediaService;
         _lyricsSearchService = lyricsSearchService;
         _logger = logger;
@@ -112,7 +106,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _pluginSettings = null;
         }
         CancelCurrentSearch();
-        StopTextTransition();
         lock (_syncLock)
         {
             _currentLyrics = null;
@@ -144,18 +137,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void PluginSettings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(PluginSettings.IsLyricsTransitionEnabled))
-        {
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (!IsLyricsTransitionEnabled)
-                {
-                    FinishLyricsTransition();
-                }
-            });
-            return;
-        }
-
         if (e.PropertyName == nameof(PluginSettings.IsWordLyricsEnabled))
         {
             Dispatcher.UIThread.Post(() =>
@@ -427,7 +408,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         bool wordMode,
         TimeSpan position)
     {
-        StopTextTransition();
         ActiveLyricsLines.Children.Clear();
         _activeLineVisuals.Clear();
         var hasDuet = activeLines.Any(item => item.IsDuetSide);
@@ -491,18 +471,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _activeLineVisuals.Add(new ActiveLineVisual(selection.LineIndex, wordPresenter));
         }
 
-        if (IsLyricsTransitionEnabled)
-        {
-            ActiveLyricsLines.Opacity = 0;
-            StartActiveLinesTransition();
-        }
-        else
-        {
-            ActiveLyricsLines.Opacity = 1;
-        }
     }
-
-    private bool IsLyricsTransitionEnabled => _pluginSettings?.IsLyricsTransitionEnabled ?? true;
 
     private bool IsWordLyricsEnabled => _pluginSettings?.IsWordLyricsEnabled ?? true;
 
@@ -633,116 +602,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
-        StopTextTransition();
         LyricsText.Text = text;
         LyricsText.Opacity = targetOpacity;
-        _lyricsTextTransform.Y = 0;
         UpdateEmptyVisibility();
-        if (!string.IsNullOrWhiteSpace(text) && IsLyricsTransitionEnabled)
-        {
-            StartTextTransition(targetOpacity);
-        }
-    }
-
-    private void StartTextTransition(double targetOpacity)
-    {
-        var transitionCts = new CancellationTokenSource();
-        _textTransitionCts = transitionCts;
-        _ = RunTextTransitionAsync(targetOpacity, transitionCts);
-    }
-
-    private void StartActiveLinesTransition()
-    {
-        var transitionCts = new CancellationTokenSource();
-        _textTransitionCts = transitionCts;
-        _ = RunActiveLinesTransitionAsync(transitionCts);
-    }
-
-    private async Task RunTextTransitionAsync(double targetOpacity, CancellationTokenSource transitionCts)
-    {
-        var opacityAnimation = CreateTextTransition(Visual.OpacityProperty, 0, targetOpacity);
-        var offsetAnimation = CreateTextTransition(TranslateTransform.YProperty, 4, 0);
-
-        try
-        {
-            await Task.WhenAll(
-                opacityAnimation.RunAsync(LyricsText, transitionCts.Token),
-                offsetAnimation.RunAsync(_lyricsTextTransform, transitionCts.Token));
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            if (ReferenceEquals(_textTransitionCts, transitionCts))
-            {
-                _textTransitionCts = null;
-                LyricsText.Opacity = targetOpacity;
-                _lyricsTextTransform.Y = 0;
-            }
-
-            transitionCts.Dispose();
-        }
-    }
-
-    private async Task RunActiveLinesTransitionAsync(CancellationTokenSource transitionCts)
-    {
-        var opacityAnimation = CreateTextTransition(Visual.OpacityProperty, 0, 1);
-        try
-        {
-            await opacityAnimation.RunAsync(ActiveLyricsLines, transitionCts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        finally
-        {
-            if (ReferenceEquals(_textTransitionCts, transitionCts))
-            {
-                _textTransitionCts = null;
-                ActiveLyricsLines.Opacity = 1;
-            }
-
-            transitionCts.Dispose();
-        }
-    }
-
-    private static Animation CreateTextTransition(AvaloniaProperty property, double from, double to)
-    {
-        return new Animation
-        {
-            Duration = LyricsTransitionDuration,
-            Easing = new CubicEaseOut(),
-            FillMode = FillMode.None,
-            Children =
-            {
-                new KeyFrame
-                {
-                    Cue = new Cue(0),
-                    Setters = { new Setter(property, from) }
-                },
-                new KeyFrame
-                {
-                    Cue = new Cue(1),
-                    Setters = { new Setter(property, to) }
-                }
-            }
-        };
-    }
-
-    private void StopTextTransition()
-    {
-        var transitionCts = _textTransitionCts;
-        _textTransitionCts = null;
-        transitionCts?.Cancel();
-    }
-
-    private void FinishLyricsTransition()
-    {
-        StopTextTransition();
-        LyricsText.Opacity = _isCurrentTextStatus ? 0.72 : 1.0;
-        _lyricsTextTransform.Y = 0;
-        ActiveLyricsLines.Opacity = 1;
     }
 
     private void CancelCurrentSearch()

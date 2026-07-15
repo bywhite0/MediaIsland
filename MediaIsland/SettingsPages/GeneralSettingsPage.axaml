@@ -302,13 +302,6 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsLiftEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
-                                       Header="启用歌词切换过渡效果"
-                                       Description="切换当前歌词时使用柔和淡入过渡。">
-                <controls:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.IsLyricsTransitionEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE29E;}"
                                        Header="启用强调效果"
                                        Description="任意单词持续超过 1 秒时，呈现缩放效果。">

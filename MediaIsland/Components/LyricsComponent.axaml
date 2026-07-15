@@ -25,11 +25,7 @@
                        VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"
                        TextWrapping="NoWrap"
-                       FontSize="{DynamicResource MainWindowBodyFontSize}">
-                <TextBlock.RenderTransform>
-                    <TranslateTransform />
-                </TextBlock.RenderTransform>
-            </TextBlock>
+                       FontSize="{DynamicResource MainWindowBodyFontSize}" />
             <StackPanel x:Name="ActiveLyricsLines"
                         Spacing="1"
                         HorizontalAlignment="Stretch"
