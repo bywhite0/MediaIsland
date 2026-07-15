@@ -5,19 +5,11 @@ using QrcDecrypter = Lyricify.Lyrics.Decrypter.Qrc.Decrypter;
 using Lyricify.Lyrics.Models;
 using Lyricify.Lyrics.Parsers;
 using MediaIsland.Services.Lyrics.Models;
-using System.Text.RegularExpressions;
 
 namespace MediaIsland.Services.Lyrics.Parsers;
 
 public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
 {
-    private static readonly Regex QrcLineRegex = new(
-        @"^\s*\[(?<start>\d+)\s*,\s*(?<duration>\d+)\](?<content>.*)$",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex QrcWordRegex = new(
-        @"(?<text>.*?)(?:\((?<start>\d+)\s*,\s*(?<duration>\d+)\))",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
     public bool CanParse(LyricsFormat format) =>
         format is LyricsFormat.Lrc or LyricsFormat.Qrc or LyricsFormat.Krc;
 
@@ -85,46 +77,101 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
     private static IReadOnlyList<LyricsLine> ParseQrcLines(string content)
     {
         var lines = new List<LyricsLine>();
-        foreach (var rawLine in NormalizeQrcContent(content).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        foreach (var rawLine in content.Split(
+                     ["\r\n", "\n", "\r", "\\r\\n", "\\n", "\\r"],
+                     StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var lineMatch = QrcLineRegex.Match(rawLine);
-            if (!lineMatch.Success ||
-                !int.TryParse(lineMatch.Groups["start"].Value, out var startMilliseconds) ||
-                !int.TryParse(lineMatch.Groups["duration"].Value, out var durationMilliseconds))
+            if (!TryParseQrcLine(rawLine, out var startMilliseconds, out var durationMilliseconds, out var contentText))
             {
                 continue;
             }
 
-            var contentText = lineMatch.Groups["content"].Value;
-            var words = new List<LyricsWord>();
-            foreach (Match wordMatch in QrcWordRegex.Matches(contentText))
-            {
-                if (!int.TryParse(wordMatch.Groups["start"].Value, out var wordStartMilliseconds) ||
-                    !int.TryParse(wordMatch.Groups["duration"].Value, out var wordDurationMilliseconds))
-                {
-                    continue;
-                }
+            var words = ParseQrcWords(contentText);
 
-                var wordStart = TimeSpan.FromMilliseconds(Math.Max(0, wordStartMilliseconds));
-                words.Add(new LyricsWord(
-                    wordStart,
-                    wordStart.Add(TimeSpan.FromMilliseconds(Math.Max(0, wordDurationMilliseconds))),
-                    wordMatch.Groups["text"].Value));
-            }
-
-            var lineStart = TimeSpan.FromMilliseconds(Math.Max(0, startMilliseconds));
+            var lineStart = TimeSpan.FromMilliseconds(startMilliseconds);
             var text = words.Count > 0
                 ? string.Concat(words.Select(word => word.Text))
                 : contentText.Trim();
             lines.Add(new LyricsLine(
                 lineStart,
-                lineStart.Add(TimeSpan.FromMilliseconds(Math.Max(0, durationMilliseconds))),
+                lineStart.Add(TimeSpan.FromMilliseconds(durationMilliseconds)),
                 text,
                 words));
         }
 
         return lines;
     }
+
+    private static bool TryParseQrcLine(
+        string line,
+        out int startMilliseconds,
+        out int durationMilliseconds,
+        out string content)
+    {
+        startMilliseconds = 0;
+        durationMilliseconds = 0;
+        content = string.Empty;
+        if (line.Length < 5 || line[0] != '[')
+        {
+            return false;
+        }
+
+        var comma = line.IndexOf(',', 1);
+        if (comma <= 1)
+        {
+            return false;
+        }
+
+        var closeBracket = line.IndexOf(']', comma + 1);
+        if (closeBracket <= comma + 1 ||
+            !TryParseMilliseconds(line.AsSpan(1, comma - 1), out startMilliseconds) ||
+            !TryParseMilliseconds(line.AsSpan(comma + 1, closeBracket - comma - 1), out durationMilliseconds))
+        {
+            return false;
+        }
+
+        content = line[(closeBracket + 1)..];
+        return true;
+    }
+
+    private static IReadOnlyList<LyricsWord> ParseQrcWords(string content)
+    {
+        var words = new List<LyricsWord>();
+        var wordTextStart = 0;
+        var searchStart = 0;
+        while (searchStart < content.Length)
+        {
+            var openParenthesis = content.IndexOf('(', searchStart);
+            if (openParenthesis < 0)
+            {
+                break;
+            }
+
+            var comma = content.IndexOf(',', openParenthesis + 1);
+            var closeParenthesis = comma >= 0 ? content.IndexOf(')', comma + 1) : -1;
+            if (comma <= openParenthesis + 1 ||
+                closeParenthesis <= comma + 1 ||
+                !TryParseMilliseconds(content.AsSpan(openParenthesis + 1, comma - openParenthesis - 1), out var startMilliseconds) ||
+                !TryParseMilliseconds(content.AsSpan(comma + 1, closeParenthesis - comma - 1), out var durationMilliseconds))
+            {
+                searchStart = openParenthesis + 1;
+                continue;
+            }
+
+            var wordStart = TimeSpan.FromMilliseconds(startMilliseconds);
+            words.Add(new LyricsWord(
+                wordStart,
+                wordStart.Add(TimeSpan.FromMilliseconds(durationMilliseconds)),
+                content[wordTextStart..openParenthesis]));
+            wordTextStart = closeParenthesis + 1;
+            searchStart = wordTextStart;
+        }
+
+        return words;
+    }
+
+    private static bool TryParseMilliseconds(ReadOnlySpan<char> value, out int milliseconds) =>
+        int.TryParse(value, out milliseconds) && milliseconds >= 0;
 
     private static IReadOnlyList<string>? ParseQrcTranslationLines(string? content)
     {
@@ -190,16 +237,6 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(IsTimedKrcLine);
         return string.Join('\n', timedLines);
-    }
-
-    internal static string NormalizeQrcContent(string content)
-    {
-        return content
-            .Replace("\\r\\n", "\n", StringComparison.Ordinal)
-            .Replace("\\n", "\n", StringComparison.Ordinal)
-            .Replace("\\r", "\n", StringComparison.Ordinal)
-            .Replace("\r\n", "\n", StringComparison.Ordinal)
-            .Replace('\r', '\n');
     }
 
     private static bool IsTimedKrcLine(string line)

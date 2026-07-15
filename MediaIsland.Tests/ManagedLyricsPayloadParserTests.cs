@@ -94,4 +94,26 @@ public class ManagedLyricsPayloadParserTests
         Assert.Equal(TimeSpan.FromSeconds(1), document.Lines[1].StartTime);
         Assert.DoesNotContain("[", document.Lines[0].Text);
     }
+
+    [Fact]
+    public async Task ParseAsync_Qrc_PreservesLiteralQuotesAsWords()
+    {
+        const string content = "[0,1000]A(0,300)\"(300,200)B(500,500)";
+        var payload = new LyricsPayload(
+            LyricsFormat.Qrc,
+            content,
+            LyricsSourceId.QqMusic,
+            "test",
+            new LyricsMetadata("Song", "Artist", null, TimeSpan.FromSeconds(3)));
+
+        var document = await new ManagedLyricsPayloadParser().ParseAsync(payload, CancellationToken.None);
+
+        var line = Assert.Single(document.Lines);
+        Assert.Equal("A\"B", line.Text);
+        Assert.Collection(
+            line.Words,
+            word => Assert.Equal("A", word.Text),
+            word => Assert.Equal("\"", word.Text),
+            word => Assert.Equal("B", word.Text));
+    }
 }

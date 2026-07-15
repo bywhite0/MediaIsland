@@ -20,12 +20,6 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
     private static readonly Regex MalformedEmptyElementRegex = new(
         "<[A-Za-z_][\\w:.-]*=\"[^\"]*\"\\s*/>",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
-    private static readonly Regex QrcLyricElementRegex = new(
-        "<Lyric_1\\b(?<attributes>[^>]*)>",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Singleline);
-    private static readonly Regex QrcLyricContentAttributeRegex = new(
-        "\\bLyricContent\\s*=\\s*\"(?<content>[^\"]*)\"",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Singleline);
 
     public LyricsSourceId Id => LyricsSourceId.QqMusic;
 
@@ -465,16 +459,12 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
 
     internal static string? ExtractQrcLyricContent(string decrypted)
     {
-        var lyricElementMatch = QrcLyricElementRegex.Match(decrypted);
-        if (lyricElementMatch.Success)
+        var rawContent = ExtractRawQrcLyricContent(decrypted);
+        if (rawContent != null)
         {
-            var contentMatch = QrcLyricContentAttributeRegex.Match(lyricElementMatch.Groups["attributes"].Value);
-            if (contentMatch.Success)
-            {
-                // XML attribute parsing normalizes literal newlines to spaces. Extract the raw value first so
-                // QRC's individual timed lines stay separable by the QRC parser.
-                return WebUtility.HtmlDecode(contentMatch.Groups["content"].Value);
-            }
+            // XML attribute parsing normalizes literal newlines to spaces. Keep the raw value so QRC's
+            // individual timed lines remain separable by the independent QRC parser.
+            return WebUtility.HtmlDecode(rawContent);
         }
 
         try
@@ -491,6 +481,95 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         {
             return null;
         }
+    }
+
+    private static string? ExtractRawQrcLyricContent(string decrypted)
+    {
+        const string lyricElementName = "<Lyric_1";
+        const string lyricContentAttributeName = "LyricContent";
+        var lyricElementStart = FindQrcLyricElementStart(decrypted, lyricElementName);
+        if (lyricElementStart < 0)
+        {
+            return null;
+        }
+
+        var attributeStart = decrypted.IndexOf(
+            lyricContentAttributeName,
+            lyricElementStart + lyricElementName.Length,
+            StringComparison.OrdinalIgnoreCase);
+        var tagOpenEnd = decrypted.IndexOf('>', lyricElementStart + lyricElementName.Length);
+        if (attributeStart < 0 || tagOpenEnd < attributeStart)
+        {
+            return null;
+        }
+
+        var valueStart = attributeStart + lyricContentAttributeName.Length;
+        while (valueStart < decrypted.Length && char.IsWhiteSpace(decrypted[valueStart]))
+        {
+            valueStart++;
+        }
+
+        if (valueStart >= decrypted.Length || decrypted[valueStart++] != '=')
+        {
+            return null;
+        }
+
+        while (valueStart < decrypted.Length && char.IsWhiteSpace(decrypted[valueStart]))
+        {
+            valueStart++;
+        }
+
+        if (valueStart >= decrypted.Length || decrypted[valueStart++] != '\"')
+        {
+            return null;
+        }
+
+        for (var valueEnd = valueStart; valueEnd < decrypted.Length; valueEnd++)
+        {
+            if (decrypted[valueEnd] != '\"')
+            {
+                continue;
+            }
+
+            var tagEnd = valueEnd + 1;
+            while (tagEnd < decrypted.Length && char.IsWhiteSpace(decrypted[tagEnd]))
+            {
+                tagEnd++;
+            }
+
+            if ((tagEnd < decrypted.Length && decrypted[tagEnd] == '>') ||
+                (tagEnd + 1 < decrypted.Length && decrypted[tagEnd] == '/' && decrypted[tagEnd + 1] == '>'))
+            {
+                return decrypted[valueStart..valueEnd];
+            }
+        }
+
+        return null;
+    }
+
+    private static int FindQrcLyricElementStart(string decrypted, string lyricElementName)
+    {
+        var searchStart = 0;
+        while (searchStart < decrypted.Length)
+        {
+            var elementStart = decrypted.IndexOf(lyricElementName, searchStart, StringComparison.OrdinalIgnoreCase);
+            if (elementStart < 0)
+            {
+                return -1;
+            }
+
+            var nameEnd = elementStart + lyricElementName.Length;
+            if (nameEnd >= decrypted.Length ||
+                char.IsWhiteSpace(decrypted[nameEnd]) ||
+                decrypted[nameEnd] is '/' or '>')
+            {
+                return elementStart;
+            }
+
+            searchStart = nameEnd;
+        }
+
+        return -1;
     }
 
     private static string? ReadElementValue(XContainer document, string localName)

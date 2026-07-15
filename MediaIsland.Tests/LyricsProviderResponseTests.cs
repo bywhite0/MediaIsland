@@ -92,4 +92,18 @@ public class LyricsProviderResponseTests
             "[0,1000]Hello(0,500) world(500,500)\n[1000,1000]Again(1000,1000)",
             content);
     }
+
+    [Fact]
+    public void QqLyricContentExtraction_PreservesLiteralQuotesInMalformedAttribute()
+    {
+        const string decrypted = """
+            <QrcInfos>
+            <Lyric_1 LyricType="1" LyricContent="[990,4801]A(990,135)"(1126,135)B(1261,680)" />
+            </QrcInfos>
+            """;
+
+        var content = QqMusicLyricsProvider.ExtractQrcLyricContent(decrypted);
+
+        Assert.Equal("[990,4801]A(990,135)\"(1126,135)B(1261,680)", content);
+    }
 }
