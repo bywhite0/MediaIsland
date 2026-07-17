@@ -139,6 +139,7 @@ namespace MediaIsland.Models
                 if (_source == value) return;
                 _source = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(DisplayName));
             }
         }
 
@@ -164,10 +165,30 @@ namespace MediaIsland.Models
             }
         }
 
+        private string? _customDisplayName;
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? CustomDisplayName
+        {
+            get => _customDisplayName;
+            set
+            {
+                var normalizedValue = string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+                if (_customDisplayName == normalizedValue) return;
+                _customDisplayName = normalizedValue;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(DisplayName));
+            }
+        }
+
         [JsonIgnore]
         public string DisplayName
         {
-            get => string.IsNullOrWhiteSpace(_displayName) ? Source : _displayName;
+            get => !string.IsNullOrWhiteSpace(CustomDisplayName)
+                ? CustomDisplayName
+                : string.IsNullOrWhiteSpace(_displayName)
+                    ? Source
+                    : _displayName;
             set
             {
                 if (_displayName == value) return;

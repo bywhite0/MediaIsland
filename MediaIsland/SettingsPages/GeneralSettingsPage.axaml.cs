@@ -565,6 +565,18 @@ namespace MediaIsland.SettingsPages
             SaveSettings();
         }
 
+        private async void CustomDisplayNameTextBoxOnLostFocus(object? sender, RoutedEventArgs e)
+        {
+            if (sender is not TextBox { DataContext: MediaSource item })
+            {
+                return;
+            }
+
+            _mediaSourceDisplayService.Invalidate(item.Source);
+            await RefreshMediaSourceDisplayInfoAsync(item);
+            await RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
+        }
+
         private async void RefreshMediaSourceDisplayInfos()
         {
             foreach (var source in Settings.MediaSourceList.Where(source => source != null).ToArray())

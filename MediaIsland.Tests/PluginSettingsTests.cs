@@ -41,4 +41,32 @@ public class PluginSettingsTests
         Assert.NotNull(restored);
         Assert.False(restored.IsLyricsInterludeAnimationEnabled);
     }
+
+    [Fact]
+    public void MediaSourceCustomDisplayName_PersistsAndOverridesResolvedName()
+    {
+        var settings = new PluginSettings
+        {
+            MediaSourceList =
+            [
+                new MediaSource
+                {
+                    Source = "Spotify.exe",
+                    CustomDisplayName = "  工作音乐  "
+                }
+            ]
+        };
+
+        var json = JsonSerializer.Serialize(settings);
+        var restored = JsonSerializer.Deserialize<PluginSettings>(json);
+
+        Assert.Contains("\"CustomDisplayName\"", json);
+        var source = Assert.Single(restored!.MediaSourceList);
+        Assert.Equal("工作音乐", source.CustomDisplayName);
+        Assert.Equal("工作音乐", source.DisplayName);
+
+        source.CustomDisplayName = " ";
+        Assert.Null(source.CustomDisplayName);
+        Assert.Equal("Spotify.exe", source.DisplayName);
+    }
 }

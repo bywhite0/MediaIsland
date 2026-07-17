@@ -39,9 +39,13 @@ public sealed class MediaSourceDisplayService(
         string sourceApp,
         CancellationToken cancellationToken = default)
     {
-        var iconPath = FindMediaSource(sourceApp)?.IconPath;
-        var cacheKey = new CacheKey(sourceApp, iconPath);
-        return _cache.GetOrAdd(cacheKey, _ => ResolveCoreAsync(sourceApp, iconPath, cancellationToken));
+        var source = FindMediaSource(sourceApp);
+        var iconPath = source?.IconPath;
+        var customDisplayName = source?.CustomDisplayName;
+        var cacheKey = new CacheKey(sourceApp, iconPath, customDisplayName);
+        return _cache.GetOrAdd(
+            cacheKey,
+            _ => ResolveCoreAsync(sourceApp, iconPath, customDisplayName, cancellationToken));
     }
 
     public void Invalidate(string sourceApp)
@@ -55,9 +59,11 @@ public sealed class MediaSourceDisplayService(
     private async Task<MediaSourceDisplayInfo> ResolveCoreAsync(
         string sourceApp,
         string? iconPath,
+        string? customDisplayName,
         CancellationToken cancellationToken)
     {
-        var displayName = ResolveMappedDisplayName(sourceApp);
+        var mappedDisplayName = ResolveMappedDisplayName(sourceApp);
+        var displayName = MediaSourceDisplayNameResolver.Resolve(mappedDisplayName, customDisplayName);
 
         if (!string.IsNullOrWhiteSpace(iconPath))
         {
@@ -69,11 +75,15 @@ public sealed class MediaSourceDisplayService(
         }
 
         var platformInfo = await ResolvePlatformInfoAsync(sourceApp, cancellationToken);
+        displayName = MediaSourceDisplayNameResolver.Resolve(
+            mappedDisplayName,
+            customDisplayName,
+            platformInfo?.DisplayName);
         if (platformInfo is { Icon: not null })
         {
             return new MediaSourceDisplayInfo(
                 sourceApp,
-                string.IsNullOrWhiteSpace(platformInfo.DisplayName) ? displayName : platformInfo.DisplayName,
+                displayName,
                 platformInfo.Icon,
                 MediaSourceDisplayKind.Platform);
         }
@@ -83,14 +93,14 @@ public sealed class MediaSourceDisplayService(
         {
             return new MediaSourceDisplayInfo(
                 sourceApp,
-                string.IsNullOrWhiteSpace(platformInfo?.DisplayName) ? displayName : platformInfo.DisplayName!,
+                displayName,
                 bundledIcon,
                 MediaSourceDisplayKind.Bundled);
         }
 
         return new MediaSourceDisplayInfo(
             sourceApp,
-            string.IsNullOrWhiteSpace(platformInfo?.DisplayName) ? displayName : platformInfo.DisplayName!,
+            displayName,
             null,
             displayName == sourceApp ? MediaSourceDisplayKind.Unknown : MediaSourceDisplayKind.Mapping);
     }
@@ -184,5 +194,23 @@ public sealed class MediaSourceDisplayService(
         return sourceApp;
     }
 
-    private sealed record CacheKey(string SourceApp, string? IconPath);
+    private sealed record CacheKey(string SourceApp, string? IconPath, string? CustomDisplayName);
+}
+
+internal static class MediaSourceDisplayNameResolver
+{
+    internal static string Resolve(
+        string mappedDisplayName,
+        string? customDisplayName,
+        string? platformDisplayName = null)
+    {
+        if (!string.IsNullOrWhiteSpace(customDisplayName))
+        {
+            return customDisplayName;
+        }
+
+        return string.IsNullOrWhiteSpace(platformDisplayName)
+            ? mappedDisplayName
+            : platformDisplayName;
+    }
 }
