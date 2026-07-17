@@ -40,6 +40,13 @@ namespace MediaIsland.Models
 
         public ObservableCollection<MediaSource> MediaSourceList { get; set; } = [];
 
+        public event EventHandler? MediaSourceSettingsSaved;
+
+        public void NotifyMediaSourceSettingsSaved()
+        {
+            MediaSourceSettingsSaved?.Invoke(this, EventArgs.Empty);
+        }
+
         private LyricsSourceSettings _lyrics = LyricsSourceSettings.Normalize(new LyricsSourceSettings());
 
         public LyricsSourceSettings Lyrics
@@ -124,8 +131,10 @@ namespace MediaIsland.Models
     }
     public class MediaSource : ObservableObject
     {
+        private const string LyricsSearchDisabledByDefaultSource = "top.imsyy.splayer-next";
         private string _source = string.Empty;
         private bool _isEnabled = true;
+        private bool? _isLyricsSearchEnabled;
         private string? _iconPath;
         private string _displayName = string.Empty;
         private string _iconStatus = "未解析";
@@ -140,6 +149,7 @@ namespace MediaIsland.Models
                 _source = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(DisplayName));
+                OnPropertyChanged(nameof(IsLyricsSearchEnabled));
             }
         }
 
@@ -152,6 +162,25 @@ namespace MediaIsland.Models
                 _isEnabled = value;
                 OnPropertyChanged();
             }
+        }
+
+        public bool IsLyricsSearchEnabled
+        {
+            get => _isLyricsSearchEnabled ?? IsLyricsSearchEnabledByDefault(Source);
+            set
+            {
+                if (_isLyricsSearchEnabled == value) return;
+                _isLyricsSearchEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public static bool IsLyricsSearchEnabledByDefault(string sourceApp)
+        {
+            return !string.Equals(
+                sourceApp,
+                LyricsSearchDisabledByDefaultSource,
+                StringComparison.OrdinalIgnoreCase);
         }
 
         public string? IconPath

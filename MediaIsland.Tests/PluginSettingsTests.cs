@@ -69,4 +69,34 @@ public class PluginSettingsTests
         Assert.Null(source.CustomDisplayName);
         Assert.Equal("Spotify.exe", source.DisplayName);
     }
+
+    [Fact]
+    public void SPlayerNextLyricsSearch_DefaultsToDisabledAndCanBeOverridden()
+    {
+        const string legacySettingsJson =
+            "{\"MediaSourceList\":[{\"Source\":\"top.imsyy.splayer-next\"}]}";
+        var settings = JsonSerializer.Deserialize<PluginSettings>(legacySettingsJson);
+        var source = Assert.Single(settings!.MediaSourceList);
+
+        Assert.False(source.IsLyricsSearchEnabled);
+
+        source.IsLyricsSearchEnabled = true;
+        var json = JsonSerializer.Serialize(settings);
+        var restored = JsonSerializer.Deserialize<PluginSettings>(json);
+
+        Assert.Contains("\"IsLyricsSearchEnabled\":true", json);
+        Assert.True(Assert.Single(restored!.MediaSourceList).IsLyricsSearchEnabled);
+    }
+
+    [Fact]
+    public void NotifyMediaSourceSettingsSaved_RaisesEvent()
+    {
+        var settings = new PluginSettings();
+        var invocationCount = 0;
+        settings.MediaSourceSettingsSaved += (_, _) => invocationCount++;
+
+        settings.NotifyMediaSourceSettingsSaved();
+
+        Assert.Equal(1, invocationCount);
+    }
 }

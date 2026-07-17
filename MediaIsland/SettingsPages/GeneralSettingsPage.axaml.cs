@@ -292,6 +292,12 @@ namespace MediaIsland.SettingsPages
                 return;
             }
 
+            if (!MediaSourceFilter.IsLyricsSearchEnabled(info.SourceApp, Settings.MediaSourceList))
+            {
+                await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("当前媒体来源已禁用歌词搜索，不搜索歌词候选。"));
+                return;
+            }
+
             if (!Settings.Lyrics.Sources.Any(source => source.IsEnabled))
             {
                 await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("没有启用的歌词来源。"));
@@ -361,6 +367,12 @@ namespace MediaIsland.SettingsPages
             if (!MediaSourceFilter.IsEnabled(mediaInfo.SourceApp, Settings.MediaSourceList))
             {
                 CurrentLyricsCandidatesStatus = "当前媒体来源已禁用，不能应用歌词候选。";
+                return;
+            }
+
+            if (!MediaSourceFilter.IsLyricsSearchEnabled(mediaInfo.SourceApp, Settings.MediaSourceList))
+            {
+                CurrentLyricsCandidatesStatus = "当前媒体来源已禁用歌词搜索，不能应用歌词候选。";
                 return;
             }
 
@@ -749,6 +761,7 @@ namespace MediaIsland.SettingsPages
         private void SaveButtonOnClick(object sender, RoutedEventArgs e)
         {
             SaveSettings();
+            Settings.NotifyMediaSourceSettingsSaved();
         }
 
         private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

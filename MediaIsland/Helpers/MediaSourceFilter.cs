@@ -16,4 +16,17 @@ public static class MediaSourceFilter
 
         return true;
     }
+
+    public static bool IsLyricsSearchEnabled(string sourceApp, IEnumerable<MediaSource>? sources)
+    {
+        foreach (var source in sources ?? [])
+        {
+            if (source != null && string.Equals(sourceApp, source.Source, StringComparison.Ordinal))
+            {
+                return source.IsLyricsSearchEnabled;
+            }
+        }
+
+        return MediaSource.IsLyricsSearchEnabledByDefault(sourceApp);
+    }
 }

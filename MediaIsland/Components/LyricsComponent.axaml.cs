@@ -34,6 +34,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private readonly LyricsPlaybackClock _clock = new();
     private readonly object _syncLock = new();
     private readonly List<ActiveLineVisual> _activeLineVisuals = [];
+    private readonly LyricsSearchSkipTracker _lyricsSearchSkipTracker = new();
 
     private LyricsDocument? _currentLyrics;
     private int[] _activeLineIndices = [];
@@ -77,6 +78,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         {
             _pluginSettings.PropertyChanged -= PluginSettings_OnPropertyChanged;
             _pluginSettings.PropertyChanged += PluginSettings_OnPropertyChanged;
+            _pluginSettings.MediaSourceSettingsSaved -= PluginSettings_OnMediaSourceSettingsSaved;
+            _pluginSettings.MediaSourceSettingsSaved += PluginSettings_OnMediaSourceSettingsSaved;
         }
 
         SetStatus("等待媒体信息...");
@@ -104,6 +107,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         if (_pluginSettings != null)
         {
             _pluginSettings.PropertyChanged -= PluginSettings_OnPropertyChanged;
+            _pluginSettings.MediaSourceSettingsSaved -= PluginSettings_OnMediaSourceSettingsSaved;
             _pluginSettings = null;
         }
         CancelCurrentSearch();
@@ -188,6 +192,51 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         });
     }
 
+    private void PluginSettings_OnMediaSourceSettingsSaved(object? sender, EventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_mediaService.CurrentMediaInfo is { } mediaInfo)
+            {
+                _ = HandleMediaInfoAsync(mediaInfo);
+            }
+        });
+    }
+
+    private bool CanSearchLyrics(MediaInfo info)
+    {
+        if (!MediaSourceFilter.IsEnabled(info.SourceApp, _pluginSettings?.MediaSourceList))
+        {
+            SkipLyricsSearch(info, "当前媒体来源已禁用", "已禁用");
+            return false;
+        }
+
+        if (!MediaSourceFilter.IsLyricsSearchEnabled(info.SourceApp, _pluginSettings?.MediaSourceList))
+        {
+            SkipLyricsSearch(info, "当前媒体来源已禁用歌词搜索", "已禁用歌词搜索");
+            return false;
+        }
+
+        _lyricsSearchSkipTracker.Reset();
+        return true;
+    }
+
+    private void SkipLyricsSearch(MediaInfo info, string status, string reason)
+    {
+        if (!_lyricsSearchSkipTracker.TryRegister(info.SourceApp, reason))
+        {
+            return;
+        }
+
+        _logger.LogInformation("当前媒体会话 [{SourceApp}] {Reason}，跳过歌词搜索", info.SourceApp, reason);
+        ClearLyrics(status);
+    }
+
+    private void ResetSkippedLyricsSearchState()
+    {
+        _lyricsSearchSkipTracker.Reset();
+    }
+
     private async void MediaService_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
     {
         if (!_isLoaded)
@@ -197,14 +246,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         if (e.MediaInfo == null)
         {
+            ResetSkippedLyricsSearchState();
             ClearLyrics("没有可用的媒体会话");
             return;
         }
 
-        if (!MediaSourceFilter.IsEnabled(e.MediaInfo.SourceApp, _pluginSettings?.MediaSourceList))
+        if (!CanSearchLyrics(e.MediaInfo))
         {
-            _logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，跳过歌词搜索", e.MediaInfo.SourceApp);
-            ClearLyrics("当前媒体来源已禁用");
             return;
         }
 
@@ -232,14 +280,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         {
             if (info == null)
             {
+                ResetSkippedLyricsSearchState();
                 ClearLyrics("没有可用的媒体会话");
                 return;
             }
 
-            if (!MediaSourceFilter.IsEnabled(info.SourceApp, _pluginSettings?.MediaSourceList))
+            if (!CanSearchLyrics(info))
             {
-                _logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，跳过歌词搜索", info.SourceApp);
-                ClearLyrics("当前媒体来源已禁用");
                 return;
             }
 
@@ -756,4 +803,36 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     }
 
     private sealed record ActiveLineVisual(int LineIndex, WordLyricsPresenter? WordPresenter);
+}
+
+internal sealed class LyricsSearchSkipTracker
+{
+    private readonly object _syncRoot = new();
+    private string? _sourceApp;
+    private string? _reason;
+
+    public bool TryRegister(string sourceApp, string reason)
+    {
+        lock (_syncRoot)
+        {
+            if (string.Equals(_sourceApp, sourceApp, StringComparison.Ordinal) &&
+                string.Equals(_reason, reason, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            _sourceApp = sourceApp;
+            _reason = reason;
+            return true;
+        }
+    }
+
+    public void Reset()
+    {
+        lock (_syncRoot)
+        {
+            _sourceApp = null;
+            _reason = null;
+        }
+    }
 }

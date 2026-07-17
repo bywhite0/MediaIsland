@@ -85,7 +85,7 @@
 	            <ci:IconText Glyph="&#xEF27;" Text="通用" Margin="0 0 0 8" />
 	            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
 	                                       Header="播放源列表"
-	                                       Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息，并可自定义显示名称；留空时自动识别。需要重载组件才能生效。">
+	                                       Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息、是否搜索歌词，并可自定义显示名称；留空时自动识别。需要重载组件才能生效。">
                             <controls:SettingsExpander.Footer>
                                 <ci:FluentIcon Glyph="&#xF19B;"/>
                             </controls:SettingsExpander.Footer>
@@ -115,6 +115,7 @@
 	                                    </DataGridTemplateColumn.CellEditingTemplate>
 	                                </DataGridTemplateColumn>
 	                                <DataGridCheckBoxColumn Header="启用" Width="Auto" Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+	                                <DataGridCheckBoxColumn Header="歌词搜索" Width="Auto" Binding="{Binding IsLyricsSearchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 	                                <DataGridTemplateColumn Header="图标状态" Width="Auto">
 	                                    <DataGridTemplateColumn.CellTemplate>
 	                                        <DataTemplate>
