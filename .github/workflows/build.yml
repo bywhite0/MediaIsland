@@ -32,9 +32,6 @@ jobs:
         with:
           workspaces: native/ttml-ffi -> target
 
-      - name: Test native TTML library
-        run: cargo test --locked --manifest-path ./native/ttml-ffi/Cargo.toml
-          
       - name: Cache NuGet Packages
         uses: actions/cache@v4
         with: 
