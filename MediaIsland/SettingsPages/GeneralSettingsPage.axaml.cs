@@ -222,7 +222,7 @@ namespace MediaIsland.SettingsPages
             if (!Settings.MediaSourceList.Any(source => source?.Source == "Microsoft.ScreenSketch_8wekyb3d8bbwe!App"))
             {
                 Settings.MediaSourceList.Add(screenshotApp);
-                SaveSettings();
+                SaveMediaSourceSettings();
             }
         }
 
@@ -488,7 +488,7 @@ namespace MediaIsland.SettingsPages
             {
                 Settings.MediaSourceList.Add(sourceItem);
                 _ = RefreshMediaSourceDisplayInfoAsync(sourceItem);
-                SaveSettings();
+                SaveMediaSourceSettings();
                 return true;
             }
 
@@ -511,7 +511,7 @@ namespace MediaIsland.SettingsPages
 
             if (removed)
             {
-                SaveSettings();
+                SaveMediaSourceSettings();
             }
         }
 
@@ -522,7 +522,7 @@ namespace MediaIsland.SettingsPages
             {
                 Settings.MediaSourceList.Remove(item);
                 _mediaSourceDisplayService.Invalidate(item.Source);
-                SaveSettings();
+                SaveMediaSourceSettings();
             }
         }
 
@@ -561,7 +561,7 @@ namespace MediaIsland.SettingsPages
             item.IconPath = iconPath;
             _mediaSourceDisplayService.Invalidate(item.Source);
             await RefreshMediaSourceDisplayInfoAsync(item);
-            SaveSettings();
+            SaveMediaSourceSettings();
         }
 
         private async void ClearIconButtonOnClick(object sender, RoutedEventArgs e)
@@ -574,7 +574,7 @@ namespace MediaIsland.SettingsPages
             item.IconPath = null;
             _mediaSourceDisplayService.Invalidate(item.Source);
             await RefreshMediaSourceDisplayInfoAsync(item);
-            SaveSettings();
+            SaveMediaSourceSettings();
         }
 
         private async void CustomDisplayNameTextBoxOnLostFocus(object? sender, RoutedEventArgs e)
@@ -759,6 +759,11 @@ namespace MediaIsland.SettingsPages
         }
 
         private void SaveButtonOnClick(object sender, RoutedEventArgs e)
+        {
+            SaveMediaSourceSettings();
+        }
+
+        private void SaveMediaSourceSettings()
         {
             SaveSettings();
             Settings.NotifyMediaSourceSettingsSaved();

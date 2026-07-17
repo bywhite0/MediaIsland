@@ -47,7 +47,8 @@ namespace MediaIsland.Components
             Logger = logger;
             _mediaService = mediaService;
             _mediaSourceDisplayService = mediaSourceDisplayService;
-            globalSettings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
+            globalSettings = Plugin.Instance?.Settings ??
+                             ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
             _timelineTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(100)
@@ -58,6 +59,9 @@ namespace MediaIsland.Components
         private void NowPlayingComponent_OnLoaded(object? sender, RoutedEventArgs routedEventArgs)
         {
             _isLoaded = true;
+            globalSettings = Plugin.Instance?.Settings ?? globalSettings;
+            globalSettings.MediaSourceSettingsSaved -= GlobalSettings_OnMediaSourceSettingsSaved;
+            globalSettings.MediaSourceSettingsSaved += GlobalSettings_OnMediaSourceSettingsSaved;
             BindSourceIconRadius();
             Settings.PropertyChanged += OnSettingsPropertyChanged;
             LoadCurrentPlayingInfoAsync();
@@ -69,8 +73,29 @@ namespace MediaIsland.Components
             _timelineTimer.Stop();
             _sourceIconRadiusBinding?.Dispose();
             _sourceIconRadiusBinding = null;
+            globalSettings.MediaSourceSettingsSaved -= GlobalSettings_OnMediaSourceSettingsSaved;
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
             _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+        }
+
+        private void GlobalSettings_OnMediaSourceSettingsSaved(object? sender, EventArgs e)
+        {
+            if (!_isLoaded)
+            {
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_mediaService.CurrentMediaInfo is { } mediaInfo)
+                {
+                    _ = RefreshMediaInfo(mediaInfo);
+                }
+                else
+                {
+                    _ = HideMediaGridAsync();
+                }
+            });
         }
 
         private void BindSourceIconRadius()
