@@ -47,8 +47,8 @@ namespace MediaIsland.Components
             Logger = logger;
             _mediaService = mediaService;
             _mediaSourceDisplayService = mediaSourceDisplayService;
-            globalSettings = Plugin.Instance?.Settings ??
-                             ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
+            globalSettings = Plugin.Instance?.Settings
+                             ?? ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
             _timelineTimer = new DispatcherTimer
             {
                 Interval = TimeSpan.FromMilliseconds(100)
@@ -197,7 +197,7 @@ namespace MediaIsland.Components
                 return;
             }
 
-            if (!IsSourceEnabled(e.MediaInfo.SourceApp, globalSettings.MediaSourceList))
+            if (!MediaSourceFilter.IsEnabled(e.MediaInfo.SourceApp, globalSettings.MediaSourceList))
             {
                 Logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", e.MediaInfo.SourceApp);
                 await HideMediaGridAsync();
@@ -234,7 +234,7 @@ namespace MediaIsland.Components
 
             try
             {
-                if (IsSourceEnabled(mediaInfo.SourceApp, globalSettings.MediaSourceList))
+                if (MediaSourceFilter.IsEnabled(mediaInfo.SourceApp, globalSettings.MediaSourceList))
                 {
                     Logger.LogTrace(
                         "当前媒体信息：[{SourceApp}] {Artist} - {Title} ({PlaybackStatus}) [{TimelinePosition} / {TimelineEndTime}]",
@@ -263,144 +263,115 @@ namespace MediaIsland.Components
 
         private async Task RefreshMediaProperties(MediaInfo mediaInfo)
         {
-            try
+            var thumbnail = mediaInfo.Thumbnail;
+            var sourceDisplayInfo = await ResolveSourceDisplayInfoAsync(mediaInfo.SourceApp);
+            if (mediaInfo.ThumbnailSource != null &&
+                AppInfoHelper.IsSourceAppSpotify(mediaInfo.SourceApp) &&
+                globalSettings.IsCutSpotifyTrademarkEnabled)
             {
-                var thumbnail = mediaInfo.Thumbnail;
-                var sourceDisplayInfo = await ResolveSourceDisplayInfoAsync(mediaInfo.SourceApp);
-                if (mediaInfo.ThumbnailSource != null &&
-                    AppInfoHelper.IsSourceAppSpotify(mediaInfo.SourceApp) &&
-                    globalSettings.IsCutSpotifyTrademarkEnabled)
-                {
-                    thumbnail = await mediaInfo.ThumbnailSource.LoadBitmapAsync(true, CancellationToken.None);
-                }
-
-                if (!_isLoaded)
-                {
-                    return;
-                }
-
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    TitleText.Text = mediaInfo.Title ?? "未知标题";
-                    ArtistText.Text = mediaInfo.Artist ?? "未知艺术家";
-                    SourceText.Text = sourceDisplayInfo.DisplayName;
-                    SourceIcon.Source = sourceDisplayInfo.Icon;
-                    SourceIconBorder.IsVisible = Settings.IsShowSource && sourceDisplayInfo.Icon != null;
-
-                    if (thumbnail != null)
-                    {
-                        AlbumArt.Source = thumbnail;
-                        CoverPlaceholder.IsVisible = false;
-                    }
-                    else
-                    {
-                        AlbumArt.Source = null;
-                        CoverPlaceholder.IsVisible = true;
-                    }
-                });
+                thumbnail = await mediaInfo.ThumbnailSource.LoadBitmapAsync(true, CancellationToken.None);
             }
-            catch (Exception ex)
+
+            if (!_isLoaded)
             {
-                Logger.LogWarning("无法获取媒体属性：{ExMessage}", ex.Message);
+                return;
             }
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                TitleText.Text = mediaInfo.Title ?? "未知标题";
+                ArtistText.Text = mediaInfo.Artist ?? "未知艺术家";
+                SourceText.Text = sourceDisplayInfo.DisplayName;
+                SourceIcon.Source = sourceDisplayInfo.Icon;
+                SourceIconBorder.IsVisible = Settings.IsShowSource && sourceDisplayInfo.Icon != null;
+
+                if (thumbnail != null)
+                {
+                    AlbumArt.Source = thumbnail;
+                    CoverPlaceholder.IsVisible = false;
+                }
+                else
+                {
+                    AlbumArt.Source = null;
+                    CoverPlaceholder.IsVisible = true;
+                }
+            });
         }
 
         private async Task RefreshPlaybackInfo(MediaInfo mediaInfo)
         {
-            try
+            if (!_isLoaded)
             {
-                if (!_isLoaded)
+                return;
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                switch (mediaInfo.PlaybackInfo.PlaybackState)
                 {
-                    return;
+                    case MediaPlaybackState.Playing:
+                        _isPlaying = true;
+                        _lastTimelineUpdate = DateTime.Now;
+                        if (HasTimeline(_currentEndTime))
+                        {
+                            _timelineTimer.Start();
+                        }
+                        else
+                        {
+                            _timelineTimer.Stop();
+                        }
+
+                        MediaGrid.IsVisible = true;
+                        StatusIcon.Glyph = "\uEDB8";
+                        break;
+                    case MediaPlaybackState.Paused:
+                        _isPlaying = false;
+                        _timelineTimer.Stop();
+                        StatusIcon.Glyph = "\uEC90";
+                        MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
+                        break;
+                    case MediaPlaybackState.Stopped:
+                        _isPlaying = false;
+                        _timelineTimer.Stop();
+                        StatusIcon.Glyph = "\uF086";
+                        break;
+                    case MediaPlaybackState.Changing:
+                        StatusIcon.Glyph = "\uE0B4";
+                        break;
                 }
-
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    switch (mediaInfo.PlaybackInfo.PlaybackState)
-                    {
-                        case MediaPlaybackState.Playing:
-                            _isPlaying = true;
-                            _lastTimelineUpdate = DateTime.Now;
-                            if (HasTimeline(_currentEndTime))
-                            {
-                                _timelineTimer.Start();
-                            }
-                            else
-                            {
-                                _timelineTimer.Stop();
-                            }
-
-                            MediaGrid.IsVisible = true;
-                            StatusIcon.Glyph = "\uEDB8";
-                            break;
-                        case MediaPlaybackState.Paused:
-                            _isPlaying = false;
-                            _timelineTimer.Stop();
-                            StatusIcon.Glyph = "\uEC90";
-                            MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
-                            break;
-                        case MediaPlaybackState.Stopped:
-                            _isPlaying = false;
-                            _timelineTimer.Stop();
-                            StatusIcon.Glyph = "\uF086";
-                            break;
-                        case MediaPlaybackState.Changing:
-                            StatusIcon.Glyph = "\uE0B4";
-                            break;
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning("无法获取播放状态：{ExMessage}", ex.Message);
-            }
+            });
         }
 
-        private async Task<MediaSourceDisplayInfo> ResolveSourceDisplayInfoAsync(string sourceApp)
+        private Task<MediaSourceDisplayInfo> ResolveSourceDisplayInfoAsync(string sourceApp)
         {
-            try
-            {
-                return await _mediaSourceDisplayService.ResolveAsync(sourceApp);
-            }
-            catch (Exception ex)
-            {
-                Logger.LogWarning("无法获取播放源显示信息：{ExMessage}", ex.Message);
-                return new MediaSourceDisplayInfo(sourceApp, sourceApp, null, MediaSourceDisplayKind.Unknown);
-            }
+            return _mediaSourceDisplayService.ResolveAsync(sourceApp);
         }
 
         private async Task RefreshTimelineProperties(MediaInfo mediaInfo)
         {
-            try
+            if (!_isLoaded)
             {
-                if (!_isLoaded)
-                {
-                    return;
-                }
+                return;
+            }
 
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    _currentEndTime = mediaInfo.Duration > TimeSpan.Zero
-                        ? mediaInfo.Duration
-                        : TimeSpan.Zero;
-                    _basePosition = ClampPosition(mediaInfo.Position, _currentEndTime);
-                    _lastTimelineUpdate = DateTime.Now;
-                    UpdateTimelineUi(_basePosition, _currentEndTime);
-                    if (mediaInfo.PlaybackInfo.PlaybackState == MediaPlaybackState.Playing && HasTimeline(_currentEndTime))
-                    {
-                        _isPlaying = true;
-                        _timelineTimer.Start();
-                    }
-                    else if (!HasTimeline(_currentEndTime))
-                    {
-                        _timelineTimer.Stop();
-                    }
-                });
-            }
-            catch (Exception ex)
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Logger.LogWarning("无法获取时间轴信息：{ExMessage}", ex.Message);
-            }
+                _currentEndTime = mediaInfo.Duration > TimeSpan.Zero
+                    ? mediaInfo.Duration
+                    : TimeSpan.Zero;
+                _basePosition = ClampPosition(mediaInfo.Position, _currentEndTime);
+                _lastTimelineUpdate = DateTime.Now;
+                UpdateTimelineUi(_basePosition, _currentEndTime);
+                if (mediaInfo.PlaybackInfo.PlaybackState == MediaPlaybackState.Playing && HasTimeline(_currentEndTime))
+                {
+                    _isPlaying = true;
+                    _timelineTimer.Start();
+                }
+                else if (!HasTimeline(_currentEndTime))
+                {
+                    _timelineTimer.Stop();
+                }
+            });
         }
 
         private void OnTimelineTimerTick(object? sender, EventArgs e)
@@ -475,23 +446,5 @@ namespace MediaIsland.Components
             });
         }
 
-        private static bool IsSourceEnabled(string appUserModelId, IEnumerable<MediaSource> sources)
-        {
-            foreach (var source in sources)
-            {
-                try
-                {
-                    if (appUserModelId.Equals(source.Source))
-                    {
-                        return source.IsEnabled;
-                    }
-                }
-                catch
-                {
-                    // ignored
-                }
-            }
-            return true;
-        }
     }
 }

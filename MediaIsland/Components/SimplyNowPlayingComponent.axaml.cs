@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Shared.Helpers;
+using MediaIsland.Helpers;
 using MediaIsland.Models;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
@@ -141,7 +142,7 @@ namespace MediaIsland.Components
                 return;
             }
 
-            if (!IsSourceEnabled(e.MediaInfo.SourceApp, globalSettings.MediaSourceList))
+            if (!MediaSourceFilter.IsEnabled(e.MediaInfo.SourceApp, globalSettings.MediaSourceList))
             {
                 Logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", e.MediaInfo.SourceApp);
                 await HideMediaGridAsync();
@@ -175,7 +176,7 @@ namespace MediaIsland.Components
 
             try
             {
-                if (!IsSourceEnabled(mediaInfo.SourceApp, globalSettings.MediaSourceList))
+                if (!MediaSourceFilter.IsEnabled(mediaInfo.SourceApp, globalSettings.MediaSourceList))
                 {
                     Logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", mediaInfo.SourceApp);
                     await HideMediaGridAsync();
@@ -210,22 +211,15 @@ namespace MediaIsland.Components
 
         private async Task RefreshPlaybackInfo(MediaInfo mediaInfo)
         {
-            try
+            if (!_isLoaded)
             {
-                if (!_isLoaded)
-                {
-                    return;
-                }
+                return;
+            }
 
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    ApplyPlaybackInfo(mediaInfo);
-                });
-            }
-            catch (Exception ex)
+            await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                Logger.LogWarning("无法获取播放状态：{ExMessage}", ex.Message);
-            }
+                ApplyPlaybackInfo(mediaInfo);
+            });
         }
 
         private void ApplyPlaybackInfo(MediaInfo mediaInfo)
@@ -289,23 +283,5 @@ namespace MediaIsland.Components
             });
         }
 
-        private static bool IsSourceEnabled(string appUserModelId, IEnumerable<MediaSource> sources)
-        {
-            foreach (var source in sources)
-            {
-                try
-                {
-                    if (appUserModelId.Equals(source.Source))
-                    {
-                        return source.IsEnabled;
-                    }
-                }
-                catch
-                {
-                    // ignored
-                }
-            }
-            return true;
-        }
     }
 }
