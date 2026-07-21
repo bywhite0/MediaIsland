@@ -162,6 +162,7 @@ public sealed class MediaService(
             return;
         }
 
+        // Isolate component failures so one subscriber cannot stop other UI consumers.
         foreach (EventHandler<MediaInfoChangedEventArgs> handler in handlers.GetInvocationList())
         {
             try

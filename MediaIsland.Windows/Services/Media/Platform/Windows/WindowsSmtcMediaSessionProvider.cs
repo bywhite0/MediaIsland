@@ -93,6 +93,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
 
     private void OnAnySessionClosed(MediaManager.MediaSession session)
     {
+        // Non-focused session close must not clear CurrentMediaInfo; wait for platform focus change.
         logger.LogDebug("SMTC session closed: {SessionId}", session.Id);
     }
 
@@ -176,6 +177,12 @@ public sealed class WindowsSmtcMediaSessionProvider(
 
     private bool IsFocusedSession(MediaManager.MediaSession session)
     {
+        // During MediaManager.StartAsync, open events can fire before IsStarted flips true.
+        if (!_mediaManager.IsStarted)
+        {
+            return false;
+        }
+
         try
         {
             return ReferenceEquals(session, _mediaManager.GetFocusedSession());
@@ -201,9 +208,9 @@ public sealed class WindowsSmtcMediaSessionProvider(
             cancellationToken.ThrowIfCancellationRequested();
             var controlSession = session.ControlSession;
             var sourceApp = controlSession.SourceAppUserModelId;
-            var mediaProperties = await TryGetMediaPropertiesAsync(controlSession, sourceApp, cancellationToken);
-            var timelineProperties = TryGetTimelineProperties(controlSession, sourceApp);
-            var playbackInfo = TryGetPlaybackInfo(controlSession, sourceApp);
+            var mediaProperties = await TryGetMediaPropertiesAsync(controlSession, sourceApp);
+            var timelineProperties = controlSession.GetTimelineProperties();
+            var playbackInfo = controlSession.GetPlaybackInfo();
             var thumbnailReference = mediaProperties?.Thumbnail;
             MediaThumbnail? thumbnail = thumbnailReference == null
                 ? null
@@ -225,7 +232,9 @@ public sealed class WindowsSmtcMediaSessionProvider(
                 mediaProperties?.AlbumTitle,
                 timelineProperties.Position,
                 timelineProperties.EndTime,
-                playbackInfo,
+                new MediaPlaybackInfo(
+                    MapPlaybackState(playbackInfo.PlaybackStatus),
+                    playbackInfo.PlaybackRate),
                 thumbnail);
         }
         catch (OperationCanceledException)
@@ -241,57 +250,23 @@ public sealed class WindowsSmtcMediaSessionProvider(
 
     private async Task<GlobalSystemMediaTransportControlsSessionMediaProperties?> TryGetMediaPropertiesAsync(
         GlobalSystemMediaTransportControlsSession controlSession,
-        string sourceApp,
-        CancellationToken cancellationToken)
+        string sourceApp)
     {
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
             return await controlSession.TryGetMediaPropertiesAsync();
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (IsIgnorableMediaPropertiesException(ex))
         {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "无法读取 SMTC 媒体属性：{SourceApp}", sourceApp);
+            // Real SMTC quirk from some apps: RPC unavailable / device not ready.
+            logger.LogWarning(ex, "忽略 SMTC 媒体属性读取错误：{SourceApp}", sourceApp);
             return null;
         }
     }
 
-    private (TimeSpan Position, TimeSpan EndTime) TryGetTimelineProperties(
-        GlobalSystemMediaTransportControlsSession controlSession,
-        string sourceApp)
+    private static bool IsIgnorableMediaPropertiesException(Exception exception)
     {
-        try
-        {
-            var timelineProperties = controlSession.GetTimelineProperties();
-            return (timelineProperties.Position, timelineProperties.EndTime);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "无法读取 SMTC 时间轴属性：{SourceApp}", sourceApp);
-            return (TimeSpan.Zero, TimeSpan.Zero);
-        }
-    }
-
-    private MediaPlaybackInfo TryGetPlaybackInfo(
-        GlobalSystemMediaTransportControlsSession controlSession,
-        string sourceApp)
-    {
-        try
-        {
-            var playbackInfo = controlSession.GetPlaybackInfo();
-            return new MediaPlaybackInfo(
-                MapPlaybackState(playbackInfo.PlaybackStatus),
-                playbackInfo.PlaybackRate);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "无法读取 SMTC 播放状态：{SourceApp}", sourceApp);
-            return new MediaPlaybackInfo(MediaPlaybackState.Unknown);
-        }
+        return exception.HResult is unchecked((int)0x800706BA) or unchecked((int)0x80070015);
     }
 
     private static MediaPlaybackState MapPlaybackState(GlobalSystemMediaTransportControlsSessionPlaybackStatus status)
@@ -312,23 +287,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         EventHandler<MediaSessionSnapshotEventArgs>? handlers,
         MediaSessionSnapshot? snapshot)
     {
-        if (handlers == null)
-        {
-            return;
-        }
-
-        var args = new MediaSessionSnapshotEventArgs(snapshot);
-        foreach (EventHandler<MediaSessionSnapshotEventArgs> handler in handlers.GetInvocationList())
-        {
-            try
-            {
-                handler(this, args);
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "A Windows SMTC provider subscriber failed.");
-            }
-        }
+        handlers?.Invoke(this, new MediaSessionSnapshotEventArgs(snapshot));
     }
 
     public async ValueTask DisposeAsync()
