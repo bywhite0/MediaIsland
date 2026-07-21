@@ -145,7 +145,7 @@ public class LyricsSearchServiceTests
     }
 
     [Fact]
-    public async Task SearchAsync_RetriesEnabledSourcesBeforeReportingNoLyrics()
+    public async Task SearchAsync_DoesNotRetryEmptyProviderWithinSingleSearch()
     {
         var settings = new LyricsSourceSettings
         {
@@ -168,12 +168,12 @@ public class LyricsSearchServiceTests
 
         var result = await service.SearchAsync(CreateMediaInfo());
 
-        Assert.NotNull(result);
-        Assert.Equal(3, provider.SearchCallCount);
+        Assert.Null(result);
+        Assert.Equal(1, provider.SearchCallCount);
     }
 
     [Fact]
-    public async Task SearchAsync_SkipsDisabledAmllAndRetriesOtherEnabledSources()
+    public async Task SearchAsync_SkipsDisabledAmllAndUsesOtherEnabledSources()
     {
         var settings = new LyricsSourceSettings
         {
@@ -197,19 +197,19 @@ public class LyricsSearchServiceTests
         var qqMusic = new FakeProvider(
             LyricsSourceId.QqMusic,
             LyricsFormat.Qrc,
-            supportsWordSync: true,
-            emptySearchCount: 2);
+            supportsWordSync: true);
         var service = new LyricsSearchService([amll, qqMusic], [new FakeParser()], () => settings);
 
         var result = await service.SearchAsync(CreateMediaInfo());
 
         Assert.NotNull(result);
         Assert.Equal(0, amll.SearchCallCount);
-        Assert.Equal(3, qqMusic.SearchCallCount);
+        Assert.Equal(1, qqMusic.SearchCallCount);
+        Assert.Equal(LyricsSourceId.QqMusic, result.Source);
     }
 
     [Fact]
-    public async Task SearchAsync_RetriesAfterAmllTimeout()
+    public async Task SearchAsync_DoesNotRetryAfterProviderTimeout()
     {
         var settings = new LyricsSourceSettings
         {
@@ -223,14 +223,12 @@ public class LyricsSearchServiceTests
                 }
             ]
         };
-        var amll = new TimeoutThenSuccessProvider(LyricsSourceId.AmllTtml, timeoutCount: 2);
+        var amll = new TimeoutProvider(LyricsSourceId.AmllTtml);
         var service = new LyricsSearchService([amll], [new FakeParser()], () => settings);
 
         var result = await service.SearchAsync(CreateMediaInfo());
 
-        Assert.NotNull(result);
-        Assert.Equal(LyricsSourceId.AmllTtml, result.Source);
-        Assert.Equal(3, amll.SearchCallCount);
+        Assert.Null(result);
     }
 
     [Fact]
@@ -488,47 +486,4 @@ public class LyricsSearchServiceTests
             Task.FromResult<LyricsPayload?>(null);
     }
 
-    private sealed class TimeoutThenSuccessProvider(LyricsSourceId id, int timeoutCount) : ILyricsProvider
-    {
-        public int SearchCallCount { get; private set; }
-
-        public LyricsSourceId Id => id;
-
-        public Task<IReadOnlyList<LyricsCandidate>> SearchAsync(
-            MediaInfo media,
-            LyricsSourceSettings settings,
-            CancellationToken cancellationToken)
-        {
-            SearchCallCount++;
-            if (SearchCallCount <= timeoutCount)
-            {
-                return Task.FromException<IReadOnlyList<LyricsCandidate>>(new TaskCanceledException("AMLL timeout"));
-            }
-
-            IReadOnlyList<LyricsCandidate> candidates =
-            [
-                new LyricsCandidate(
-                    id,
-                    "amll",
-                    media.Title ?? string.Empty,
-                    media.Artist ?? string.Empty,
-                    media.AlbumTitle ?? string.Empty,
-                    media.Duration,
-                    150,
-                    SupportsWordSync: true)
-            ];
-            return Task.FromResult(candidates);
-        }
-
-        public Task<LyricsPayload?> FetchAsync(
-            LyricsCandidate candidate,
-            LyricsSourceSettings settings,
-            CancellationToken cancellationToken) =>
-            Task.FromResult<LyricsPayload?>(new LyricsPayload(
-                LyricsFormat.Qrc,
-                "payload",
-                id,
-                candidate.ProviderItemId,
-                new LyricsMetadata(candidate.Title, candidate.Artist, candidate.Album, candidate.Duration)));
-    }
 }

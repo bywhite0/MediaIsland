@@ -10,9 +10,6 @@ namespace MediaIsland.Services.Lyrics;
 /// </summary>
 public sealed class LyricsSearchService
 {
-    private const int MaxSearchAttempts = 3;
-    private static readonly TimeSpan SearchRetryDelay = TimeSpan.FromMilliseconds(300);
-
     private enum LyricsSelectionMode
     {
         Any,
@@ -102,26 +99,12 @@ public sealed class LyricsSearchService
                 return null;
             }
 
-            for (var attempt = 1; attempt <= MaxSearchAttempts; attempt++)
+            var result = await SearchOnceAsync(orderedProviders, info, settings, cancellationToken);
+            if (result != null)
             {
-                var result = await SearchOnceAsync(orderedProviders, info, settings, cancellationToken);
-                if (result != null)
-                {
-                    Cache(cacheKey, result);
-                    PublishCurrentResult(result, searchVersion);
-                    return result;
-                }
-
-                if (attempt < MaxSearchAttempts)
-                {
-                    _logger?.LogInformation(
-                        "[歌词] 第 {Attempt}/{Total} 次搜索未找到歌词，准备重试：{Title} - {Artist}",
-                        attempt,
-                        MaxSearchAttempts,
-                        info.Title,
-                        info.Artist);
-                    await Task.Delay(SearchRetryDelay, cancellationToken);
-                }
+                Cache(cacheKey, result);
+                PublishCurrentResult(result, searchVersion);
+                return result;
             }
 
             _logger?.LogInformation("[歌词] 未找到歌词：{Title} - {Artist}", info.Title, info.Artist);
@@ -505,40 +488,12 @@ public sealed class LyricsSearchService
             return;
         }
 
-        var args = new LyricsSearchResultChangedEventArgs(result);
-        foreach (EventHandler<LyricsSearchResultChangedEventArgs> handler in handlers.GetInvocationList())
-        {
-            try
-            {
-                handler(this, args);
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[歌词] 当前结果订阅者执行失败。");
-            }
-        }
+        handlers(this, new LyricsSearchResultChangedEventArgs(result));
     }
 
     private void PublishCandidateApplied(LyricsSearchResult result)
     {
-        var handlers = CandidateApplied;
-        if (handlers == null)
-        {
-            return;
-        }
-
-        var args = new LyricsSearchResultChangedEventArgs(result);
-        foreach (EventHandler<LyricsSearchResultChangedEventArgs> handler in handlers.GetInvocationList())
-        {
-            try
-            {
-                handler(this, args);
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "[歌词] 手动应用歌词订阅者执行失败。");
-            }
-        }
+        CandidateApplied?.Invoke(this, new LyricsSearchResultChangedEventArgs(result));
     }
 
     private sealed record CacheEntry(LyricsSearchResult Result, DateTimeOffset ExpiresAt);
