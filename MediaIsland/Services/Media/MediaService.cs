@@ -1,3 +1,4 @@
+using Avalonia.Media.Imaging;
 using MediaIsland.Services.Media.Platform;
 using Microsoft.Extensions.Logging;
 
@@ -116,7 +117,7 @@ public sealed class MediaService(
         {
             CurrentMediaInfo = snapshot == null
                 ? null
-                : await CreateMediaInfoAsync(snapshot, cancellationToken);
+                : await CreateMediaInfoAsync(snapshot, CurrentMediaInfo, changeKind, cancellationToken);
 
             RaiseMediaInfoChanged(new MediaInfoChangedEventArgs(CurrentMediaInfo, changeKind));
         }
@@ -136,11 +137,11 @@ public sealed class MediaService(
 
     private static async Task<MediaInfo> CreateMediaInfoAsync(
         MediaSessionSnapshot snapshot,
+        MediaInfo? previous,
+        MediaInfoChangeKind changeKind,
         CancellationToken cancellationToken)
     {
-        var thumbnail = snapshot.Thumbnail == null
-            ? null
-            : await snapshot.Thumbnail.LoadBitmapAsync(false, cancellationToken);
+        var thumbnail = await ResolveThumbnailAsync(snapshot, previous, changeKind, cancellationToken);
 
         return new MediaInfo(
             snapshot.SourceApp,
@@ -152,6 +153,37 @@ public sealed class MediaService(
             snapshot.PlaybackInfo,
             thumbnail,
             snapshot.Thumbnail);
+    }
+
+    private static async Task<Bitmap?> ResolveThumbnailAsync(
+        MediaSessionSnapshot snapshot,
+        MediaInfo? previous,
+        MediaInfoChangeKind changeKind,
+        CancellationToken cancellationToken)
+    {
+        if (snapshot.Thumbnail == null)
+        {
+            return null;
+        }
+
+        // Timeline/playback ticks do not change artwork. Reuse the previous bitmap so SMTC
+        // position updates do not re-open and re-decode the cover stream every time.
+        if (changeKind is MediaInfoChangeKind.Timeline or MediaInfoChangeKind.Playback
+            && previous?.Thumbnail != null
+            && IsSameMediaIdentity(previous, snapshot))
+        {
+            return previous.Thumbnail;
+        }
+
+        return await snapshot.Thumbnail.LoadBitmapAsync(false, cancellationToken);
+    }
+
+    private static bool IsSameMediaIdentity(MediaInfo previous, MediaSessionSnapshot snapshot)
+    {
+        return string.Equals(previous.SourceApp, snapshot.SourceApp, StringComparison.Ordinal)
+            && string.Equals(previous.Title, snapshot.Title, StringComparison.Ordinal)
+            && string.Equals(previous.Artist, snapshot.Artist, StringComparison.Ordinal)
+            && string.Equals(previous.AlbumTitle, snapshot.AlbumTitle, StringComparison.Ordinal);
     }
 
     private void RaiseMediaInfoChanged(MediaInfoChangedEventArgs args)
