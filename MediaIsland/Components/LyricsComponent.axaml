@@ -6,7 +6,6 @@
                   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                   xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                   xmlns:local="clr-namespace:MediaIsland.Components"
-                  xmlns:controls="clr-namespace:MediaIsland.Controls"
                   mc:Ignorable="d"
                   d:DesignHeight="80" d:DesignWidth="420"
                   Loaded="LyricsComponent_OnLoaded"
@@ -21,21 +20,34 @@
                        FontSize="16"
                        Margin="0 2 4 0"
                        VerticalAlignment="Center" />
-        <Grid Grid.Column="1" VerticalAlignment="Center">
+        <Grid x:Name="LyricsContentHost"
+              Grid.Column="1"
+              ClipToBounds="True"
+              VerticalAlignment="Center">
+            <!-- Style probe for font size / foreground; not part of the transition layers. -->
             <TextBlock x:Name="LyricsText"
-                       VerticalAlignment="Center"
-                       TextTrimming="CharacterEllipsis"
-                       TextWrapping="NoWrap"
+                       IsHitTestVisible="False"
+                       IsVisible="False"
                        FontSize="{DynamicResource MainWindowBodyFontSize}" />
-            <StackPanel x:Name="ActiveLyricsLines"
+            <StackPanel x:Name="LyricsBackLayer"
                         Spacing="1"
                         HorizontalAlignment="Stretch"
                         VerticalAlignment="Center"
-                        IsVisible="False" />
-            <controls:InterludeDotsPresenter x:Name="InterludeDots"
-                                          HorizontalAlignment="Center"
-                                          VerticalAlignment="Center"
-                                          IsVisible="False" />
+                        IsVisible="False"
+                        Opacity="0">
+                <StackPanel.RenderTransform>
+                    <TranslateTransform />
+                </StackPanel.RenderTransform>
+            </StackPanel>
+            <StackPanel x:Name="LyricsFrontLayer"
+                        Spacing="1"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Center"
+                        Opacity="1">
+                <StackPanel.RenderTransform>
+                    <TranslateTransform />
+                </StackPanel.RenderTransform>
+            </StackPanel>
         </Grid>
     </Grid>
 </ci:ComponentBase>

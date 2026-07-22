@@ -26,16 +26,28 @@ namespace MediaIsland.Components;
 )]
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
+    private const double TransitionDurationMs = 380;
     private static readonly TimeSpan LineRenderInterval = TimeSpan.FromMilliseconds(80);
+    private static readonly TimeSpan TransitionFrameInterval = TimeSpan.FromMilliseconds(16);
 
     private readonly IMediaService _mediaService;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly ILogger<LyricsComponent> _logger;
     private readonly DispatcherTimer _lyricsTimer;
+    private readonly DispatcherTimer _transitionTimer;
     private readonly LyricsPlaybackClock _clock = new();
     private readonly object _syncLock = new();
     private readonly List<ActiveLineVisual> _activeLineVisuals = [];
     private readonly LyricsSearchSkipTracker _lyricsSearchSkipTracker = new();
+
+    private StackPanel _front = null!;
+    private StackPanel _back = null!;
+    private TransitionState? _transition;
+    private InterludeDotsPresenter? _interludeDots;
+    private string _displayedStatusText = string.Empty;
+    private double _displayedStatusOpacity = -1;
+    private bool _isShowingInterlude;
+    private bool _isShowingActiveLines;
 
     private LyricsDocument? _currentLyrics;
     private int[] _activeLineIndices = [];
@@ -56,6 +68,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         ILogger<LyricsComponent> logger)
     {
         InitializeComponent();
+        _front = LyricsFrontLayer;
+        _back = LyricsBackLayer;
         _mediaService = mediaService;
         _lyricsSearchService = lyricsSearchService;
         _logger = logger;
@@ -64,6 +78,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             Interval = LineRenderInterval
         };
         _lyricsTimer.Tick += LyricsTimer_OnTick;
+        _transitionTimer = new DispatcherTimer
+        {
+            Interval = TransitionFrameInterval
+        };
+        _transitionTimer.Tick += TransitionTimer_OnTick;
     }
 
     private async void LyricsComponent_OnLoaded(object? sender, RoutedEventArgs e)
@@ -112,6 +131,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             _pluginSettings = null;
         }
         CancelCurrentSearch();
+        CompleteTransition();
         lock (_syncLock)
         {
             _currentLyrics = null;
@@ -171,6 +191,18 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
                 RenderCurrentPositionOnce();
                 UpdateRenderCadence();
+            });
+            return;
+        }
+
+        if (e.PropertyName == nameof(PluginSettings.IsLyricsTransitionEnabled))
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!IsLyricsTransitionEnabled)
+                {
+                    CompleteTransition();
+                }
             });
             return;
         }
@@ -478,9 +510,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
-            InterludeDots.IsVisible = false;
-            LyricsText.IsVisible = false;
-            ActiveLyricsLines.IsVisible = true;
             if (linesChanged)
             {
                 RebuildActiveLineVisuals(activeLines, wordMode, position);
@@ -510,21 +539,20 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
-            if (ActiveLyricsLines.IsVisible || _activeLineVisuals.Count > 0)
+            if (_isShowingInterlude && _interludeDots != null)
             {
-                ClearActiveLineVisuals();
+                _interludeDots.StartTime = interlude.StartTime;
+                _interludeDots.EndTime = interlude.EndTime;
+                _interludeDots.Position = position;
+                _interludeDots.HorizontalAlignment = interlude.IsNextDuet
+                    ? HorizontalAlignment.Right
+                    : HorizontalAlignment.Center;
+                _isCurrentTextStatus = false;
+                UpdateEmptyVisibility();
+                return;
             }
 
-            LyricsText.IsVisible = false;
-            InterludeDots.Foreground = LyricsText.Foreground;
-            InterludeDots.FontSize = LyricsText.FontSize;
-            InterludeDots.HorizontalAlignment = interlude.IsNextDuet
-                ? HorizontalAlignment.Right
-                : HorizontalAlignment.Center;
-            InterludeDots.StartTime = interlude.StartTime;
-            InterludeDots.EndTime = interlude.EndTime;
-            InterludeDots.Position = position;
-            InterludeDots.IsVisible = true;
+            RebuildInterludeVisual(interlude, position);
             _isCurrentTextStatus = false;
             UpdateEmptyVisibility();
         });
@@ -534,12 +562,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         Dispatcher.UIThread.Post(() =>
         {
-            if (!InterludeDots.IsVisible)
+            if (!_isShowingInterlude)
             {
                 return;
             }
 
-            InterludeDots.IsVisible = false;
+            ClearActiveLineVisuals();
             UpdateEmptyVisibility();
         });
     }
@@ -549,11 +577,18 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         bool wordMode,
         TimeSpan position)
     {
-        ActiveLyricsLines.Children.Clear();
+        CompleteTransition();
         _activeLineVisuals.Clear();
+        _interludeDots = null;
+        _isShowingInterlude = false;
+        _isShowingActiveLines = true;
+        _displayedStatusText = string.Empty;
+        _displayedStatusOpacity = -1;
+        _back.Children.Clear();
+
         var hasDuet = activeLines.Any(item => item.IsDuetSide);
         var isMultiLine = activeLines.Count > 1;
-        ActiveLyricsLines.Spacing = isMultiLine ? 0 : 1;
+        _back.Spacing = isMultiLine ? 0 : 1;
 
         foreach (var selection in activeLines)
         {
@@ -608,16 +643,47 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 visual.Margin = new Thickness(0, -1, 0, -1);
             }
 
-            ActiveLyricsLines.Children.Add(visual);
+            _back.Children.Add(visual);
             _activeLineVisuals.Add(new ActiveLineVisual(selection.LineIndex, wordPresenter));
         }
 
+        StartTransition();
+    }
+
+    private void RebuildInterludeVisual(LyricsInterlude interlude, TimeSpan position)
+    {
+        CompleteTransition();
+        _activeLineVisuals.Clear();
+        _isShowingActiveLines = false;
+        _isShowingInterlude = true;
+        _displayedStatusText = string.Empty;
+        _displayedStatusOpacity = -1;
+        _back.Children.Clear();
+        _back.Spacing = 1;
+
+        var dots = new InterludeDotsPresenter
+        {
+            Foreground = LyricsText.Foreground,
+            FontSize = LyricsText.FontSize,
+            HorizontalAlignment = interlude.IsNextDuet
+                ? HorizontalAlignment.Right
+                : HorizontalAlignment.Center,
+            StartTime = interlude.StartTime,
+            EndTime = interlude.EndTime,
+            Position = position
+        };
+        _interludeDots = dots;
+        _back.Children.Add(dots);
+        StartTransition();
     }
 
     private bool IsWordLyricsEnabled => _pluginSettings?.IsWordLyricsEnabled ?? true;
 
     private bool IsLyricsInterludeAnimationEnabled =>
         _pluginSettings?.IsLyricsInterludeAnimationEnabled ?? true;
+
+    private bool IsLyricsTransitionEnabled =>
+        _pluginSettings?.IsLyricsTransitionEnabled ?? true;
 
     private void ApplyWordLyricsAnimationSettings(WordLyricsPresenter presenter)
     {
@@ -686,7 +752,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             }
 
             ClearActiveLineVisuals();
-            LyricsText.IsVisible = true;
         });
 
         SetStatus(status);
@@ -702,8 +767,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 return;
             }
 
-            ClearActiveLineVisuals();
-            LyricsText.IsVisible = true;
             _isCurrentTextStatus = true;
             SetTextCore(GetVisibleText(text, isStatusText: true), isStatusText: true);
         });
@@ -711,10 +774,19 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void ClearActiveLineVisuals()
     {
-        InterludeDots.IsVisible = false;
-        ActiveLyricsLines.IsVisible = false;
-        ActiveLyricsLines.Children.Clear();
+        CompleteTransition();
+        _front.Children.Clear();
+        _back.Children.Clear();
         _activeLineVisuals.Clear();
+        _interludeDots = null;
+        _isShowingInterlude = false;
+        _isShowingActiveLines = false;
+        _displayedStatusText = string.Empty;
+        _displayedStatusOpacity = -1;
+        lock (_syncLock)
+        {
+            _activeLineIndices = [];
+        }
     }
 
     private void ApplyCurrentDisplaySettings()
@@ -744,16 +816,121 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private void SetTextCore(string text, bool isStatusText)
     {
         var targetOpacity = isStatusText ? 0.72 : 1.0;
-        if (LyricsText.Text == text &&
-            Math.Abs(LyricsText.GetBaseValue(Visual.OpacityProperty).GetValueOrDefault(LyricsText.Opacity) - targetOpacity) < 0.001)
+        if (_isCurrentTextStatus &&
+            !_isShowingActiveLines &&
+            !_isShowingInterlude &&
+            string.Equals(_displayedStatusText, text, StringComparison.Ordinal) &&
+            Math.Abs(_displayedStatusOpacity - targetOpacity) < 0.001)
         {
             UpdateEmptyVisibility();
             return;
         }
 
-        LyricsText.Text = text;
-        LyricsText.Opacity = targetOpacity;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            // Empty status should not leave a blank layer; the next lyrics frame will transition in.
+            ClearActiveLineVisuals();
+            UpdateEmptyVisibility();
+            return;
+        }
+
+        CompleteTransition();
+        _activeLineVisuals.Clear();
+        _interludeDots = null;
+        _isShowingInterlude = false;
+        _isShowingActiveLines = false;
+        _displayedStatusText = text;
+        _displayedStatusOpacity = targetOpacity;
+        lock (_syncLock)
+        {
+            _activeLineIndices = [];
+        }
+        _back.Children.Clear();
+        _back.Spacing = 1;
+        _back.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = LyricsText.FontSize,
+            Foreground = LyricsText.Foreground,
+            Opacity = targetOpacity,
+            TextAlignment = TextAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.NoWrap,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        StartTransition();
         UpdateEmptyVisibility();
+    }
+
+    private void StartTransition()
+    {
+        var oldLayer = _front;
+        var newLayer = _back;
+        var oldTransform = (TranslateTransform)oldLayer.RenderTransform!;
+        var newTransform = (TranslateTransform)newLayer.RenderTransform!;
+
+        _front = newLayer;
+        _back = oldLayer;
+
+        if (!IsLyricsTransitionEnabled)
+        {
+            CompleteTransition();
+            return;
+        }
+
+        var offset = Math.Max(20, LyricsText.FontSize * 1.5);
+        oldLayer.Opacity = oldLayer.Children.Count == 0 ? 0 : 1;
+        oldTransform.Y = 0;
+        newLayer.Opacity = 0;
+        newTransform.Y = offset;
+        newLayer.IsVisible = true;
+        oldLayer.IsVisible = true;
+
+        _transition = new TransitionState(
+            oldLayer,
+            oldTransform,
+            newLayer,
+            newTransform,
+            Environment.TickCount64,
+            offset);
+        _transitionTimer.Start();
+    }
+
+    private void TransitionTimer_OnTick(object? sender, EventArgs e)
+    {
+        var transition = _transition;
+        if (transition == null)
+        {
+            return;
+        }
+
+        var progress = Math.Clamp(
+            (Environment.TickCount64 - transition.StartedAtTick) / TransitionDurationMs,
+            0,
+            1);
+        var eased = 1 - Math.Pow(1 - progress, 3);
+        transition.OldLayer.Opacity = 1 - eased;
+        transition.OldTransform.Y = -transition.Offset * eased;
+        transition.NewLayer.Opacity = eased;
+        transition.NewTransform.Y = transition.Offset * (1 - eased);
+        if (progress >= 1)
+        {
+            CompleteTransition();
+        }
+    }
+
+    private void CompleteTransition()
+    {
+        _transitionTimer.Stop();
+        _transition = null;
+        _front.IsVisible = true;
+        _front.Opacity = 1;
+        ((TranslateTransform)_front.RenderTransform!).Y = 0;
+        _back.Children.Clear();
+        _back.IsVisible = false;
+        _back.Opacity = 0;
+        ((TranslateTransform)_back.RenderTransform!).Y = 0;
     }
 
     private void CancelCurrentSearch()
@@ -780,10 +957,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void UpdateEmptyVisibility()
     {
-        var hasText = InterludeDots.IsVisible ||
-                      (ActiveLyricsLines.IsVisible
-            ? _activeLineVisuals.Count > 0
-            : !string.IsNullOrWhiteSpace(LyricsText.Text));
+        var hasText = _front.Children.Count > 0 ||
+                      (_transition != null && _back.Children.Count > 0);
         LyricsGrid.IsVisible = !Settings.IsHideWhenEmpty || hasText;
     }
 
@@ -806,6 +981,14 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     }
 
     private sealed record ActiveLineVisual(int LineIndex, WordLyricsPresenter? WordPresenter);
+
+    private sealed record TransitionState(
+        StackPanel OldLayer,
+        TranslateTransform OldTransform,
+        StackPanel NewLayer,
+        TranslateTransform NewTransform,
+        long StartedAtTick,
+        double Offset);
 }
 
 internal sealed class LyricsSearchSkipTracker

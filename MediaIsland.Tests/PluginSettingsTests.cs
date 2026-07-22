@@ -43,6 +43,24 @@ public class PluginSettingsTests
     }
 
     [Fact]
+    public void LyricsTransitionEnabled_DefaultsToTrueAndPersists()
+    {
+        Assert.True(new PluginSettings().IsLyricsTransitionEnabled);
+
+        var settings = new PluginSettings
+        {
+            IsLyricsTransitionEnabled = false
+        };
+
+        var json = JsonSerializer.Serialize(settings);
+        var restored = JsonSerializer.Deserialize<PluginSettings>(json);
+
+        Assert.Contains("\"IsLyricsTransitionEnabled\":false", json);
+        Assert.NotNull(restored);
+        Assert.False(restored.IsLyricsTransitionEnabled);
+    }
+
+    [Fact]
     public void MediaSourceCustomDisplayName_PersistsAndOverridesResolvedName()
     {
         var settings = new PluginSettings

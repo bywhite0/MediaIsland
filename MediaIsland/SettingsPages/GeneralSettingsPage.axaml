@@ -311,6 +311,13 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsLyricsInterludeAnimationEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1C8;}"
+                                       Header="启用歌词切换过渡效果"
+                                       Description="切换当前歌词时使用淡入淡出与纵向滑动过渡。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsLyricsTransitionEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
                                        Header="启用逐字上浮效果"
                                        Description="逐字歌词推进时，单词内字符依次轻微上浮。">
