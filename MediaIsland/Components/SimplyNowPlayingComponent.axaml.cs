@@ -1,4 +1,5 @@
 using System.IO;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
@@ -44,6 +45,7 @@ namespace MediaIsland.Components
             globalSettings.MediaSourceSettingsSaved -= GlobalSettings_OnMediaSourceSettingsSaved;
             globalSettings.MediaSourceSettingsSaved += GlobalSettings_OnMediaSourceSettingsSaved;
             Settings.PropertyChanged += OnSettingsPropertyChanged;
+            UpdateMargin();
             LoadCurrentPlayingInfoAsync();
         }
 
@@ -75,10 +77,26 @@ namespace MediaIsland.Components
             });
         }
 
+        private void UpdateMargin()
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                MediaGrid.Margin = new Thickness(
+                    Settings.IsLeftNegativeMargin ? -12 : 0,
+                    0,
+                    Settings.IsRightNegativeMargin ? -12 : 0,
+                    0);
+            });
+        }
+
         private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
             switch (e.PropertyName)
             {
+                case nameof(SimplyNowPlayingComponentConfig.IsLeftNegativeMargin):
+                case nameof(SimplyNowPlayingComponentConfig.IsRightNegativeMargin):
+                    UpdateMargin();
+                    break;
                 case "IsHideWhenPaused":
                     if (_currentMediaInfo?.PlaybackInfo.PlaybackState == MediaPlaybackState.Paused)
                     {

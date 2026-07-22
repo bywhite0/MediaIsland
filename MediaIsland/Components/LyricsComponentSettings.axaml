@@ -32,6 +32,24 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowNoteIcon, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE093;}"
+                                       Header="左右间距"
+                                       Description="启用后，对应侧的元素边界将收缩至适合圆角。">
+                <controls:SettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Content="(左"
+                               Foreground="Gray" />
+                        <ToggleButton Margin="0,0,5,0"
+                                      IsChecked="{Binding Settings.IsLeftNegativeMargin, Mode=TwoWay}" />
+                        <Label Content="♪ --"
+                               Foreground="Gray" />
+                        <ToggleButton Margin="5,0,0,0"
+                                      IsChecked="{Binding Settings.IsRightNegativeMargin, Mode=TwoWay}" />
+                        <Label Content="右)"
+                               Foreground="Gray" />
+                    </StackPanel>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBC9;}"
                                        Header="渲染帧率"
                                        Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">

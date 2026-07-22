@@ -105,6 +105,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _lyricsSearchService.CandidateApplied -= LyricsSearchService_OnCandidateApplied;
         _lyricsSearchService.CandidateApplied += LyricsSearchService_OnCandidateApplied;
         Settings.PropertyChanged += Settings_OnPropertyChanged;
+        UpdateMargin();
         _pluginSettings = Plugin.Instance?.Settings;
         if (_pluginSettings != null)
         {
@@ -154,8 +155,27 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _clock.Reset();
     }
 
+    private void UpdateMargin()
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            LyricsGrid.Margin = new Thickness(
+                Settings.IsLeftNegativeMargin ? -12 : 0,
+                0,
+                Settings.IsRightNegativeMargin ? -12 : 0,
+                0);
+        });
+    }
+
     private void Settings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (e.PropertyName is nameof(LyricsComponentConfig.IsLeftNegativeMargin)
+            or nameof(LyricsComponentConfig.IsRightNegativeMargin))
+        {
+            UpdateMargin();
+            return;
+        }
+
         if (e.PropertyName == nameof(LyricsComponentConfig.IsShowStatusText))
         {
             ApplyCurrentDisplaySettings();

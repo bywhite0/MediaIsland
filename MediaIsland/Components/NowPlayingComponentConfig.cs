@@ -1,7 +1,5 @@
-﻿using System.Text.Json.Serialization;
-using Avalonia;
+using System.Text.Json.Serialization;
 using CommunityToolkit.Mvvm.ComponentModel;
-using Avalonia.Media;
 
 namespace MediaIsland.Components
 {
@@ -15,6 +13,8 @@ namespace MediaIsland.Components
         bool _isShowAlbumArt = true;
         bool _isShowPlaybackStatus = false;
         bool _isShowProgressBar = false;
+        bool _isLeftNegativeMargin = false;
+        bool _isRightNegativeMargin = false;
         int _subInfoType = 0;
 
         /// <Summary>
@@ -109,6 +109,28 @@ namespace MediaIsland.Components
             {
                 if (_isShowProgressBar == value) return;
                 _isShowProgressBar = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsLeftNegativeMargin
+        {
+            get => _isLeftNegativeMargin;
+            set
+            {
+                if (_isLeftNegativeMargin == value) return;
+                _isLeftNegativeMargin = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsRightNegativeMargin
+        {
+            get => _isRightNegativeMargin;
+            set
+            {
+                if (_isRightNegativeMargin == value) return;
+                _isRightNegativeMargin = value;
                 OnPropertyChanged();
             }
         }

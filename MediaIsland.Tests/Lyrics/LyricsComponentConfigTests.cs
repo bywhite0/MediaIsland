@@ -57,4 +57,23 @@ public class LyricsComponentConfigTests
         Assert.NotNull(restored);
         Assert.False(restored!.IsShowNoteIcon);
     }
+
+    [Fact]
+    public void NegativeMargins_DefaultOffAndPersist()
+    {
+        var settings = new LyricsComponentConfig();
+        Assert.False(settings.IsLeftNegativeMargin);
+        Assert.False(settings.IsRightNegativeMargin);
+
+        settings.IsLeftNegativeMargin = true;
+        settings.IsRightNegativeMargin = true;
+        var json = JsonSerializer.Serialize(settings);
+        Assert.Contains("\"IsLeftNegativeMargin\":true", json);
+        Assert.Contains("\"IsRightNegativeMargin\":true", json);
+
+        var restored = JsonSerializer.Deserialize<LyricsComponentConfig>(json);
+        Assert.NotNull(restored);
+        Assert.True(restored!.IsLeftNegativeMargin);
+        Assert.True(restored.IsRightNegativeMargin);
+    }
 }

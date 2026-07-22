@@ -1,4 +1,4 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace MediaIsland.Components
 {
@@ -9,6 +9,8 @@ namespace MediaIsland.Components
         bool _isShowPlaybackStatus = false;
         int _infoType = 1;
         bool _isDualLineStyle = false;
+        bool _isLeftNegativeMargin = false;
+        bool _isRightNegativeMargin = false;
 
         /// <Summary>
         /// 0: 艺术家 - 歌曲名<br/>
@@ -54,6 +56,28 @@ namespace MediaIsland.Components
             {
                 if (_isDualLineStyle == value) return;
                 _isDualLineStyle = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsLeftNegativeMargin
+        {
+            get => _isLeftNegativeMargin;
+            set
+            {
+                if (_isLeftNegativeMargin == value) return;
+                _isLeftNegativeMargin = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool IsRightNegativeMargin
+        {
+            get => _isRightNegativeMargin;
+            set
+            {
+                if (_isRightNegativeMargin == value) return;
+                _isRightNegativeMargin = value;
                 OnPropertyChanged();
             }
         }

@@ -8,6 +8,8 @@ public class LyricsComponentConfig : ObservableRecipient
     private bool _isHideWhenEmpty;
     private bool _isShowStatusText = true;
     private bool _isShowNoteIcon = true;
+    private bool _isLeftNegativeMargin;
+    private bool _isRightNegativeMargin;
     private int _renderFrameRate = 30;
 
     public bool IsHideWhenEmpty
@@ -39,6 +41,28 @@ public class LyricsComponentConfig : ObservableRecipient
         {
             if (_isShowNoteIcon == value) return;
             _isShowNoteIcon = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsLeftNegativeMargin
+    {
+        get => _isLeftNegativeMargin;
+        set
+        {
+            if (_isLeftNegativeMargin == value) return;
+            _isLeftNegativeMargin = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsRightNegativeMargin
+    {
+        get => _isRightNegativeMargin;
+        set
+        {
+            if (_isRightNegativeMargin == value) return;
+            _isRightNegativeMargin = value;
             OnPropertyChanged();
         }
     }

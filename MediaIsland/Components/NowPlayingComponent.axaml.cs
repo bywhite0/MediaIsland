@@ -1,4 +1,5 @@
 using System.IO;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Media;
@@ -68,6 +69,7 @@ namespace MediaIsland.Components
             globalSettings.PropertyChanged += GlobalSettings_OnPropertyChanged;
             BindSourceIconRadius();
             Settings.PropertyChanged += OnSettingsPropertyChanged;
+            UpdateMargin();
             ApplyProgressBarColor(AlbumArt.Source as Bitmap);
             UpdateProgressBarVisibility(_currentEndTime);
             LoadCurrentPlayingInfoAsync();
@@ -135,10 +137,26 @@ namespace MediaIsland.Components
                 });
         }
 
+        private void UpdateMargin()
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                MediaGrid.Margin = new Thickness(
+                    Settings.IsLeftNegativeMargin ? -12 : 0,
+                    0,
+                    Settings.IsRightNegativeMargin ? -12 : 0,
+                    0);
+            });
+        }
+
         private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
         {
             switch (e.PropertyName)
             {
+                case nameof(NowPlayingComponentConfig.IsLeftNegativeMargin):
+                case nameof(NowPlayingComponentConfig.IsRightNegativeMargin):
+                    UpdateMargin();
+                    break;
                 case "IsHideWhenPaused":
                     if (_currentMediaInfo?.PlaybackInfo.PlaybackState == MediaPlaybackState.Paused)
                     {
