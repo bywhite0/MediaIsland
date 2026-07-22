@@ -26,6 +26,13 @@
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBC9;}"
+                                       Header="显示音符图标"
+                                       Description="在歌词文本左侧显示音符图标。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowNoteIcon, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBC9;}"
                                        Header="渲染帧率"
                                        Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">
                 <controls:SettingsExpander.Footer>

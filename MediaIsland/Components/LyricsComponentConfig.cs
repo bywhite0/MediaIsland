@@ -7,6 +7,7 @@ public class LyricsComponentConfig : ObservableRecipient
 {
     private bool _isHideWhenEmpty;
     private bool _isShowStatusText = true;
+    private bool _isShowNoteIcon = true;
     private int _renderFrameRate = 30;
 
     public bool IsHideWhenEmpty
@@ -27,6 +28,17 @@ public class LyricsComponentConfig : ObservableRecipient
         {
             if (_isShowStatusText == value) return;
             _isShowStatusText = value;
+            OnPropertyChanged();
+        }
+    }
+
+    public bool IsShowNoteIcon
+    {
+        get => _isShowNoteIcon;
+        set
+        {
+            if (_isShowNoteIcon == value) return;
+            _isShowNoteIcon = value;
             OnPropertyChanged();
         }
     }

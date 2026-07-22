@@ -42,4 +42,19 @@ public class LyricsComponentConfigTests
         Assert.Contains("\"RenderFrameRate\":60", json);
         Assert.DoesNotContain("RenderFrameRateIndex", json);
     }
+
+    [Fact]
+    public void IsShowNoteIcon_DefaultsToTrueAndPersists()
+    {
+        var settings = new LyricsComponentConfig();
+        Assert.True(settings.IsShowNoteIcon);
+
+        settings.IsShowNoteIcon = false;
+        var json = JsonSerializer.Serialize(settings);
+        Assert.Contains("\"IsShowNoteIcon\":false", json);
+
+        var restored = JsonSerializer.Deserialize<LyricsComponentConfig>(json);
+        Assert.NotNull(restored);
+        Assert.False(restored!.IsShowNoteIcon);
+    }
 }

@@ -15,11 +15,13 @@
           HorizontalAlignment="Center"
           VerticalAlignment="Center"
           DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:LyricsComponent}}">
-        <ci:FluentIcon Grid.Column="0"
+        <ci:FluentIcon x:Name="NoteIcon"
+                       Grid.Column="0"
                        Glyph="&#xEBC9;"
                        FontSize="16"
                        Margin="0 2 4 0"
-                       VerticalAlignment="Center" />
+                       VerticalAlignment="Center"
+                       IsVisible="{Binding Settings.IsShowNoteIcon}" />
         <Grid x:Name="LyricsContentHost"
               Grid.Column="1"
               ClipToBounds="True"
