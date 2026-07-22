@@ -691,25 +691,41 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         CompleteFullFrameTransitionOnly();
         FinishLineMotions(removeExiting: true, settleRemaining: true);
 
-        var existing = _activeLineVisuals.ToDictionary(item => item.LineIndex);
-        var nextIndices = activeLines.Select(item => item.LineIndex).ToHashSet();
+        // Snapshot the previous visual state, then precompute the next frame before animating.
+        var previousByIndex = _activeLineVisuals.ToDictionary(item => item.LineIndex);
+        var firstFrames = previousByIndex.ToDictionary(
+            item => item.Key,
+            item => new LineFirstFrame(
+                item.Value.Control.Bounds.Y,
+                item.Value.Control.Bounds.Height,
+                item.Value.Control.Opacity,
+                item.Value.TargetOpacity,
+                GetLineFontSize(item.Value)));
+
+        var hasDuet = activeLines.Any(item => item.IsDuetSide);
+        var isMultiLine = activeLines.Count > 1;
+        var plan = PrecomputeLinePlan(activeLines, hasDuet, isMultiLine);
+        var nextIndices = plan.Select(item => item.LineIndex).ToHashSet();
         var leaving = _activeLineVisuals
             .Where(item => !nextIndices.Contains(item.LineIndex))
             .ToList();
+
         var offset = Math.Max(12, LyricsText.FontSize * 0.75);
         var now = Environment.TickCount64;
         _lineMotions.Clear();
         _backgroundFadeTargets.Clear();
+        _front.Spacing = isMultiLine ? 0 : 1;
 
         foreach (var leave in leaving)
         {
             var transform = EnsureLineTransform(leave.Control);
+            var first = firstFrames[leave.LineIndex];
             _lineMotions.Add(new LineMotion(
                 leave.Control,
-                leave.Control.Opacity,
+                first.Opacity,
                 0,
                 transform.Y,
-                -offset,
+                transform.Y - offset,
                 DelayMs: 0,
                 DurationMs: TransitionDurationMs,
                 RemoveWhenDone: true,
@@ -718,27 +734,34 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 IsBackgroundStyle: leave.IsBackground));
         }
 
-        var hasDuet = activeLines.Any(item => item.IsDuetSide);
-        var isMultiLine = activeLines.Count > 1;
-        _front.Spacing = isMultiLine ? 0 : 1;
+        var nextVisuals = new List<ActiveLineVisual>(plan.Count);
+        var orderedControls = new List<Control>(plan.Count + leaving.Count);
+        var stayingControls = new List<ActiveLineVisual>();
 
-        var nextVisuals = new List<ActiveLineVisual>(activeLines.Count);
-        var orderedControls = new List<Control>(activeLines.Count + leaving.Count);
-        foreach (var selection in activeLines)
+        foreach (var planned in plan)
         {
-            if (existing.TryGetValue(selection.LineIndex, out var kept))
+            if (previousByIndex.TryGetValue(planned.LineIndex, out var kept))
             {
-                UpdateLineVisual(kept, selection, activeLines.Count, hasDuet, isMultiLine, wordMode, position);
+                var first = firstFrames[planned.LineIndex];
+                UpdateLineVisual(
+                    kept,
+                    planned.Selection,
+                    activeLines.Count,
+                    hasDuet,
+                    isMultiLine,
+                    wordMode,
+                    position);
                 var transform = EnsureLineTransform(kept.Control);
+                kept.Control.Opacity = first.Opacity;
                 transform.Y = 0;
-                kept.Control.Opacity = kept.TargetOpacity;
                 orderedControls.Add(kept.Control);
                 nextVisuals.Add(kept);
+                stayingControls.Add(kept);
                 continue;
             }
 
             var created = CreateLineVisual(
-                selection,
+                planned.Selection,
                 activeLines.Count,
                 hasDuet,
                 isMultiLine,
@@ -787,10 +810,149 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _back.Opacity = 0;
         ((TranslateTransform)_back.RenderTransform!).Y = 0;
 
+        // Layout the precomputed next frame, then FLIP shared lines from first -> last.
+        ForceLineHostLayout();
+        foreach (var kept in stayingControls)
+        {
+            if (!firstFrames.TryGetValue(kept.LineIndex, out var first))
+            {
+                continue;
+            }
+
+            var transform = EnsureLineTransform(kept.Control);
+            var lastY = kept.Control.Bounds.Y;
+            var deltaY = first.Y - lastY;
+            if (Math.Abs(deltaY) < 0.5)
+            {
+                deltaY = EstimateSharedLineDeltaY(kept.LineIndex, firstFrames, plan);
+            }
+
+            transform.Y = deltaY;
+            kept.Control.Opacity = first.Opacity;
+            _lineMotions.Add(new LineMotion(
+                kept.Control,
+                first.Opacity,
+                kept.TargetOpacity,
+                deltaY,
+                0,
+                DelayMs: TransitionDelayMs * 0.5,
+                DurationMs: TransitionDurationMs,
+                RemoveWhenDone: false,
+                StartedAtTick: now,
+                transform,
+                IsBackgroundStyle: kept.IsBackground));
+        }
+
         if (_lineMotions.Count > 0)
         {
             _transitionTimer.Start();
         }
+    }
+
+    private IReadOnlyList<PlannedLineState> PrecomputeLinePlan(
+        IReadOnlyList<LyricsLineSelection> activeLines,
+        bool hasDuet,
+        bool isMultiLine)
+    {
+        var plan = new List<PlannedLineState>(activeLines.Count);
+        for (var order = 0; order < activeLines.Count; order++)
+        {
+            var selection = activeLines[order];
+            var line = selection.Line;
+            var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
+                LyricsText.FontSize,
+                activeLines.Count,
+                line.IsBackground);
+            var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
+            var textAlignment = selection.IsDuetSide
+                ? TextAlignment.Right
+                : hasDuet
+                    ? TextAlignment.Left
+                    : TextAlignment.Center;
+            plan.Add(new PlannedLineState(
+                selection.LineIndex,
+                order,
+                selection,
+                fontSize,
+                opacity,
+                textAlignment,
+                isMultiLine,
+                line.IsBackground));
+        }
+
+        return plan;
+    }
+
+    private void ForceLineHostLayout()
+    {
+        var width = LyricsContentHost.Bounds.Width;
+        if (width <= 0)
+        {
+            width = Math.Max(LyricsText.FontSize * 20, 240);
+        }
+
+        var available = new Size(width, double.PositiveInfinity);
+        _front.Measure(available);
+        var height = Math.Max(_front.DesiredSize.Height, 1);
+        _front.Arrange(new Rect(0, 0, width, height));
+    }
+
+    private static double EstimateSharedLineDeltaY(
+        int lineIndex,
+        IReadOnlyDictionary<int, LineFirstFrame> firstFrames,
+        IReadOnlyList<PlannedLineState> plan)
+    {
+        static double HeightOf(LineFirstFrame frame, double fallbackFontSize) =>
+            frame.Height > 0 ? frame.Height : Math.Max(fallbackFontSize * 1.25, 14);
+
+        double nextY = 0;
+        foreach (var planned in plan)
+        {
+            if (planned.LineIndex == lineIndex)
+            {
+                break;
+            }
+
+            if (firstFrames.TryGetValue(planned.LineIndex, out var frame))
+            {
+                nextY += HeightOf(frame, planned.TargetFontSize);
+            }
+            else
+            {
+                nextY += Math.Max(planned.TargetFontSize * 1.25, 14);
+            }
+        }
+
+        double previousY;
+        if (firstFrames.TryGetValue(lineIndex, out var self) && self.Y > 0.5)
+        {
+            previousY = self.Y;
+        }
+        else
+        {
+            previousY = 0;
+            foreach (var item in firstFrames.OrderBy(frame => frame.Value.Y).ThenBy(frame => frame.Key))
+            {
+                if (item.Key == lineIndex)
+                {
+                    break;
+                }
+
+                previousY += HeightOf(item.Value, 14);
+            }
+        }
+
+        return previousY - nextY;
+    }
+
+    private static double GetLineFontSize(ActiveLineVisual visual)
+    {
+        if (visual.WordPresenter != null)
+        {
+            return visual.WordPresenter.FontSize;
+        }
+
+        return visual.Control is TextBlock textBlock ? textBlock.FontSize : 14;
     }
 
     private ActiveLineVisual CreateLineVisual(
@@ -1408,6 +1570,23 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         public double TargetOpacity { get; set; }
         public bool IsBackground { get; }
     }
+
+    private sealed record LineFirstFrame(
+        double Y,
+        double Height,
+        double Opacity,
+        double TargetOpacity,
+        double FontSize);
+
+    private sealed record PlannedLineState(
+        int LineIndex,
+        int Order,
+        LyricsLineSelection Selection,
+        double TargetFontSize,
+        double TargetOpacity,
+        TextAlignment TextAlignment,
+        bool IsMultiLine,
+        bool IsBackground);
 
     private sealed record LineMotion(
         Control Control,
