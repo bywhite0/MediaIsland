@@ -10,7 +10,10 @@
 		<WindowsProviderProject>..\MediaIsland.Windows\MediaIsland.Windows.csproj</WindowsProviderProject>
 		<WindowsProviderTargetFramework>net8.0-windows10.0.17763</WindowsProviderTargetFramework>
 		<TtmlNativeManifest>$(MSBuildProjectDirectory)\..\native\ttml-ffi\Cargo.toml</TtmlNativeManifest>
-		<TtmlNativeLibrary>$(MSBuildProjectDirectory)\..\native\ttml-ffi\target\release\mediaisland_ttml.dll</TtmlNativeLibrary>
+		<!-- Cargo crate/lib names cannot contain '.'; cargo emits mediaisland_ttml.dll, then we ship MediaIsland.Ttml.dll. -->
+		<TtmlNativeCargoOutput>$(MSBuildProjectDirectory)\..\native\ttml-ffi\target\release\mediaisland_ttml.dll</TtmlNativeCargoOutput>
+		<TtmlNativeLibraryName>MediaIsland.Ttml.dll</TtmlNativeLibraryName>
+		<TtmlNativeLibrary>$(MSBuildProjectDirectory)\..\native\ttml-ffi\target\release\$(TtmlNativeLibraryName)</TtmlNativeLibrary>
 	</PropertyGroup>
 
 
@@ -23,12 +26,12 @@
 	</ItemGroup>
 	
 	<ItemGroup>
-		<None Include="..\native\ttml-ffi\target\release\mediaisland_ttml.dll">
-			<Link>runtimes\win-x64\native\mediaisland_ttml.dll</Link>
+		<None Include="$(TtmlNativeLibrary)">
+			<Link>runtimes\win-x64\native\$(TtmlNativeLibraryName)</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
-		<None Include="..\native\ttml-ffi\target\release\mediaisland_ttml.dll">
-			<Link>mediaisland_ttml.dll</Link>
+		<None Include="$(TtmlNativeLibrary)">
+			<Link>$(TtmlNativeLibraryName)</Link>
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 		<None Update="ThirdPartyLicenses.txt">
@@ -66,6 +69,7 @@
 	        Outputs="$(TtmlNativeLibrary)"
 	        Condition="'$(OS)' == 'Windows_NT' And '$(PlatformTarget)' == 'x64' And Exists('$(TtmlNativeManifest)')">
 		<Exec Command="cargo build --manifest-path &quot;$(TtmlNativeManifest)&quot; --release" />
+		<Copy SourceFiles="$(TtmlNativeCargoOutput)" DestinationFiles="$(TtmlNativeLibrary)" SkipUnchangedFiles="true" />
 	</Target>
 
 </Project>

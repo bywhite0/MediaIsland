@@ -128,7 +128,7 @@ public sealed partial class TtmlNativeParser
             catch (DllNotFoundException ex)
             {
                 _available = false;
-                _failureReason = "找不到 mediaisland_ttml 原生库";
+                _failureReason = "找不到 MediaIsland.Ttml 原生库";
                 _logger?.LogWarning(ex, "[歌词:原生TTML] {Reason}", _failureReason);
             }
             catch (Exception ex)
@@ -161,7 +161,7 @@ public sealed partial class TtmlNativeParser
 
     private static partial class NativeMethods
     {
-        private const string LibraryName = "mediaisland_ttml";
+        private const string LibraryName = "MediaIsland.Ttml";
 
         [LibraryImport(LibraryName, EntryPoint = "mediaisland_ttml_abi_version")]
         [UnmanagedCallConv(CallConvs = [typeof(System.Runtime.CompilerServices.CallConvCdecl)])]

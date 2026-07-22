@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 publish = false
 
+# Cargo crate/lib names cannot contain '.'; MSBuild renames the built DLL to MediaIsland.Ttml.dll for packaging.
 [lib]
 crate-type = ["cdylib"]
 name = "mediaisland_ttml"
