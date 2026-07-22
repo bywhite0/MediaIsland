@@ -2,7 +2,7 @@ using MediaIsland.Helpers;
 using MediaIsland.Models;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Media;
 
 public class MediaSourceFilterTests
 {

@@ -6,6 +6,7 @@
                   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                   xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                   xmlns:local="clr-namespace:MediaIsland.Components"
+                  xmlns:controls="clr-namespace:MediaIsland.Controls"
                   mc:Ignorable="d"
                   d:DesignHeight="80" d:DesignWidth="420"
                   Loaded="LyricsComponent_OnLoaded"
@@ -31,7 +32,7 @@
                         HorizontalAlignment="Stretch"
                         VerticalAlignment="Center"
                         IsVisible="False" />
-            <local:InterludeDotsPresenter x:Name="InterludeDots"
+            <controls:InterludeDotsPresenter x:Name="InterludeDots"
                                           HorizontalAlignment="Center"
                                           VerticalAlignment="Center"
                                           IsVisible="False" />

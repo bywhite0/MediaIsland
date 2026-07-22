@@ -2,7 +2,7 @@ using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Lyrics.Parsers;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Lyrics;
 
 public class ManagedLyricsPayloadParserTests
 {

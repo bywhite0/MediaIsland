@@ -2,7 +2,7 @@ using System.Text.Json;
 using MediaIsland.Components;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Lyrics;
 
 public class LyricsComponentConfigTests
 {

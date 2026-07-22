@@ -2,7 +2,7 @@ using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Lyrics;
 
 public class LyricsLineSelectorTests
 {

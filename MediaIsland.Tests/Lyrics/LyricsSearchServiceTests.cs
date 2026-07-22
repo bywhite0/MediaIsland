@@ -3,7 +3,7 @@ using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Lyrics;
 
 public class LyricsSearchServiceTests
 {

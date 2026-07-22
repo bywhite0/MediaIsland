@@ -1,9 +1,9 @@
 using Avalonia;
-using MediaIsland.Components;
+using MediaIsland.Controls;
 using MediaIsland.Services.Lyrics.Models;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Lyrics;
 
 public class WordLyricsPresenterTests
 {

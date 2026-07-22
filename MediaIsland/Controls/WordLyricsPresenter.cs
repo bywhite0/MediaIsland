@@ -5,7 +5,7 @@ using Avalonia.Controls.Documents;
 using Avalonia.Media;
 using MediaIsland.Services.Lyrics.Models;
 
-namespace MediaIsland.Components;
+namespace MediaIsland.Controls;
 
 /// <summary>
 /// 自定义的单行逐字歌词渲染器。

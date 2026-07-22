@@ -2,7 +2,7 @@ using Xunit;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Media;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Lyrics;
 
 public class LyricsCandidateScorerTests
 {

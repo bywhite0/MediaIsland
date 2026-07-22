@@ -1,7 +1,7 @@
 using MediaIsland.Services.Lyrics.Providers;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Lyrics;
 
 public class LyricsProviderResponseTests
 {

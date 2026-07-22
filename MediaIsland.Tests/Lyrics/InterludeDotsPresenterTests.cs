@@ -1,7 +1,7 @@
-using MediaIsland.Components;
+using MediaIsland.Controls;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Lyrics;
 
 public class InterludeDotsPresenterTests
 {

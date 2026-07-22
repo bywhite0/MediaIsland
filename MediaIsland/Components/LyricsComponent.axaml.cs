@@ -7,6 +7,7 @@ using Avalonia.Styling;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
+using MediaIsland.Controls;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;

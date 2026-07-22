@@ -1,7 +1,7 @@
 using MediaIsland.Services.Media.SourceDisplay;
 using Xunit;
 
-namespace MediaIsland.Tests;
+namespace MediaIsland.Tests.Media;
 
 public class MediaSourceDisplayNameResolverTests
 {

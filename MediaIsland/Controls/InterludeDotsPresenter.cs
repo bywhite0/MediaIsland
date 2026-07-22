@@ -2,7 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Media;
 
-namespace MediaIsland.Components;
+namespace MediaIsland.Controls;
 
 /// <summary>
 /// 在同步歌词的长间奏期间渲染三个提示点，并根据播放时间计算呼吸、淡入和淡出状态。
