@@ -26,7 +26,8 @@ namespace MediaIsland.Components;
 )]
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
-    // AMLL main line: opacity 0.3s with 0.1s delay; background vocal: 0.5s / 0.25s delay to 0.4.
+    // AMLL main line: opacity 0.3s with 0.1s delay; background vocal: 0.5s / 0.25s delay to ~0.4.
+    // Word-synced BG lines apply 0.4 on glyph brushes (not Control.Opacity) so completed words stay at 0.4.
     private const double TransitionDurationMs = 300;
     private const double TransitionDelayMs = 100;
     private const double BackgroundTransitionDurationMs = 500;
@@ -1005,7 +1006,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             LyricsText.FontSize,
             visibleLineCount,
             line.IsBackground);
-        var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
+        // Word-synced BG uses full control opacity; 0.4 is applied inside the presenter brushes.
+        var useWordVisual = wordMode && line.Words.Count > 0;
+        var opacity = line.IsBackground
+            ? (useWordVisual ? 1.0 : BackgroundActiveOpacity)
+            : 1.0;
         var textAlignment = selection.IsDuetSide
             ? TextAlignment.Right
             : hasDuet
@@ -1013,7 +1018,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 : TextAlignment.Center;
         WordLyricsPresenter? wordPresenter = null;
         Control visual;
-        if (wordMode && line.Words.Count > 0)
+        if (useWordVisual)
         {
             wordPresenter = new WordLyricsPresenter
             {
@@ -1025,6 +1030,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 MaxWidth = 520,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Opacity = opacity,
+                IsBackgroundLine = line.IsBackground,
                 RenderTransform = new TranslateTransform()
             };
             ApplyWordLyricsAnimationSettings(wordPresenter);
@@ -1075,7 +1081,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             LyricsText.FontSize,
             visibleLineCount,
             line.IsBackground);
-        var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
+        var useWordVisual = visual.WordPresenter != null && wordMode && line.Words.Count > 0;
+        var opacity = line.IsBackground
+            ? (useWordVisual ? 1.0 : BackgroundActiveOpacity)
+            : 1.0;
         var textAlignment = selection.IsDuetSide
             ? TextAlignment.Right
             : hasDuet
@@ -1083,7 +1092,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 : TextAlignment.Center;
         visual.TargetOpacity = opacity;
 
-        if (visual.WordPresenter != null && wordMode && line.Words.Count > 0)
+        if (useWordVisual && visual.WordPresenter != null)
         {
             visual.WordPresenter.Line = line;
             visual.WordPresenter.Position = position;
@@ -1091,6 +1100,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             visual.WordPresenter.Foreground = LyricsText.Foreground;
             visual.WordPresenter.TextAlignment = textAlignment;
             visual.WordPresenter.Opacity = opacity;
+            visual.WordPresenter.IsBackgroundLine = line.IsBackground;
             ApplyWordLyricsAnimationSettings(visual.WordPresenter);
             AutomationProperties.SetName(visual.WordPresenter, line.Text);
         }

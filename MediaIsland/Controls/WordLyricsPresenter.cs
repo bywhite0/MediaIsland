@@ -30,6 +30,9 @@ public sealed class WordLyricsPresenter : Control
     private const double WordEmphasisFloatOffsetFactor = 0.05;
     private const double WordEmphasisCharacterStaggerDivisor = 2.5;
     private const double MinimumCharacterLiftDurationMilliseconds = 120;
+    // AMLL background-line target; apply on brushes so completed words stay at ~0.4.
+    private const double BackgroundLineActiveOpacity = 0.4;
+    private const double BackgroundLineMutedOpacity = 0.28;
 
     public static readonly StyledProperty<LyricsLine?> LineProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, LyricsLine?>(nameof(Line));
@@ -58,6 +61,9 @@ public sealed class WordLyricsPresenter : Control
 
     public static readonly StyledProperty<bool> IsWordEdgeFeatherEnabledProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, bool>(nameof(IsWordEdgeFeatherEnabled), true);
+
+    public static readonly StyledProperty<bool> IsBackgroundLineProperty =
+        AvaloniaProperty.Register<WordLyricsPresenter, bool>(nameof(IsBackgroundLine));
 
     // 缓存当前排版结果，避免播放期间逐帧重复创建 FormattedText 和测量字符宽度。
     private LyricsLine? _cachedLine;
@@ -130,6 +136,12 @@ public sealed class WordLyricsPresenter : Control
         set => SetValue(IsWordEdgeFeatherEnabledProperty, value);
     }
 
+    public bool IsBackgroundLine
+    {
+        get => GetValue(IsBackgroundLineProperty);
+        set => SetValue(IsBackgroundLineProperty, value);
+    }
+
     static WordLyricsPresenter()
     {
         // 排版相关属性改变时，需要重新测量和绘制
@@ -142,7 +154,8 @@ public sealed class WordLyricsPresenter : Control
             TextAlignmentProperty,
             IsWordLiftEnabledProperty,
             IsWordEmphasisEnabledProperty,
-            IsWordEdgeFeatherEnabledProperty);
+            IsWordEdgeFeatherEnabledProperty,
+            IsBackgroundLineProperty);
         AffectsMeasure<WordLyricsPresenter>(
             LineProperty,
             FontSizeProperty,
@@ -179,13 +192,18 @@ public sealed class WordLyricsPresenter : Control
         }
 
         var foreground = Foreground ?? Brushes.White;
-        var mutedBrush = CreateMutedBrush(foreground);
+        var mutedBrush = IsBackgroundLine
+            ? CreateOpacityBrush(foreground, BackgroundLineMutedOpacity)
+            : CreateMutedBrush(foreground);
+        var activeBrush = IsBackgroundLine
+            ? CreateOpacityBrush(foreground, BackgroundLineActiveOpacity)
+            : foreground;
         var motionSpace = GetMotionSpace();
         var origin = new Point(GetHorizontalOrigin(_fullText.Width),
             Math.Max(0, (Bounds.Height - _fullText.Height + motionSpace) / 2));
 
         var mutedText = CreateFormatted(Line.Text ?? string.Empty, mutedBrush);
-        var activeText = CreateFormatted(Line.Text ?? string.Empty, foreground);
+        var activeText = CreateFormatted(Line.Text ?? string.Empty, activeBrush);
         if (ShouldRenderAnimatedWords())
         {
             DrawAnimatedWords(context, mutedText, activeText, origin, Position);
@@ -1054,11 +1072,14 @@ public sealed class WordLyricsPresenter : Control
             brush);
     }
 
-    private static IBrush CreateMutedBrush(IBrush foreground)
+    private static IBrush CreateMutedBrush(IBrush foreground) =>
+        CreateOpacityBrush(foreground, 0.38);
+
+    private static IBrush CreateOpacityBrush(IBrush foreground, double opacity)
     {
         if (foreground is ISolidColorBrush solid)
         {
-            return new SolidColorBrush(solid.Color, 0.38);
+            return new SolidColorBrush(solid.Color, opacity);
         }
 
         return foreground;
