@@ -14,6 +14,7 @@ namespace MediaIsland.Components
         double _sourceIconRadius = 16.0;
         bool _isShowAlbumArt = true;
         bool _isShowPlaybackStatus = false;
+        bool _isShowProgressBar = false;
         int _subInfoType = 0;
 
         /// <Summary>
@@ -94,6 +95,20 @@ namespace MediaIsland.Components
             {                   
                 if (_isShowPlaybackStatus == value) return;
                 _isShowPlaybackStatus = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>
+        /// 是否在组件底部显示播放进度条。
+        /// </summary>
+        public bool IsShowProgressBar
+        {
+            get => _isShowProgressBar;
+            set
+            {
+                if (_isShowProgressBar == value) return;
+                _isShowProgressBar = value;
                 OnPropertyChanged();
             }
         }

@@ -52,6 +52,13 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowSourceName, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEA97;}"
+                                       Header="显示播放进度条"
+                                       Description="在组件底部显示当前媒体播放进度（如果可用）。进度条颜色可在插件设置中配置。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowProgressBar, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander Margin="0,0,0,6"
                                        Description="切换标题下方的信息显示。"
                                        Header="次要信息"

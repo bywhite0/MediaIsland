@@ -1,6 +1,8 @@
 using System.IO;
 using Avalonia.Controls;
 using Avalonia.Data;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
@@ -62,8 +64,12 @@ namespace MediaIsland.Components
             globalSettings = Plugin.Instance?.Settings ?? globalSettings;
             globalSettings.MediaSourceSettingsSaved -= GlobalSettings_OnMediaSourceSettingsSaved;
             globalSettings.MediaSourceSettingsSaved += GlobalSettings_OnMediaSourceSettingsSaved;
+            globalSettings.PropertyChanged -= GlobalSettings_OnPropertyChanged;
+            globalSettings.PropertyChanged += GlobalSettings_OnPropertyChanged;
             BindSourceIconRadius();
             Settings.PropertyChanged += OnSettingsPropertyChanged;
+            ApplyProgressBarColor(AlbumArt.Source as Bitmap);
+            UpdateProgressBarVisibility(_currentEndTime);
             LoadCurrentPlayingInfoAsync();
         }
 
@@ -74,6 +80,7 @@ namespace MediaIsland.Components
             _sourceIconRadiusBinding?.Dispose();
             _sourceIconRadiusBinding = null;
             globalSettings.MediaSourceSettingsSaved -= GlobalSettings_OnMediaSourceSettingsSaved;
+            globalSettings.PropertyChanged -= GlobalSettings_OnPropertyChanged;
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
             _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
         }
@@ -95,6 +102,24 @@ namespace MediaIsland.Components
                 {
                     _ = HideMediaGridAsync();
                 }
+            });
+        }
+
+        private void GlobalSettings_OnPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is not nameof(PluginSettings.ProgressBarColorMode))
+            {
+                return;
+            }
+
+            if (!_isLoaded)
+            {
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                ApplyProgressBarColor(AlbumArt.Source as Bitmap);
             });
         }
 
@@ -145,6 +170,12 @@ namespace MediaIsland.Components
                     Dispatcher.UIThread.InvokeAsync(() =>
                     {
                         SourceIconBorder.IsVisible = Settings.IsShowSource && SourceIcon.Source != null;
+                    });
+                    break;
+                case nameof(NowPlayingComponentConfig.IsShowProgressBar):
+                    Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        UpdateProgressBarVisibility(_currentEndTime);
                     });
                     break;
             }
@@ -295,6 +326,8 @@ namespace MediaIsland.Components
                     AlbumArt.Source = null;
                     CoverPlaceholder.IsVisible = true;
                 }
+
+                ApplyProgressBarColor(thumbnail);
             });
         }
 
@@ -409,6 +442,8 @@ namespace MediaIsland.Components
                 }
             }
             TimeText.Text = (duration.Hours == 0) ? $@"{position:mm\:ss} / {duration:mm\:ss}" : $@"{(int)position.TotalHours:00}:{position:mm\:ss} / {(int)duration.TotalHours:00}:{duration:mm\:ss}";
+
+            UpdateProgressBar(position, duration);
         }
 
         private static bool HasTimeline(TimeSpan duration)
@@ -443,7 +478,43 @@ namespace MediaIsland.Components
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 MediaGrid.IsVisible = false;
+                ProgressBar.Value = 0;
+                ProgressContainer.IsVisible = false;
             });
+        }
+
+        private void UpdateProgressBar(TimeSpan position, TimeSpan duration)
+        {
+            UpdateProgressBarVisibility(duration);
+            if (!HasTimeline(duration))
+            {
+                ProgressBar.Value = 0;
+                return;
+            }
+
+            var ratio = position.TotalSeconds / duration.TotalSeconds;
+            ProgressBar.Value = Math.Clamp(ratio, 0.0, 1.0);
+        }
+
+        private void UpdateProgressBarVisibility(TimeSpan duration)
+        {
+            ProgressContainer.IsVisible = Settings.IsShowProgressBar && HasTimeline(duration);
+        }
+
+        private void ApplyProgressBarColor(Bitmap? thumbnail)
+        {
+            if (globalSettings.ProgressBarColorMode == (int)MediaIsland.Models.ProgressBarColorMode.CoverTheme)
+            {
+                var color = CoverThemeColorHelper.TryExtract(thumbnail);
+                if (color is { } coverColor)
+                {
+                    ProgressBar.Foreground = new SolidColorBrush(coverColor);
+                    return;
+                }
+            }
+
+            // ClassIsland 主题色：清除本地值，沿用主题 ProgressBar 前景（Accent）
+            ProgressBar.ClearValue(ProgressBar.ForegroundProperty);
         }
 
     }

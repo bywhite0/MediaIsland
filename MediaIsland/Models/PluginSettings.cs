@@ -153,6 +153,23 @@ namespace MediaIsland.Models
             }
         }
 
+        private int _progressBarColorMode = 0; // ProgressBarColorMode.ClassIslandTheme
+
+        /// <summary>
+        /// 正在播放组件进度条颜色来源。
+        /// 0: ClassIsland 主题色；1: 封面主题色（如有，否则回退主题色）。
+        /// </summary>
+        public int ProgressBarColorMode
+        {
+            get => _progressBarColorMode;
+            set
+            {
+                if (_progressBarColorMode == value) return;
+                _progressBarColorMode = value;
+                OnPropertyChanged();
+            }
+        }
+
     }
     public class MediaSource : ObservableObject
     {

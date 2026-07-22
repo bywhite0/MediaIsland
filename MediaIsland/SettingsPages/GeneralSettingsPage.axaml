@@ -339,6 +339,16 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEdgeFeatherEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
+                                       Header="正在播放进度条颜色"
+                                       Description="控制“正在播放”组件进度条颜色。可使用 ClassIsland 主题色，或从专辑封面提取主题色（如果可用）。">
+                <controls:SettingsExpander.Footer>
+                    <ComboBox MinWidth="160" SelectedIndex="{Binding Settings.ProgressBarColorMode, Mode=TwoWay}">
+                        <ComboBoxItem>ClassIsland 主题色</ComboBoxItem>
+                        <ComboBoxItem>封面主题色</ComboBoxItem>
+                    </ComboBox>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
                                        Header="移除封面的 Spotify 水印"
                                        Description="部分版本的 Spotify 桌面版会在传给 SMTC 的封面下方加入其商标，如果你在插件呈现的封面上看到了，可以打开这个开关。">
