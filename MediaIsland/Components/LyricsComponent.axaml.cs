@@ -47,6 +47,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private StackPanel _front = null!;
     private StackPanel _back = null!;
+    private Canvas _exitLayer = null!;
     private TransitionState? _transition;
     private readonly List<(Control Control, double TargetOpacity)> _backgroundFadeTargets = [];
     private readonly List<LineMotion> _lineMotions = [];
@@ -79,6 +80,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         InitializeComponent();
         _front = LyricsFrontLayer;
         _back = LyricsBackLayer;
+        _exitLayer = LyricsExitLayer;
         _mediaService = mediaService;
         _lyricsSearchService = lyricsSearchService;
         _logger = logger;
@@ -690,13 +692,14 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         // Finish any whole-frame animation, but keep the current line controls for reuse.
         CompleteFullFrameTransitionOnly();
         FinishLineMotions(removeExiting: true, settleRemaining: true);
+        ClearExitLayer();
 
-        // Snapshot the previous visual state, then precompute the next frame before animating.
+        // Snapshot previous on-screen positions in host coordinates before rebuilding the final stack.
         var previousByIndex = _activeLineVisuals.ToDictionary(item => item.LineIndex);
         var firstFrames = previousByIndex.ToDictionary(
             item => item.Key,
             item => new LineFirstFrame(
-                item.Value.Control.Bounds.Y,
+                GetHostY(item.Value.Control),
                 item.Value.Control.Bounds.Height,
                 item.Value.Control.Opacity,
                 item.Value.TargetOpacity,
@@ -716,28 +719,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _backgroundFadeTargets.Clear();
         _front.Spacing = isMultiLine ? 0 : 1;
 
-        foreach (var leave in leaving)
-        {
-            var transform = EnsureLineTransform(leave.Control);
-            var first = firstFrames[leave.LineIndex];
-            _lineMotions.Add(new LineMotion(
-                leave.Control,
-                first.Opacity,
-                0,
-                transform.Y,
-                transform.Y - offset,
-                DelayMs: 0,
-                DurationMs: TransitionDurationMs,
-                RemoveWhenDone: true,
-                StartedAtTick: now,
-                transform,
-                IsBackgroundStyle: leave.IsBackground));
-        }
-
+        // Front stack only holds the final active set so layout is already the destination frame.
         var nextVisuals = new List<ActiveLineVisual>(plan.Count);
-        var orderedControls = new List<Control>(plan.Count + leaving.Count);
         var stayingControls = new List<ActiveLineVisual>();
-
+        _front.Children.Clear();
         foreach (var planned in plan)
         {
             if (previousByIndex.TryGetValue(planned.LineIndex, out var kept))
@@ -754,7 +739,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 var transform = EnsureLineTransform(kept.Control);
                 kept.Control.Opacity = first.Opacity;
                 transform.Y = 0;
-                orderedControls.Add(kept.Control);
+                _front.Children.Add(kept.Control);
                 nextVisuals.Add(kept);
                 stayingControls.Add(kept);
                 continue;
@@ -770,7 +755,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             var enterTransform = EnsureLineTransform(created.Control);
             created.Control.Opacity = 0.0001;
             enterTransform.Y = offset;
-            orderedControls.Add(created.Control);
+            _front.Children.Add(created.Control);
             nextVisuals.Add(created);
 
             var delay = created.IsBackground ? BackgroundTransitionDelayMs : TransitionDelayMs;
@@ -786,18 +771,38 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 RemoveWhenDone: false,
                 now,
                 enterTransform,
-                IsBackgroundStyle: created.IsBackground));
+                IsBackgroundStyle: created.IsBackground,
+                RemoveFromExitLayer: false));
         }
 
+        // Park leaving lines on an overlay at their original host Y so they do not reflow the stack.
         foreach (var leave in leaving)
         {
-            orderedControls.Add(leave.Control);
-        }
+            var first = firstFrames[leave.LineIndex];
+            if (leave.Control.Parent is Panel parent)
+            {
+                parent.Children.Remove(leave.Control);
+            }
 
-        _front.Children.Clear();
-        foreach (var control in orderedControls)
-        {
-            _front.Children.Add(control);
+            var transform = EnsureLineTransform(leave.Control);
+            transform.Y = 0;
+            leave.Control.Opacity = first.Opacity;
+            Canvas.SetLeft(leave.Control, 0);
+            Canvas.SetTop(leave.Control, first.Y);
+            _exitLayer.Children.Add(leave.Control);
+            _lineMotions.Add(new LineMotion(
+                leave.Control,
+                first.Opacity,
+                0,
+                0,
+                -offset,
+                DelayMs: 0,
+                DurationMs: TransitionDurationMs,
+                RemoveWhenDone: true,
+                now,
+                transform,
+                IsBackgroundStyle: leave.IsBackground,
+                RemoveFromExitLayer: true));
         }
 
         _activeLineVisuals.Clear();
@@ -810,7 +815,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _back.Opacity = 0;
         ((TranslateTransform)_back.RenderTransform!).Y = 0;
 
-        // Layout the precomputed next frame, then FLIP shared lines from first -> last.
+        // Final front layout is already the destination; FLIP shared lines from first host Y to last.
         ForceLineHostLayout();
         foreach (var kept in stayingControls)
         {
@@ -820,7 +825,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             }
 
             var transform = EnsureLineTransform(kept.Control);
-            var lastY = kept.Control.Bounds.Y;
+            var lastY = GetHostY(kept.Control);
             var deltaY = first.Y - lastY;
             if (Math.Abs(deltaY) < 0.5)
             {
@@ -840,13 +845,30 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 RemoveWhenDone: false,
                 StartedAtTick: now,
                 transform,
-                IsBackgroundStyle: kept.IsBackground));
+                IsBackgroundStyle: kept.IsBackground,
+                RemoveFromExitLayer: false));
         }
 
         if (_lineMotions.Count > 0)
         {
             _transitionTimer.Start();
         }
+    }
+
+    private double GetHostY(Control control)
+    {
+        var point = control.TranslatePoint(new Point(0, 0), LyricsContentHost);
+        if (point.HasValue)
+        {
+            return point.Value.Y;
+        }
+
+        return control.Bounds.Y;
+    }
+
+    private void ClearExitLayer()
+    {
+        _exitLayer.Children.Clear();
     }
 
     private IReadOnlyList<PlannedLineState> PrecomputeLinePlan(
@@ -891,10 +913,25 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             width = Math.Max(LyricsText.FontSize * 20, 240);
         }
 
+        // Arrange the final front stack first, then the host so TranslatePoint host-Y is accurate
+        // after multi-line -> single-line height changes (VerticalAlignment=Center).
         var available = new Size(width, double.PositiveInfinity);
         _front.Measure(available);
-        var height = Math.Max(_front.DesiredSize.Height, 1);
-        _front.Arrange(new Rect(0, 0, width, height));
+        var frontHeight = Math.Max(_front.DesiredSize.Height, 1);
+        _front.Arrange(new Rect(0, 0, width, frontHeight));
+
+        LyricsContentHost.Measure(available);
+        var hostHeight = Math.Max(LyricsContentHost.DesiredSize.Height, frontHeight);
+        var hostWidth = Math.Max(LyricsContentHost.DesiredSize.Width, width);
+        var hostBounds = LyricsContentHost.Bounds;
+        if (hostBounds.Width > 0 && hostBounds.Height > 0)
+        {
+            LyricsContentHost.Arrange(new Rect(hostBounds.X, hostBounds.Y, hostBounds.Width, hostBounds.Height));
+        }
+        else
+        {
+            LyricsContentHost.Arrange(new Rect(0, 0, hostWidth, hostHeight));
+        }
     }
 
     private static double EstimateSharedLineDeltaY(
@@ -1422,8 +1459,15 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             motion.Transform.Y = motion.ToY;
             if (motion.RemoveWhenDone)
             {
-                _front.Children.Remove(motion.Control);
-                _back.Children.Remove(motion.Control);
+                if (motion.RemoveFromExitLayer)
+                {
+                    _exitLayer.Children.Remove(motion.Control);
+                }
+                else
+                {
+                    _front.Children.Remove(motion.Control);
+                    _back.Children.Remove(motion.Control);
+                }
             }
 
             _lineMotions.RemoveAt(i);
@@ -1436,8 +1480,16 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         {
             if (motion.RemoveWhenDone && removeExiting)
             {
-                _front.Children.Remove(motion.Control);
-                _back.Children.Remove(motion.Control);
+                if (motion.RemoveFromExitLayer)
+                {
+                    _exitLayer.Children.Remove(motion.Control);
+                }
+                else
+                {
+                    _front.Children.Remove(motion.Control);
+                    _back.Children.Remove(motion.Control);
+                }
+
                 continue;
             }
 
@@ -1491,6 +1543,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         FinishLineMotions(removeExiting: true, settleRemaining: true);
         CompleteFullFrameTransitionOnly();
+        ClearExitLayer();
     }
 
     private void SettleBackgroundFadeTargets()
@@ -1526,6 +1579,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private void UpdateEmptyVisibility()
     {
         var hasText = _front.Children.Count > 0 ||
+                      _exitLayer.Children.Count > 0 ||
                       (_transition != null && _back.Children.Count > 0);
         LyricsGrid.IsVisible = !Settings.IsHideWhenEmpty || hasText;
     }
@@ -1599,7 +1653,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         bool RemoveWhenDone,
         long StartedAtTick,
         TranslateTransform Transform,
-        bool IsBackgroundStyle);
+        bool IsBackgroundStyle,
+        bool RemoveFromExitLayer = false);
 
     private sealed record TransitionState(
         StackPanel OldLayer,

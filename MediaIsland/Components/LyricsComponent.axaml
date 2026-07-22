@@ -48,6 +48,11 @@
                     <TranslateTransform />
                 </StackPanel.RenderTransform>
             </StackPanel>
+            <!-- Leaving lines animate here so the front stack can already be the final layout. -->
+            <Canvas x:Name="LyricsExitLayer"
+                    IsHitTestVisible="False"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Stretch" />
         </Grid>
     </Grid>
 </ci:ComponentBase>
