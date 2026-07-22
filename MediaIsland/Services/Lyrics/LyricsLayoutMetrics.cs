@@ -31,4 +31,21 @@ internal static class LyricsLayoutMetrics
             ? Math.Max(MinimumMainLyricsFontSize, defaultFontSize - CompactMainLyricsFontSizeReduction)
             : defaultFontSize;
     }
+
+    /// <summary>
+    /// Full-frame transition only when the active set has no continuity with the previous set.
+    /// Partial handoffs (duet overlap, main+BG gaining/losing a second main) rebuild in place.
+    /// </summary>
+    public static bool ShouldAnimateFullLineTransition(
+        bool isShowingActiveLines,
+        IReadOnlyList<int> previousIndices,
+        IReadOnlyList<int> nextIndices)
+    {
+        if (!isShowingActiveLines || previousIndices.Count == 0 || nextIndices.Count == 0)
+        {
+            return true;
+        }
+
+        return !previousIndices.Intersect(nextIndices).Any();
+    }
 }

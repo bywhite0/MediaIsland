@@ -49,6 +49,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private StackPanel _back = null!;
     private TransitionState? _transition;
     private readonly List<(Control Control, double TargetOpacity)> _backgroundFadeTargets = [];
+    private readonly List<LineMotion> _lineMotions = [];
+    private bool _backgroundOnlyFade;
+    private long _backgroundOnlyFadeStartedAt;
     private InterludeDotsPresenter? _interludeDots;
     private string _displayedStatusText = string.Empty;
     private double _displayedStatusOpacity = -1;
@@ -499,10 +502,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         TimeSpan position)
     {
         var lineIndices = activeLines.Select(item => item.LineIndex).ToArray();
+        int[] previousIndices;
         bool linesChanged;
         lock (_syncLock)
         {
-            linesChanged = !_activeLineIndices.SequenceEqual(lineIndices);
+            previousIndices = _activeLineIndices;
+            linesChanged = !previousIndices.SequenceEqual(lineIndices);
             if (linesChanged)
             {
                 _activeLineIndices = lineIndices;
@@ -518,7 +523,15 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
             if (linesChanged)
             {
-                RebuildActiveLineVisuals(activeLines, wordMode, position);
+                // Overlapping active sets use per-line enter/leave motion; only hard switches
+                // (no shared indices) replay the full-component dual-layer slide/fade.
+                var animateFullTransition = ShouldAnimateFullLineTransition(previousIndices, lineIndices);
+                RebuildActiveLineVisuals(
+                    activeLines,
+                    wordMode,
+                    position,
+                    animateFullTransition,
+                    previousIndices);
             }
             else
             {
@@ -535,6 +548,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             UpdateEmptyVisibility();
         });
     }
+
+    private bool ShouldAnimateFullLineTransition(int[] previousIndices, int[] nextIndices) =>
+        LyricsLayoutMetrics.ShouldAnimateFullLineTransition(
+            _isShowingActiveLines,
+            previousIndices,
+            nextIndices);
 
     private void UpdateInterlude(LyricsInterlude interlude, TimeSpan position)
     {
@@ -581,89 +600,313 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private void RebuildActiveLineVisuals(
         IReadOnlyList<LyricsLineSelection> activeLines,
         bool wordMode,
-        TimeSpan position)
+        TimeSpan position,
+        bool animateFullTransition = true,
+        IReadOnlyList<int>? previousIndices = null)
     {
-        CompleteTransition();
-        _activeLineVisuals.Clear();
-        _backgroundFadeTargets.Clear();
         _interludeDots = null;
         _isShowingInterlude = false;
         _isShowingActiveLines = true;
         _displayedStatusText = string.Empty;
         _displayedStatusOpacity = -1;
-        _back.Children.Clear();
+
+        // Shared-line handoff: morph previous layout into the next one instead of swapping the whole frame.
+        if (!animateFullTransition &&
+            IsLyricsTransitionEnabled &&
+            _activeLineVisuals.Count > 0)
+        {
+            ApplyPartialLineTransition(activeLines, wordMode, position);
+            return;
+        }
+
+        CompleteTransition();
+        _activeLineVisuals.Clear();
+        _backgroundFadeTargets.Clear();
+        _lineMotions.Clear();
+
+        var previousSet = previousIndices is { Count: > 0 }
+            ? previousIndices.ToHashSet()
+            : [];
+        var targetLayer = animateFullTransition ? _back : _front;
+        targetLayer.Children.Clear();
 
         var hasDuet = activeLines.Any(item => item.IsDuetSide);
         var isMultiLine = activeLines.Count > 1;
-        _back.Spacing = isMultiLine ? 0 : 1;
+        targetLayer.Spacing = isMultiLine ? 0 : 1;
 
         foreach (var selection in activeLines)
         {
-            var line = selection.Line;
-            var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
-                LyricsText.FontSize,
+            var visual = CreateLineVisual(
+                selection,
                 activeLines.Count,
-                line.IsBackground);
-            var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
-            var textAlignment = selection.IsDuetSide
-                ? TextAlignment.Right
-                : hasDuet
-                    ? TextAlignment.Left
-                    : TextAlignment.Center;
-            WordLyricsPresenter? wordPresenter = null;
-            Control visual;
-            if (wordMode && line.Words.Count > 0)
+                hasDuet,
+                isMultiLine,
+                wordMode,
+                position);
+            targetLayer.Children.Add(visual.Control);
+            _activeLineVisuals.Add(visual);
+            if (visual.IsBackground)
             {
-                wordPresenter = new WordLyricsPresenter
+                var isNewBackground = !previousSet.Contains(selection.LineIndex);
+                var shouldFadeBackground = IsLyricsTransitionEnabled &&
+                                           (animateFullTransition || isNewBackground);
+                if (shouldFadeBackground)
                 {
-                    Line = line,
-                    Position = position,
-                    FontSize = fontSize,
-                    Foreground = LyricsText.Foreground,
-                    TextAlignment = textAlignment,
-                    MaxWidth = 520,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    Opacity = opacity
-                };
-                ApplyWordLyricsAnimationSettings(wordPresenter);
-                AutomationProperties.SetName(wordPresenter, line.Text);
-                visual = wordPresenter;
-            }
-            else
-            {
-                visual = new TextBlock
-                {
-                    Text = line.Text,
-                    FontSize = fontSize,
-                    Foreground = LyricsText.Foreground,
-                    TextAlignment = textAlignment,
-                    TextTrimming = TextTrimming.CharacterEllipsis,
-                    TextWrapping = TextWrapping.NoWrap,
-                    MaxWidth = 520,
-                    HorizontalAlignment = HorizontalAlignment.Stretch,
-                    Opacity = opacity
-                };
-            }
-
-            if (isMultiLine)
-            {
-                visual.Margin = new Thickness(0, -1, 0, -1);
-            }
-
-            _back.Children.Add(visual);
-            _activeLineVisuals.Add(new ActiveLineVisual(selection.LineIndex, wordPresenter));
-            if (line.IsBackground)
-            {
-                if (IsLyricsTransitionEnabled)
-                {
-                    visual.Opacity = 0.0001;
+                    visual.Control.Opacity = 0.0001;
+                    _backgroundFadeTargets.Add((visual.Control, visual.TargetOpacity));
                 }
-
-                _backgroundFadeTargets.Add((visual, opacity));
             }
         }
 
-        StartTransition();
+        if (animateFullTransition)
+        {
+            StartTransition();
+            return;
+        }
+
+        _front.IsVisible = true;
+        _front.Opacity = 1;
+        ((TranslateTransform)_front.RenderTransform!).Y = 0;
+        _back.Children.Clear();
+        _back.IsVisible = false;
+        _back.Opacity = 0;
+        ((TranslateTransform)_back.RenderTransform!).Y = 0;
+
+        if (_backgroundFadeTargets.Count > 0)
+        {
+            StartBackgroundOnlyFade();
+        }
+        else
+        {
+            SettleBackgroundFadeTargets();
+        }
+    }
+
+    private void ApplyPartialLineTransition(
+        IReadOnlyList<LyricsLineSelection> activeLines,
+        bool wordMode,
+        TimeSpan position)
+    {
+        // Finish any whole-frame animation, but keep the current line controls for reuse.
+        CompleteFullFrameTransitionOnly();
+        FinishLineMotions(removeExiting: true, settleRemaining: true);
+
+        var existing = _activeLineVisuals.ToDictionary(item => item.LineIndex);
+        var nextIndices = activeLines.Select(item => item.LineIndex).ToHashSet();
+        var leaving = _activeLineVisuals
+            .Where(item => !nextIndices.Contains(item.LineIndex))
+            .ToList();
+        var offset = Math.Max(12, LyricsText.FontSize * 0.75);
+        var now = Environment.TickCount64;
+        _lineMotions.Clear();
+        _backgroundFadeTargets.Clear();
+
+        foreach (var leave in leaving)
+        {
+            var transform = EnsureLineTransform(leave.Control);
+            _lineMotions.Add(new LineMotion(
+                leave.Control,
+                leave.Control.Opacity,
+                0,
+                transform.Y,
+                -offset,
+                DelayMs: 0,
+                DurationMs: TransitionDurationMs,
+                RemoveWhenDone: true,
+                StartedAtTick: now,
+                transform,
+                IsBackgroundStyle: leave.IsBackground));
+        }
+
+        var hasDuet = activeLines.Any(item => item.IsDuetSide);
+        var isMultiLine = activeLines.Count > 1;
+        _front.Spacing = isMultiLine ? 0 : 1;
+
+        var nextVisuals = new List<ActiveLineVisual>(activeLines.Count);
+        var orderedControls = new List<Control>(activeLines.Count + leaving.Count);
+        foreach (var selection in activeLines)
+        {
+            if (existing.TryGetValue(selection.LineIndex, out var kept))
+            {
+                UpdateLineVisual(kept, selection, activeLines.Count, hasDuet, isMultiLine, wordMode, position);
+                var transform = EnsureLineTransform(kept.Control);
+                transform.Y = 0;
+                kept.Control.Opacity = kept.TargetOpacity;
+                orderedControls.Add(kept.Control);
+                nextVisuals.Add(kept);
+                continue;
+            }
+
+            var created = CreateLineVisual(
+                selection,
+                activeLines.Count,
+                hasDuet,
+                isMultiLine,
+                wordMode,
+                position);
+            var enterTransform = EnsureLineTransform(created.Control);
+            created.Control.Opacity = 0.0001;
+            enterTransform.Y = offset;
+            orderedControls.Add(created.Control);
+            nextVisuals.Add(created);
+
+            var delay = created.IsBackground ? BackgroundTransitionDelayMs : TransitionDelayMs;
+            var duration = created.IsBackground ? BackgroundTransitionDurationMs : TransitionDurationMs;
+            _lineMotions.Add(new LineMotion(
+                created.Control,
+                0.0001,
+                created.TargetOpacity,
+                offset,
+                0,
+                delay,
+                duration,
+                RemoveWhenDone: false,
+                now,
+                enterTransform,
+                IsBackgroundStyle: created.IsBackground));
+        }
+
+        foreach (var leave in leaving)
+        {
+            orderedControls.Add(leave.Control);
+        }
+
+        _front.Children.Clear();
+        foreach (var control in orderedControls)
+        {
+            _front.Children.Add(control);
+        }
+
+        _activeLineVisuals.Clear();
+        _activeLineVisuals.AddRange(nextVisuals);
+        _front.IsVisible = true;
+        _front.Opacity = 1;
+        ((TranslateTransform)_front.RenderTransform!).Y = 0;
+        _back.Children.Clear();
+        _back.IsVisible = false;
+        _back.Opacity = 0;
+        ((TranslateTransform)_back.RenderTransform!).Y = 0;
+
+        if (_lineMotions.Count > 0)
+        {
+            _transitionTimer.Start();
+        }
+    }
+
+    private ActiveLineVisual CreateLineVisual(
+        LyricsLineSelection selection,
+        int visibleLineCount,
+        bool hasDuet,
+        bool isMultiLine,
+        bool wordMode,
+        TimeSpan position)
+    {
+        var line = selection.Line;
+        var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
+            LyricsText.FontSize,
+            visibleLineCount,
+            line.IsBackground);
+        var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
+        var textAlignment = selection.IsDuetSide
+            ? TextAlignment.Right
+            : hasDuet
+                ? TextAlignment.Left
+                : TextAlignment.Center;
+        WordLyricsPresenter? wordPresenter = null;
+        Control visual;
+        if (wordMode && line.Words.Count > 0)
+        {
+            wordPresenter = new WordLyricsPresenter
+            {
+                Line = line,
+                Position = position,
+                FontSize = fontSize,
+                Foreground = LyricsText.Foreground,
+                TextAlignment = textAlignment,
+                MaxWidth = 520,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Opacity = opacity,
+                RenderTransform = new TranslateTransform()
+            };
+            ApplyWordLyricsAnimationSettings(wordPresenter);
+            AutomationProperties.SetName(wordPresenter, line.Text);
+            visual = wordPresenter;
+        }
+        else
+        {
+            visual = new TextBlock
+            {
+                Text = line.Text,
+                FontSize = fontSize,
+                Foreground = LyricsText.Foreground,
+                TextAlignment = textAlignment,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                TextWrapping = TextWrapping.NoWrap,
+                MaxWidth = 520,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Opacity = opacity,
+                RenderTransform = new TranslateTransform()
+            };
+        }
+
+        if (isMultiLine)
+        {
+            visual.Margin = new Thickness(0, -1, 0, -1);
+        }
+
+        return new ActiveLineVisual(
+            selection.LineIndex,
+            visual,
+            wordPresenter,
+            opacity,
+            line.IsBackground);
+    }
+
+    private void UpdateLineVisual(
+        ActiveLineVisual visual,
+        LyricsLineSelection selection,
+        int visibleLineCount,
+        bool hasDuet,
+        bool isMultiLine,
+        bool wordMode,
+        TimeSpan position)
+    {
+        var line = selection.Line;
+        var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
+            LyricsText.FontSize,
+            visibleLineCount,
+            line.IsBackground);
+        var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
+        var textAlignment = selection.IsDuetSide
+            ? TextAlignment.Right
+            : hasDuet
+                ? TextAlignment.Left
+                : TextAlignment.Center;
+        visual.TargetOpacity = opacity;
+
+        if (visual.WordPresenter != null && wordMode && line.Words.Count > 0)
+        {
+            visual.WordPresenter.Line = line;
+            visual.WordPresenter.Position = position;
+            visual.WordPresenter.FontSize = fontSize;
+            visual.WordPresenter.Foreground = LyricsText.Foreground;
+            visual.WordPresenter.TextAlignment = textAlignment;
+            visual.WordPresenter.Opacity = opacity;
+            ApplyWordLyricsAnimationSettings(visual.WordPresenter);
+            AutomationProperties.SetName(visual.WordPresenter, line.Text);
+        }
+        else if (visual.Control is TextBlock textBlock)
+        {
+            textBlock.Text = line.Text;
+            textBlock.FontSize = fontSize;
+            textBlock.Foreground = LyricsText.Foreground;
+            textBlock.TextAlignment = textAlignment;
+            textBlock.Opacity = opacity;
+        }
+
+        visual.Control.Margin = isMultiLine
+            ? new Thickness(0, -1, 0, -1)
+            : default;
     }
 
     private void RebuildInterludeVisual(LyricsInterlude interlude, TimeSpan position)
@@ -671,6 +914,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         CompleteTransition();
         _activeLineVisuals.Clear();
         _backgroundFadeTargets.Clear();
+        _lineMotions.Clear();
         _isShowingActiveLines = false;
         _isShowingInterlude = true;
         _displayedStatusText = string.Empty;
@@ -796,6 +1040,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _back.Children.Clear();
         _activeLineVisuals.Clear();
         _backgroundFadeTargets.Clear();
+        _lineMotions.Clear();
         _interludeDots = null;
         _isShowingInterlude = false;
         _isShowingActiveLines = false;
@@ -855,6 +1100,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         CompleteTransition();
         _activeLineVisuals.Clear();
         _backgroundFadeTargets.Clear();
+        _lineMotions.Clear();
         _interludeDots = null;
         _isShowingInterlude = false;
         _isShowingActiveLines = false;
@@ -891,6 +1137,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         _front = newLayer;
         _back = oldLayer;
+        _backgroundOnlyFade = false;
+        _lineMotions.Clear();
 
         if (!IsLyricsTransitionEnabled)
         {
@@ -919,6 +1167,43 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void TransitionTimer_OnTick(object? sender, EventArgs e)
     {
+        if (_lineMotions.Count > 0)
+        {
+            TickLineMotions();
+            if (_lineMotions.Count == 0 && _transition == null && !_backgroundOnlyFade)
+            {
+                _transitionTimer.Stop();
+            }
+
+            if (_transition == null && !_backgroundOnlyFade)
+            {
+                return;
+            }
+        }
+
+        if (_backgroundOnlyFade)
+        {
+            var backgroundElapsed = Environment.TickCount64 - _backgroundOnlyFadeStartedAt;
+            var backgroundProgress = Math.Clamp(
+                (backgroundElapsed - BackgroundTransitionDelayMs) / BackgroundTransitionDurationMs,
+                0,
+                1);
+            var backgroundEased = backgroundProgress <= 0
+                ? 0
+                : 1 - Math.Pow(1 - backgroundProgress, 4);
+            foreach (var (control, targetOpacity) in _backgroundFadeTargets)
+            {
+                control.Opacity = targetOpacity * backgroundEased;
+            }
+
+            if (backgroundProgress >= 1)
+            {
+                CompleteTransition();
+            }
+
+            return;
+        }
+
         var transition = _transition;
         if (transition == null)
         {
@@ -933,38 +1218,117 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         transition.NewLayer.Opacity = eased;
         transition.NewTransform.Y = transition.Offset * (1 - eased);
 
-        // Background vocals: delayed fade-in to a softer final opacity (AMLL ~0.4).
-        var backgroundProgress = Math.Clamp(
+        var fullBackgroundProgress = Math.Clamp(
             (elapsedMs - BackgroundTransitionDelayMs) / BackgroundTransitionDurationMs,
             0,
             1);
-        // Approximate cubic-bezier(0, 1, 0, 1): slow start then settle quickly.
-        var backgroundEased = backgroundProgress <= 0
+        var fullBackgroundEased = fullBackgroundProgress <= 0
             ? 0
-            : 1 - Math.Pow(1 - backgroundProgress, 4);
+            : 1 - Math.Pow(1 - fullBackgroundProgress, 4);
         foreach (var (control, targetOpacity) in _backgroundFadeTargets)
         {
-            control.Opacity = targetOpacity * backgroundEased;
+            control.Opacity = targetOpacity * fullBackgroundEased;
         }
 
-        if (progress >= 1 && backgroundProgress >= 1)
+        if (progress >= 1 && fullBackgroundProgress >= 1)
         {
             CompleteTransition();
         }
     }
 
-    private void CompleteTransition()
+    private void TickLineMotions()
+    {
+        var now = Environment.TickCount64;
+        for (var i = _lineMotions.Count - 1; i >= 0; i--)
+        {
+            var motion = _lineMotions[i];
+            var progress = Math.Clamp(
+                (now - motion.StartedAtTick - motion.DelayMs) / motion.DurationMs,
+                0,
+                1);
+            var eased = progress <= 0
+                ? 0
+                : 1 - Math.Pow(1 - progress, motion.IsBackgroundStyle ? 4 : 3);
+            motion.Control.Opacity = motion.FromOpacity + ((motion.ToOpacity - motion.FromOpacity) * eased);
+            motion.Transform.Y = motion.FromY + ((motion.ToY - motion.FromY) * eased);
+            if (progress < 1)
+            {
+                continue;
+            }
+
+            motion.Control.Opacity = motion.ToOpacity;
+            motion.Transform.Y = motion.ToY;
+            if (motion.RemoveWhenDone)
+            {
+                _front.Children.Remove(motion.Control);
+                _back.Children.Remove(motion.Control);
+            }
+
+            _lineMotions.RemoveAt(i);
+        }
+    }
+
+    private void FinishLineMotions(bool removeExiting, bool settleRemaining)
+    {
+        foreach (var motion in _lineMotions)
+        {
+            if (motion.RemoveWhenDone && removeExiting)
+            {
+                _front.Children.Remove(motion.Control);
+                _back.Children.Remove(motion.Control);
+                continue;
+            }
+
+            if (settleRemaining)
+            {
+                motion.Control.Opacity = motion.ToOpacity;
+                motion.Transform.Y = motion.ToY;
+            }
+        }
+
+        _lineMotions.Clear();
+    }
+
+    private static TranslateTransform EnsureLineTransform(Control control)
+    {
+        if (control.RenderTransform is TranslateTransform existing)
+        {
+            return existing;
+        }
+
+        var transform = new TranslateTransform();
+        control.RenderTransform = transform;
+        return transform;
+    }
+
+    private void StartBackgroundOnlyFade()
+    {
+        _backgroundOnlyFade = true;
+        _backgroundOnlyFadeStartedAt = Environment.TickCount64;
+        _transition = null;
+        _transitionTimer.Start();
+    }
+
+    private void CompleteFullFrameTransitionOnly()
     {
         _transitionTimer.Stop();
         _transition = null;
+        _backgroundOnlyFade = false;
         _front.IsVisible = true;
         _front.Opacity = 1;
         ((TranslateTransform)_front.RenderTransform!).Y = 0;
         SettleBackgroundFadeTargets();
+        _backgroundFadeTargets.Clear();
         _back.Children.Clear();
         _back.IsVisible = false;
         _back.Opacity = 0;
         ((TranslateTransform)_back.RenderTransform!).Y = 0;
+    }
+
+    private void CompleteTransition()
+    {
+        FinishLineMotions(removeExiting: true, settleRemaining: true);
+        CompleteFullFrameTransitionOnly();
     }
 
     private void SettleBackgroundFadeTargets()
@@ -1022,7 +1386,41 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
     }
 
-    private sealed record ActiveLineVisual(int LineIndex, WordLyricsPresenter? WordPresenter);
+    private sealed class ActiveLineVisual
+    {
+        public ActiveLineVisual(
+            int lineIndex,
+            Control control,
+            WordLyricsPresenter? wordPresenter,
+            double targetOpacity,
+            bool isBackground)
+        {
+            LineIndex = lineIndex;
+            Control = control;
+            WordPresenter = wordPresenter;
+            TargetOpacity = targetOpacity;
+            IsBackground = isBackground;
+        }
+
+        public int LineIndex { get; }
+        public Control Control { get; }
+        public WordLyricsPresenter? WordPresenter { get; }
+        public double TargetOpacity { get; set; }
+        public bool IsBackground { get; }
+    }
+
+    private sealed record LineMotion(
+        Control Control,
+        double FromOpacity,
+        double ToOpacity,
+        double FromY,
+        double ToY,
+        double DelayMs,
+        double DurationMs,
+        bool RemoveWhenDone,
+        long StartedAtTick,
+        TranslateTransform Transform,
+        bool IsBackgroundStyle);
 
     private sealed record TransitionState(
         StackPanel OldLayer,
