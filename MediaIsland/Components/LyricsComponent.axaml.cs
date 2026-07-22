@@ -175,7 +175,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
 
         if (e.PropertyName != nameof(PluginSettings.IsWordLyricsLiftEnabled) &&
-            e.PropertyName != nameof(PluginSettings.IsWordLyricsEmphasisEnabled))
+            e.PropertyName != nameof(PluginSettings.IsWordLyricsEmphasisEnabled) &&
+            e.PropertyName != nameof(PluginSettings.IsWordLyricsEdgeFeatherEnabled))
         {
             return;
         }
@@ -621,6 +622,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         presenter.IsWordLiftEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true;
         presenter.IsWordEmphasisEnabled = _pluginSettings?.IsWordLyricsEmphasisEnabled ?? true;
+        presenter.IsWordEdgeFeatherEnabled = _pluginSettings?.IsWordLyricsEdgeFeatherEnabled ?? true;
     }
 
     private void UpdateRenderCadence()

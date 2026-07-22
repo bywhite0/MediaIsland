@@ -12,7 +12,7 @@ namespace MediaIsland.Components;
 /// </summary>
 /// <remarks>
 /// 处理流程分为三步：先在 <see cref="EnsureMetrics"/> 中测量整行、单词和 Unicode 字素簇；
-/// 再把单词有效时长按字符实际宽度分配给各字符；最后在渲染阶段分别计算高亮、持续上浮和 AMLL 强调效果，
+/// 再把单词有效时长按字符实际宽度分配给各字符；最后在渲染阶段分别计算高亮（可选边缘羽化）、持续上浮和 AMLL 强调效果，
 /// 但让暗色底字与高亮文字共用同一套位移和缩放，以免动画后出现重影。
 /// </remarks>
 public sealed class WordLyricsPresenter : Control
@@ -55,6 +55,9 @@ public sealed class WordLyricsPresenter : Control
 
     public static readonly StyledProperty<bool> IsWordEmphasisEnabledProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, bool>(nameof(IsWordEmphasisEnabled), true);
+
+    public static readonly StyledProperty<bool> IsWordEdgeFeatherEnabledProperty =
+        AvaloniaProperty.Register<WordLyricsPresenter, bool>(nameof(IsWordEdgeFeatherEnabled), true);
 
     // 缓存当前排版结果，避免播放期间逐帧重复创建 FormattedText 和测量字符宽度。
     private LyricsLine? _cachedLine;
@@ -121,6 +124,12 @@ public sealed class WordLyricsPresenter : Control
         set => SetValue(IsWordEmphasisEnabledProperty, value);
     }
 
+    public bool IsWordEdgeFeatherEnabled
+    {
+        get => GetValue(IsWordEdgeFeatherEnabledProperty);
+        set => SetValue(IsWordEdgeFeatherEnabledProperty, value);
+    }
+
     static WordLyricsPresenter()
     {
         // 排版相关属性改变时，需要重新测量和绘制
@@ -132,7 +141,8 @@ public sealed class WordLyricsPresenter : Control
             ForegroundProperty,
             TextAlignmentProperty,
             IsWordLiftEnabledProperty,
-            IsWordEmphasisEnabledProperty);
+            IsWordEmphasisEnabledProperty,
+            IsWordEdgeFeatherEnabledProperty);
         AffectsMeasure<WordLyricsPresenter>(
             LineProperty,
             FontSizeProperty,
@@ -204,10 +214,13 @@ public sealed class WordLyricsPresenter : Control
 
     private bool ShouldRenderAnimatedWords()
     {
-        // 没有逐字动画时走整行绘制的快速路径；只要启用上浮，或存在可强调单词，就逐字符绘制。
+        // 没有逐字动画时走整行绘制的快速路径。
+        // 边缘羽化、上浮、强调任意启用时都走逐词/逐字符路径，保证高亮过渡不依赖强调条件。
         return Line is { Words.Count: > 0 } &&
                _wordStarts.Length == Line.Words.Count &&
-               (IsWordLiftEnabled || (IsWordEmphasisEnabled && HasEmphasizedWord()));
+               (IsWordEdgeFeatherEnabled ||
+                IsWordLiftEnabled ||
+                (IsWordEmphasisEnabled && HasEmphasizedWord()));
     }
 
     private void DrawAnimatedWords(
@@ -394,7 +407,22 @@ public sealed class WordLyricsPresenter : Control
 
             if (progress > 0)
             {
-                DrawFeatheredWord(context, activeText, origin, wordStart, wordWidth, progress);
+                if (IsWordEdgeFeatherEnabled)
+                {
+                    DrawFeatheredWord(context, activeText, origin, wordStart, wordWidth, progress);
+                }
+                else
+                {
+                    var filledClip = new Rect(
+                        origin.X + wordStart,
+                        0,
+                        wordWidth * progress,
+                        Bounds.Height);
+                    using (context.PushClip(filledClip))
+                    {
+                        context.DrawText(activeText, origin);
+                    }
+                }
             }
         }
     }

@@ -114,7 +114,19 @@ namespace MediaIsland.Models
             }
         }
 
-        
+        private bool _isWordLyricsEdgeFeatherEnabled = true;
+
+        public bool IsWordLyricsEdgeFeatherEnabled
+        {
+            get => _isWordLyricsEdgeFeatherEnabled;
+            set
+            {
+                if (_isWordLyricsEdgeFeatherEnabled == value) return;
+                _isWordLyricsEdgeFeatherEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
         private bool _isTodayEatSentry = true;
 
         public bool IsTodayEatSentry
