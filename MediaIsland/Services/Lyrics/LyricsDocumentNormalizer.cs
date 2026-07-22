@@ -176,11 +176,154 @@ public static class LyricsDocumentNormalizer
             ordered[i] = line with { EndTime = end, Words = words };
         }
 
+        // AMLL-style presentation tuning: pair main/BG windows, then advance starts for smoother switches.
+        SyncMainAndBackgroundLines(ordered);
+        TryAdvanceStartTime(ordered);
         return ordered;
+    }
+
+    /// <summary>
+    /// Sync a main lyric line with the immediately following background vocal line by taking
+    /// the earliest start and latest end so they appear and disappear together.
+    /// </summary>
+    private static void SyncMainAndBackgroundLines(IList<LyricsLine> lines)
+    {
+        for (var i = lines.Count - 1; i >= 0; i--)
+        {
+            var line = lines[i];
+            if (line.IsBackground)
+            {
+                continue;
+            }
+
+            if (i + 1 >= lines.Count || !lines[i + 1].IsBackground)
+            {
+                continue;
+            }
+
+            var background = lines[i + 1];
+            var timedWords = line.Words
+                .Concat(background.Words)
+                .Where(word => !string.IsNullOrWhiteSpace(word.Text))
+                .ToArray();
+            if (timedWords.Length == 0)
+            {
+                continue;
+            }
+
+            var minStart = timedWords.Min(word => word.StartTime);
+            var maxEnd = timedWords.Max(word => word.EndTime);
+            var finalStart = Min(minStart, Min(line.StartTime, background.StartTime));
+            var finalEnd = Max(maxEnd, Max(line.EndTime, background.EndTime));
+            lines[i] = line with { StartTime = finalStart, EndTime = finalEnd };
+            lines[i + 1] = background with { StartTime = finalStart, EndTime = finalEnd };
+        }
+    }
+
+    /// <summary>
+    /// Advance main-line start times by up to 600 ms for a more natural entrance.
+    /// When the next line originally overlaps the previous one, fall back to 400 ms or
+    /// 30% of the previous line duration, and keep a following background line aligned.
+    /// </summary>
+    private static void TryAdvanceStartTime(IList<LyricsLine> lines)
+    {
+        var defaultAdvance = TimeSpan.FromMilliseconds(600);
+        var fallbackAdvance = TimeSpan.FromMilliseconds(400);
+        const double fallbackAdvanceRatio = 0.3;
+
+        var prevLineStartTime = TimeSpan.Zero;
+        var prevLineEndTime = TimeSpan.Zero;
+        var prevMainGroupStartTime = TimeSpan.Zero;
+        var prevMainGroupEndTime = TimeSpan.Zero;
+        var hasPrevLine = false;
+
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i];
+            if (line.IsBackground)
+            {
+                continue;
+            }
+
+            var originalStartTime = line.StartTime;
+            var originalEndTime = line.EndTime;
+
+            TimeSpan targetAdvance;
+            TimeSpan safeBoundary;
+            if (hasPrevLine)
+            {
+                var originallyHadGap = originalStartTime >= prevLineEndTime;
+                if (originallyHadGap)
+                {
+                    targetAdvance = defaultAdvance;
+                    safeBoundary = prevMainGroupEndTime;
+                }
+                else
+                {
+                    targetAdvance = fallbackAdvance;
+                    var prevDuration = prevLineEndTime - prevLineStartTime;
+                    safeBoundary = prevLineStartTime +
+                                   TimeSpan.FromMilliseconds(prevDuration.TotalMilliseconds * fallbackAdvanceRatio);
+                }
+            }
+            else
+            {
+                targetAdvance = defaultAdvance;
+                safeBoundary = TimeSpan.Zero;
+            }
+
+            var targetTime = line.StartTime - targetAdvance;
+            var newStartTime = Max(safeBoundary, targetTime);
+            if (newStartTime < TimeSpan.Zero)
+            {
+                newStartTime = TimeSpan.Zero;
+            }
+
+            if (newStartTime < line.StartTime)
+            {
+                line = line with { StartTime = newStartTime };
+                lines[i] = line;
+            }
+
+            if (i + 1 < lines.Count && lines[i + 1].IsBackground)
+            {
+                lines[i + 1] = lines[i + 1] with { StartTime = line.StartTime };
+            }
+
+            if (hasPrevLine)
+            {
+                var overlapsPrevGroup =
+                    originalStartTime < prevMainGroupEndTime &&
+                    originalEndTime > prevMainGroupStartTime;
+                if (overlapsPrevGroup)
+                {
+                    prevMainGroupStartTime = Min(prevMainGroupStartTime, originalStartTime);
+                    prevMainGroupEndTime = Max(prevMainGroupEndTime, originalEndTime);
+                }
+                else
+                {
+                    prevMainGroupStartTime = originalStartTime;
+                    prevMainGroupEndTime = originalEndTime;
+                }
+            }
+            else
+            {
+                prevMainGroupStartTime = originalStartTime;
+                prevMainGroupEndTime = originalEndTime;
+            }
+
+            prevLineStartTime = originalStartTime;
+            prevLineEndTime = originalEndTime;
+            hasPrevLine = true;
+        }
     }
 
     private static TimeSpan FromMilliseconds(int? value) =>
         value.HasValue ? TimeSpan.FromMilliseconds(Math.Max(0, value.Value)) : TimeSpan.Zero;
 
     private static TimeSpan Clamp(TimeSpan value) => value < TimeSpan.Zero ? TimeSpan.Zero : value;
+
+    private static TimeSpan Min(TimeSpan first, TimeSpan second) => first <= second ? first : second;
+
+    private static TimeSpan Max(TimeSpan first, TimeSpan second) => first >= second ? first : second;
 }

@@ -26,7 +26,12 @@ namespace MediaIsland.Components;
 )]
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
-    private const double TransitionDurationMs = 380;
+    // AMLL main line: opacity 0.3s with 0.1s delay; background vocal: 0.5s / 0.25s delay to 0.4.
+    private const double TransitionDurationMs = 300;
+    private const double TransitionDelayMs = 100;
+    private const double BackgroundTransitionDurationMs = 500;
+    private const double BackgroundTransitionDelayMs = 250;
+    private const double BackgroundActiveOpacity = 0.4;
     private static readonly TimeSpan LineRenderInterval = TimeSpan.FromMilliseconds(80);
     private static readonly TimeSpan TransitionFrameInterval = TimeSpan.FromMilliseconds(16);
 
@@ -43,6 +48,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private StackPanel _front = null!;
     private StackPanel _back = null!;
     private TransitionState? _transition;
+    private readonly List<(Control Control, double TargetOpacity)> _backgroundFadeTargets = [];
     private InterludeDotsPresenter? _interludeDots;
     private string _displayedStatusText = string.Empty;
     private double _displayedStatusOpacity = -1;
@@ -579,6 +585,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         CompleteTransition();
         _activeLineVisuals.Clear();
+        _backgroundFadeTargets.Clear();
         _interludeDots = null;
         _isShowingInterlude = false;
         _isShowingActiveLines = true;
@@ -597,7 +604,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 LyricsText.FontSize,
                 activeLines.Count,
                 line.IsBackground);
-            var opacity = line.IsBackground ? 0.72 : 1.0;
+            var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
             var textAlignment = selection.IsDuetSide
                 ? TextAlignment.Right
                 : hasDuet
@@ -645,6 +652,15 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
             _back.Children.Add(visual);
             _activeLineVisuals.Add(new ActiveLineVisual(selection.LineIndex, wordPresenter));
+            if (line.IsBackground)
+            {
+                if (IsLyricsTransitionEnabled)
+                {
+                    visual.Opacity = 0.0001;
+                }
+
+                _backgroundFadeTargets.Add((visual, opacity));
+            }
         }
 
         StartTransition();
@@ -654,6 +670,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         CompleteTransition();
         _activeLineVisuals.Clear();
+        _backgroundFadeTargets.Clear();
         _isShowingActiveLines = false;
         _isShowingInterlude = true;
         _displayedStatusText = string.Empty;
@@ -778,6 +795,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _front.Children.Clear();
         _back.Children.Clear();
         _activeLineVisuals.Clear();
+        _backgroundFadeTargets.Clear();
         _interludeDots = null;
         _isShowingInterlude = false;
         _isShowingActiveLines = false;
@@ -836,6 +854,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         CompleteTransition();
         _activeLineVisuals.Clear();
+        _backgroundFadeTargets.Clear();
         _interludeDots = null;
         _isShowingInterlude = false;
         _isShowingActiveLines = false;
@@ -875,6 +894,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         if (!IsLyricsTransitionEnabled)
         {
+            SettleBackgroundFadeTargets();
             CompleteTransition();
             return;
         }
@@ -905,16 +925,29 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
-        var progress = Math.Clamp(
-            (Environment.TickCount64 - transition.StartedAtTick) / TransitionDurationMs,
-            0,
-            1);
+        var elapsedMs = Environment.TickCount64 - transition.StartedAtTick;
+        var progress = Math.Clamp((elapsedMs - TransitionDelayMs) / TransitionDurationMs, 0, 1);
         var eased = 1 - Math.Pow(1 - progress, 3);
         transition.OldLayer.Opacity = 1 - eased;
         transition.OldTransform.Y = -transition.Offset * eased;
         transition.NewLayer.Opacity = eased;
         transition.NewTransform.Y = transition.Offset * (1 - eased);
-        if (progress >= 1)
+
+        // Background vocals: delayed fade-in to a softer final opacity (AMLL ~0.4).
+        var backgroundProgress = Math.Clamp(
+            (elapsedMs - BackgroundTransitionDelayMs) / BackgroundTransitionDurationMs,
+            0,
+            1);
+        // Approximate cubic-bezier(0, 1, 0, 1): slow start then settle quickly.
+        var backgroundEased = backgroundProgress <= 0
+            ? 0
+            : 1 - Math.Pow(1 - backgroundProgress, 4);
+        foreach (var (control, targetOpacity) in _backgroundFadeTargets)
+        {
+            control.Opacity = targetOpacity * backgroundEased;
+        }
+
+        if (progress >= 1 && backgroundProgress >= 1)
         {
             CompleteTransition();
         }
@@ -927,10 +960,19 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _front.IsVisible = true;
         _front.Opacity = 1;
         ((TranslateTransform)_front.RenderTransform!).Y = 0;
+        SettleBackgroundFadeTargets();
         _back.Children.Clear();
         _back.IsVisible = false;
         _back.Opacity = 0;
         ((TranslateTransform)_back.RenderTransform!).Y = 0;
+    }
+
+    private void SettleBackgroundFadeTargets()
+    {
+        foreach (var (control, targetOpacity) in _backgroundFadeTargets)
+        {
+            control.Opacity = targetOpacity;
+        }
     }
 
     private void CancelCurrentSearch()
