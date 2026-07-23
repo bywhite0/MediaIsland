@@ -76,4 +76,18 @@ public class LyricsComponentConfigTests
         Assert.True(restored!.IsLeftNegativeMargin);
         Assert.True(restored.IsRightNegativeMargin);
     }
+    [Fact]
+    public void IsFixedWidthToMaxLineEnabled_DefaultsToFalseAndPersists()
+    {
+        var settings = new LyricsComponentConfig();
+        Assert.False(settings.IsFixedWidthToMaxLineEnabled);
+
+        settings.IsFixedWidthToMaxLineEnabled = true;
+        var json = JsonSerializer.Serialize(settings);
+        Assert.Contains("\"IsFixedWidthToMaxLineEnabled\":true", json);
+
+        var restored = JsonSerializer.Deserialize<LyricsComponentConfig>(json);
+        Assert.NotNull(restored);
+        Assert.True(restored!.IsFixedWidthToMaxLineEnabled);
+    }
 }

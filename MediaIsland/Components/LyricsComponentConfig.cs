@@ -8,6 +8,7 @@ public class LyricsComponentConfig : ObservableRecipient
     private bool _isHideWhenEmpty;
     private bool _isShowStatusText = true;
     private bool _isShowNoteIcon = true;
+    private bool _isFixedWidthToMaxLineEnabled;
     private bool _isLeftNegativeMargin;
     private bool _isRightNegativeMargin;
     private int _renderFrameRate = 30;
@@ -41,6 +42,21 @@ public class LyricsComponentConfig : ObservableRecipient
         {
             if (_isShowNoteIcon == value) return;
             _isShowNoteIcon = value;
+            OnPropertyChanged();
+        }
+    }
+
+
+    /// <summary>
+    /// 按当前歌曲最长歌词行固定歌词区宽度，避免一首歌内组件宽度随换行连续变化。
+    /// </summary>
+    public bool IsFixedWidthToMaxLineEnabled
+    {
+        get => _isFixedWidthToMaxLineEnabled;
+        set
+        {
+            if (_isFixedWidthToMaxLineEnabled == value) return;
+            _isFixedWidthToMaxLineEnabled = value;
             OnPropertyChanged();
         }
     }

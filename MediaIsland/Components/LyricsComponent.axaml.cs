@@ -1,3 +1,4 @@
+using System.Globalization;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
@@ -155,6 +156,66 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _clock.Reset();
     }
 
+
+    private void ApplyFixedLyricsContentWidth()
+    {
+        if (!_isLoaded)
+        {
+            return;
+        }
+
+        if (!Settings.IsFixedWidthToMaxLineEnabled)
+        {
+            ClearFixedLyricsContentWidth();
+            return;
+        }
+
+        LyricsDocument? document;
+        lock (_syncLock)
+        {
+            document = _currentLyrics;
+        }
+
+        if (document == null || document.Lines.Count == 0)
+        {
+            ClearFixedLyricsContentWidth();
+            return;
+        }
+
+        var maxWidth = LyricsLayoutMetrics.ComputeMaxSongLineWidth(
+            document.Lines.Select(static line => (line.Text, line.IsBackground)),
+            LyricsText.FontSize,
+            MeasureLyricsTextWidth);
+
+        if (maxWidth <= 0)
+        {
+            ClearFixedLyricsContentWidth();
+            return;
+        }
+
+        LyricsContentHost.MinWidth = maxWidth;
+        LyricsContentHost.Width = maxWidth;
+    }
+
+    private void ClearFixedLyricsContentWidth()
+    {
+        LyricsContentHost.MinWidth = 0;
+        LyricsContentHost.ClearValue(Layoutable.WidthProperty);
+    }
+
+    private double MeasureLyricsTextWidth(string text, double fontSize)
+    {
+        var typeface = new Typeface(LyricsText.FontFamily, LyricsText.FontStyle, LyricsText.FontWeight);
+        var formatted = new FormattedText(
+            text,
+            CultureInfo.CurrentUICulture,
+            FlowDirection.LeftToRight,
+            typeface,
+            fontSize,
+            LyricsText.Foreground ?? Brushes.White);
+        return formatted.WidthIncludingTrailingWhitespace;
+    }
+
     private void UpdateMargin()
     {
         Dispatcher.UIThread.Post(() =>
@@ -185,6 +246,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         if (e.PropertyName == nameof(LyricsComponentConfig.IsHideWhenEmpty))
         {
             Dispatcher.UIThread.InvokeAsync(UpdateEmptyVisibility);
+            return;
+        }
+
+        if (e.PropertyName == nameof(LyricsComponentConfig.IsFixedWidthToMaxLineEnabled))
+        {
+            Dispatcher.UIThread.InvokeAsync(ApplyFixedLyricsContentWidth);
             return;
         }
 
@@ -381,6 +448,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     _isInterludeAnimationActive = false;
                 }
 
+                Dispatcher.UIThread.InvokeAsync(ClearFixedLyricsContentWidth);
+
                 _logger.LogInformation(
                     "[歌词] 媒体信息：{Title} - {Artist}（{Album}），时长 {Duration}，来源 {Source}",
                     info.Title,
@@ -407,6 +476,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 }
 
                 SetStatus(document == null ? "未找到歌词" : string.Empty);
+                Dispatcher.UIThread.InvokeAsync(ApplyFixedLyricsContentWidth);
                 RenderCurrentPositionOnce();
                 UpdateRenderCadence();
             }
@@ -454,6 +524,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             }
 
             SetStatus(string.Empty);
+            ApplyFixedLyricsContentWidth();
             RenderCurrentPositionOnce();
             UpdateRenderCadence();
         });
@@ -1047,7 +1118,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 FontSize = fontSize,
                 Foreground = LyricsText.Foreground,
                 TextAlignment = textAlignment,
-                MaxWidth = 520,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Opacity = opacity,
                 IsBackgroundLine = line.IsBackground,
@@ -1065,9 +1135,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 FontSize = fontSize,
                 Foreground = LyricsText.Foreground,
                 TextAlignment = textAlignment,
-                TextTrimming = TextTrimming.CharacterEllipsis,
                 TextWrapping = TextWrapping.NoWrap,
-                MaxWidth = 520,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Opacity = opacity,
                 RenderTransform = new TranslateTransform()
@@ -1242,6 +1310,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             }
 
             ClearActiveLineVisuals();
+            ClearFixedLyricsContentWidth();
         });
 
         SetStatus(status);

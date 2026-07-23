@@ -32,6 +32,13 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowNoteIcon, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE14C;}"
+                                       Header="固定歌词宽度"
+                                       Description="按当前歌曲最长歌词行的宽度固定歌词区，避免一首歌内组件宽度随换行连续变化。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsFixedWidthToMaxLineEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE093;}"
                                        Header="左右间距"
                                        Description="启用后，对应侧的元素边界将收缩至适合圆角。">
