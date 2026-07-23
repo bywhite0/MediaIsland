@@ -7,54 +7,60 @@
                   xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                   xmlns:local="clr-namespace:MediaIsland.Components"
                   mc:Ignorable="d"
+                  ClipToBounds="False"
                   d:DesignHeight="80" d:DesignWidth="420"
                   Loaded="LyricsComponent_OnLoaded"
                   Unloaded="LyricsComponent_OnUnloaded">
-    <Grid x:Name="LyricsGrid"
-          ColumnDefinitions="Auto,*"
-          HorizontalAlignment="Center"
-          VerticalAlignment="Center"
-          DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:LyricsComponent}}">
-        <ci:FluentIcon x:Name="NoteIcon"
-                       Grid.Column="0"
-                       Glyph="&#xEBC9;"
-                       FontSize="16"
-                       Margin="0 2 4 0"
-                       VerticalAlignment="Center"
-                       IsVisible="{Binding Settings.IsShowNoteIcon}" />
-        <Grid x:Name="LyricsContentHost"
-              Grid.Column="1"
-              ClipToBounds="True"
-              VerticalAlignment="Center">
-            <!-- Style probe for font size / foreground; not part of the transition layers. -->
-            <TextBlock x:Name="LyricsText"
-                       IsHitTestVisible="False"
-                       IsVisible="False"
-                       FontSize="{DynamicResource MainWindowBodyFontSize}" />
-            <StackPanel x:Name="LyricsBackLayer"
-                        Spacing="1"
+    <!-- MarginHost receives negative margins; ClipToBounds=False so content can paint into island padding. -->
+    <Border x:Name="MarginHost"
+            ClipToBounds="False"
+            Background="Transparent">
+        <Grid x:Name="LyricsGrid"
+              ColumnDefinitions="Auto,*"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Center"
+              DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:LyricsComponent}}">
+            <ci:FluentIcon x:Name="NoteIcon"
+                           Grid.Column="0"
+                           Glyph="&#xEBC9;"
+                           FontSize="16"
+                           Margin="0 2 4 0"
+                           VerticalAlignment="Center"
+                           IsVisible="{Binding Settings.IsShowNoteIcon}" />
+            <Grid x:Name="LyricsContentHost"
+                  Grid.Column="1"
+                  ClipToBounds="True"
+                  VerticalAlignment="Center">
+                <!-- Style probe for font size / foreground; not part of the transition layers. -->
+                <TextBlock x:Name="LyricsText"
+                           IsHitTestVisible="False"
+                           IsVisible="False"
+                           FontSize="{DynamicResource MainWindowBodyFontSize}" />
+                <StackPanel x:Name="LyricsBackLayer"
+                            Spacing="1"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Center"
+                            IsVisible="False"
+                            Opacity="0">
+                    <StackPanel.RenderTransform>
+                        <TranslateTransform />
+                    </StackPanel.RenderTransform>
+                </StackPanel>
+                <StackPanel x:Name="LyricsFrontLayer"
+                            Spacing="1"
+                            HorizontalAlignment="Stretch"
+                            VerticalAlignment="Center"
+                            Opacity="1">
+                    <StackPanel.RenderTransform>
+                        <TranslateTransform />
+                    </StackPanel.RenderTransform>
+                </StackPanel>
+                <!-- Leaving lines animate here so the front stack can already be the final layout. -->
+                <Canvas x:Name="LyricsExitLayer"
+                        IsHitTestVisible="False"
                         HorizontalAlignment="Stretch"
-                        VerticalAlignment="Center"
-                        IsVisible="False"
-                        Opacity="0">
-                <StackPanel.RenderTransform>
-                    <TranslateTransform />
-                </StackPanel.RenderTransform>
-            </StackPanel>
-            <StackPanel x:Name="LyricsFrontLayer"
-                        Spacing="1"
-                        HorizontalAlignment="Stretch"
-                        VerticalAlignment="Center"
-                        Opacity="1">
-                <StackPanel.RenderTransform>
-                    <TranslateTransform />
-                </StackPanel.RenderTransform>
-            </StackPanel>
-            <!-- Leaving lines animate here so the front stack can already be the final layout. -->
-            <Canvas x:Name="LyricsExitLayer"
-                    IsHitTestVisible="False"
-                    HorizontalAlignment="Stretch"
-                    VerticalAlignment="Stretch" />
+                        VerticalAlignment="Stretch" />
+            </Grid>
         </Grid>
-    </Grid>
+    </Border>
 </ci:ComponentBase>

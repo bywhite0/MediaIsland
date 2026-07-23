@@ -159,7 +159,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         Dispatcher.UIThread.Post(() =>
         {
-            LyricsGrid.Margin = new Thickness(
+            MarginHost.Margin = new Thickness(
                 Settings.IsLeftNegativeMargin ? -12 : 0,
                 0,
                 Settings.IsRightNegativeMargin ? -12 : 0,

@@ -81,7 +81,7 @@ namespace MediaIsland.Components
         {
             Dispatcher.UIThread.Post(() =>
             {
-                MediaGrid.Margin = new Thickness(
+                MarginHost.Margin = new Thickness(
                     Settings.IsLeftNegativeMargin ? -12 : 0,
                     0,
                     Settings.IsRightNegativeMargin ? -12 : 0,
