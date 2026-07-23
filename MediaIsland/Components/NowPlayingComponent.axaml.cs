@@ -197,7 +197,8 @@ namespace MediaIsland.Components
                         UpdateProgressBarVisibility(_currentEndTime);
                     });
                     break;
-                case nameof(NowPlayingComponentConfig.IsProgressBarSideMarginEnabled):
+                case nameof(NowPlayingComponentConfig.IsProgressBarLeftMargin):
+                case nameof(NowPlayingComponentConfig.IsProgressBarRightMargin):
                     Dispatcher.UIThread.InvokeAsync(ApplyProgressBarSideMargin);
                     break;
             }
@@ -523,9 +524,11 @@ namespace MediaIsland.Components
 
         private void ApplyProgressBarSideMargin()
         {
-            ProgressContainer.Margin = Settings.IsProgressBarSideMarginEnabled
-                ? new Thickness(ProgressBarSideMargin, 0, ProgressBarSideMargin, 0)
-                : default;
+            ProgressContainer.Margin = new Thickness(
+                Settings.IsProgressBarLeftMargin ? ProgressBarSideMargin : 0,
+                0,
+                Settings.IsProgressBarRightMargin ? ProgressBarSideMargin : 0,
+                0);
         }
 
         private void UpdateProgressBarVisibility(TimeSpan duration)

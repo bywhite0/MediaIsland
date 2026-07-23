@@ -60,10 +60,21 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowProgressBar, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
                 <controls:SettingsExpanderItem Content="左右边距"
-                                               Description="为进度条增加左右内边距，避免贴边时被岛屿圆角裁切。"
+                                               Description="为进度条对应侧增加内边距，避免贴边时被岛屿圆角裁切。"
                                                IconSource="{ci:FluentIconSource &#xE093;}">
                     <controls:SettingsExpanderItem.Footer>
-                        <ToggleSwitch IsChecked="{Binding Settings.IsProgressBarSideMarginEnabled, Mode=TwoWay}" />
+                        <StackPanel Orientation="Horizontal">
+                            <Label Content="(左"
+                                   Foreground="Gray" />
+                            <ToggleButton Margin="0,0,5,0"
+                                          IsChecked="{Binding Settings.IsProgressBarLeftMargin, Mode=TwoWay}" />
+                            <Label Content="━━"
+                                   Foreground="Gray" />
+                            <ToggleButton Margin="5,0,0,0"
+                                          IsChecked="{Binding Settings.IsProgressBarRightMargin, Mode=TwoWay}" />
+                            <Label Content="右)"
+                                   Foreground="Gray" />
+                        </StackPanel>
                     </controls:SettingsExpanderItem.Footer>
                 </controls:SettingsExpanderItem>
             </controls:SettingsExpander>

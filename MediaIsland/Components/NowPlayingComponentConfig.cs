@@ -13,7 +13,8 @@ namespace MediaIsland.Components
         bool _isShowAlbumArt = true;
         bool _isShowPlaybackStatus = false;
         bool _isShowProgressBar = false;
-        bool _isProgressBarSideMarginEnabled = false;
+        bool _isProgressBarLeftMargin;
+        bool _isProgressBarRightMargin;
         bool _isLeftNegativeMargin = false;
         bool _isRightNegativeMargin = false;
         int _subInfoType = 0;
@@ -116,15 +117,29 @@ namespace MediaIsland.Components
 
 
         /// <summary>
-        /// 是否为进度条增加左右边距，避免贴边时被岛屿圆角裁切。
+        /// 是否为进度条增加左边距，避免贴边时被岛屿圆角裁切。
         /// </summary>
-        public bool IsProgressBarSideMarginEnabled
+        public bool IsProgressBarLeftMargin
         {
-            get => _isProgressBarSideMarginEnabled;
+            get => _isProgressBarLeftMargin;
             set
             {
-                if (_isProgressBarSideMarginEnabled == value) return;
-                _isProgressBarSideMarginEnabled = value;
+                if (_isProgressBarLeftMargin == value) return;
+                _isProgressBarLeftMargin = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>
+        /// 是否为进度条增加右边距，避免贴边时被岛屿圆角裁切。
+        /// </summary>
+        public bool IsProgressBarRightMargin
+        {
+            get => _isProgressBarRightMargin;
+            set
+            {
+                if (_isProgressBarRightMargin == value) return;
+                _isProgressBarRightMargin = value;
                 OnPropertyChanged();
             }
         }
