@@ -70,6 +70,7 @@ namespace MediaIsland.Components
             BindSourceIconRadius();
             Settings.PropertyChanged += OnSettingsPropertyChanged;
             UpdateMargin();
+            ApplyProgressBarSideMargin();
             ApplyProgressBarColor(AlbumArt.Source as Bitmap);
             UpdateProgressBarVisibility(_currentEndTime);
             LoadCurrentPlayingInfoAsync();
@@ -195,6 +196,9 @@ namespace MediaIsland.Components
                     {
                         UpdateProgressBarVisibility(_currentEndTime);
                     });
+                    break;
+                case nameof(NowPlayingComponentConfig.IsProgressBarSideMarginEnabled):
+                    Dispatcher.UIThread.InvokeAsync(ApplyProgressBarSideMargin);
                     break;
             }
         }
@@ -512,6 +516,16 @@ namespace MediaIsland.Components
 
             var ratio = position.TotalSeconds / duration.TotalSeconds;
             ProgressBar.Value = Math.Clamp(ratio, 0.0, 1.0);
+        }
+
+
+        private const double ProgressBarSideMargin = 12;
+
+        private void ApplyProgressBarSideMargin()
+        {
+            ProgressContainer.Margin = Settings.IsProgressBarSideMarginEnabled
+                ? new Thickness(ProgressBarSideMargin, 0, ProgressBarSideMargin, 0)
+                : default;
         }
 
         private void UpdateProgressBarVisibility(TimeSpan duration)

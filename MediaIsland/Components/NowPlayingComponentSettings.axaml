@@ -54,10 +54,18 @@
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEA97;}"
                                        Header="显示播放进度条"
-                                       Description="在组件底部显示当前媒体播放进度（如果可用）。进度条颜色可在插件设置中配置。">
+                                       Description="在组件底部显示当前媒体播放进度（如果可用）。进度条颜色可在插件设置中配置。"
+                                       IsExpanded="{Binding Settings.IsShowProgressBar, Mode=OneWay}">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowProgressBar, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
+                <controls:SettingsExpanderItem Content="左右边距"
+                                               Description="为进度条增加左右内边距，避免贴边时被岛屿圆角裁切。"
+                                               IconSource="{ci:FluentIconSource &#xE093;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <ToggleSwitch IsChecked="{Binding Settings.IsProgressBarSideMarginEnabled, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
             </controls:SettingsExpander>
             <controls:SettingsExpander Description="切换标题下方的信息显示。"
                                        Header="次要信息"
