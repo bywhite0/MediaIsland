@@ -663,9 +663,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 _interludeDots.StartTime = interlude.StartTime;
                 _interludeDots.EndTime = interlude.EndTime;
                 _interludeDots.Position = position;
-                _interludeDots.HorizontalAlignment = interlude.IsNextDuet
-                    ? HorizontalAlignment.Right
-                    : HorizontalAlignment.Center;
+                _interludeDots.HorizontalAlignment = ResolveInterludeHorizontalAlignment(interlude.IsNextDuet);
                 _isCurrentTextStatus = false;
                 UpdateEmptyVisibility();
                 return;
@@ -724,7 +722,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         var targetLayer = animateFullTransition ? _back : _front;
         targetLayer.Children.Clear();
 
-        var hasDuet = activeLines.Any(item => item.IsDuetSide);
+        var hasDuet = GetDocumentHasDuet();
         var isMultiLine = activeLines.Count > 1;
         targetLayer.Spacing = isMultiLine ? 0 : 1;
 
@@ -793,11 +791,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             item => new LineFirstFrame(
                 GetHostY(item.Value.Control),
                 item.Value.Control.Bounds.Height,
+                item.Value.Control.Bounds.Width,
                 item.Value.Control.Opacity,
                 item.Value.TargetOpacity,
                 GetLineFontSize(item.Value)));
 
-        var hasDuet = activeLines.Any(item => item.IsDuetSide);
+        var hasDuet = GetDocumentHasDuet();
         var isMultiLine = activeLines.Count > 1;
         var plan = PrecomputeLinePlan(activeLines, hasDuet, isMultiLine);
         var nextIndices = plan.Select(item => item.LineIndex).ToHashSet();
@@ -879,6 +878,19 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             var transform = EnsureLineTransform(leave.Control);
             transform.Y = 0;
             leave.Control.Opacity = first.Opacity;
+            // Canvas does not stretch children; keep the previous host width so
+            // Center/Right TextAlignment (no-duet BG leave, duet leave) stays correct.
+            var leaveWidth = first.Width > 0 ? first.Width : LyricsContentHost.Bounds.Width;
+            if (leaveWidth > 0)
+            {
+                leave.Control.Width = leaveWidth;
+            }
+
+            if (first.Height > 0)
+            {
+                leave.Control.Height = first.Height;
+            }
+
             Canvas.SetLeft(leave.Control, 0);
             Canvas.SetTop(leave.Control, first.Y);
             _exitLayer.Children.Add(leave.Control);
@@ -978,11 +990,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 activeLines.Count,
                 line.IsBackground);
             var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
-            var textAlignment = selection.IsDuetSide
-                ? TextAlignment.Right
-                : hasDuet
-                    ? TextAlignment.Left
-                    : TextAlignment.Center;
+            var textAlignment = LyricsLayoutMetrics.ResolveLineTextAlignment(
+                selection.IsDuetSide,
+                hasDuet);
             plan.Add(new PlannedLineState(
                 selection.LineIndex,
                 order,
@@ -1102,11 +1112,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         var opacity = line.IsBackground
             ? (useWordVisual ? 1.0 : BackgroundActiveOpacity)
             : 1.0;
-        var textAlignment = selection.IsDuetSide
-            ? TextAlignment.Right
-            : hasDuet
-                ? TextAlignment.Left
-                : TextAlignment.Center;
+        var textAlignment = LyricsLayoutMetrics.ResolveLineTextAlignment(
+            selection.IsDuetSide,
+            hasDuet);
         WordLyricsPresenter? wordPresenter = null;
         Control visual;
         if (useWordVisual)
@@ -1173,11 +1181,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         var opacity = line.IsBackground
             ? (useWordVisual ? 1.0 : BackgroundActiveOpacity)
             : 1.0;
-        var textAlignment = selection.IsDuetSide
-            ? TextAlignment.Right
-            : hasDuet
-                ? TextAlignment.Left
-                : TextAlignment.Center;
+        var textAlignment = LyricsLayoutMetrics.ResolveLineTextAlignment(
+            selection.IsDuetSide,
+            hasDuet);
         visual.TargetOpacity = opacity;
 
         if (useWordVisual && visual.WordPresenter != null)
@@ -1223,9 +1229,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         {
             Foreground = LyricsText.Foreground,
             FontSize = LyricsText.FontSize,
-            HorizontalAlignment = interlude.IsNextDuet
-                ? HorizontalAlignment.Right
-                : HorizontalAlignment.Center,
+            HorizontalAlignment = ResolveInterludeHorizontalAlignment(interlude.IsNextDuet),
             StartTime = interlude.StartTime,
             EndTime = interlude.EndTime,
             Position = position
@@ -1234,6 +1238,22 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _back.Children.Add(dots);
         StartTransition();
     }
+
+    private bool GetDocumentHasDuet()
+    {
+        lock (_syncLock)
+        {
+            return _currentLyrics != null &&
+                   LyricsLayoutMetrics.DocumentHasDuet(_currentLyrics.Lines);
+        }
+    }
+
+    private HorizontalAlignment ResolveInterludeHorizontalAlignment(bool isNextDuet) =>
+        isNextDuet
+            ? HorizontalAlignment.Right
+            : GetDocumentHasDuet()
+                ? HorizontalAlignment.Left
+                : HorizontalAlignment.Center;
 
     private bool IsWordLyricsEnabled => _pluginSettings?.IsWordLyricsEnabled ?? true;
 
@@ -1727,6 +1747,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private sealed record LineFirstFrame(
         double Y,
         double Height,
+        double Width,
         double Opacity,
         double TargetOpacity,
         double FontSize);

@@ -1,4 +1,6 @@
+using Avalonia.Media;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Models;
 using Xunit;
 
 namespace MediaIsland.Tests.Lyrics;
@@ -75,4 +77,56 @@ public class LyricsLayoutMetricsTests
 
         Assert.Equal(9999, width);
     }
+
+    [Fact]
+    public void DocumentHasDuet_IsTrueWhenAnyLineIsDuet()
+    {
+        var lines = new[]
+        {
+            CreateLine(0, 2, "solo"),
+            CreateLine(2, 4, "duet", isDuet: true)
+        };
+
+        Assert.True(LyricsLayoutMetrics.DocumentHasDuet(lines));
+    }
+
+    [Fact]
+    public void DocumentHasDuet_IsFalseWithoutDuetLines()
+    {
+        var lines = new[]
+        {
+            CreateLine(0, 2, "main"),
+            CreateLine(2, 4, "bg", isBackground: true)
+        };
+
+        Assert.False(LyricsLayoutMetrics.DocumentHasDuet(lines));
+    }
+
+    [Theory]
+    [InlineData(false, false, TextAlignment.Center)]
+    [InlineData(false, true, TextAlignment.Left)]
+    [InlineData(true, false, TextAlignment.Right)]
+    [InlineData(true, true, TextAlignment.Right)]
+    public void ResolveLineTextAlignment_MatchesAmllDuetRules(
+        bool isDuetSide,
+        bool documentHasDuet,
+        TextAlignment expected)
+    {
+        var alignment = LyricsLayoutMetrics.ResolveLineTextAlignment(isDuetSide, documentHasDuet);
+        Assert.Equal(expected, alignment);
+    }
+
+    private static LyricsLine CreateLine(
+        double startSeconds,
+        double endSeconds,
+        string text,
+        bool isBackground = false,
+        bool isDuet = false) =>
+        new(
+            TimeSpan.FromSeconds(startSeconds),
+            TimeSpan.FromSeconds(endSeconds),
+            text,
+            [new LyricsWord(TimeSpan.FromSeconds(startSeconds), TimeSpan.FromSeconds(endSeconds), text)],
+            IsBackground: isBackground,
+            IsDuet: isDuet);
 }

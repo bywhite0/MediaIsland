@@ -1,3 +1,6 @@
+using Avalonia.Media;
+using MediaIsland.Services.Lyrics.Models;
+
 namespace MediaIsland.Services.Lyrics;
 
 internal static class LyricsLayoutMetrics
@@ -62,6 +65,26 @@ internal static class LyricsLayoutMetrics
 
         return max;
     }
+
+    /// <summary>
+    /// Document-level duet: any TTML duet line forces non-duet sides to the left (AMLL layout).
+    /// </summary>
+    public static bool DocumentHasDuet(IEnumerable<LyricsLine> lines)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        return lines.Any(static line => line.IsDuet);
+    }
+
+    /// <summary>
+    /// Resolves horizontal text alignment for an active lyric line.
+    /// Duet side is right; when the song has any duet, other lines are left; otherwise center.
+    /// </summary>
+    public static TextAlignment ResolveLineTextAlignment(bool isDuetSide, bool documentHasDuet) =>
+        isDuetSide
+            ? TextAlignment.Right
+            : documentHasDuet
+                ? TextAlignment.Left
+                : TextAlignment.Center;
 
     /// <summary>
     /// Full-frame transition only when the active set has no continuity with the previous set.
