@@ -21,7 +21,7 @@
 		<PackageReference Include="ClassIsland.PluginSdk" Version="2.0.0.1">
 			<ExcludeAssets>runtime; native</ExcludeAssets>
 		</PackageReference>
-		<PackageReference Include="Lyricify.Lyrics.Helper" Version="0.1.4" />
+		<PackageReference Include="Lyricify.Lyrics.Helper" Version="0.2.0" />
 		<PackageReference Include="Sentry" Version="5.8.1" />
 	</ItemGroup>
 	
