@@ -72,7 +72,8 @@ public sealed record LyricsPayload(
     LyricsSourceId Source,
     string ProviderItemId,
     LyricsMetadata Metadata,
-    string? TranslationContent = null);
+    string? TranslationContent = null,
+    string? RomanizationContent = null);
 
 public sealed class LyricsSourceEntry
 {

@@ -28,19 +28,8 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
             _ => throw new NotSupportedException($"Unsupported managed lyrics format: {payload.Format}")
         };
 
-        IReadOnlyList<string>? translations = null;
-        if (!string.IsNullOrWhiteSpace(payload.TranslationContent))
-        {
-            try
-            {
-                var translated = LrcParser.Parse(payload.TranslationContent.AsSpan());
-                translations = translated.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
-            }
-            catch
-            {
-                translations = null;
-            }
-        }
+        var translations = ParseSecondaryLines(payload.TranslationContent);
+        var romanizations = ParseSecondaryLines(payload.RomanizationContent);
 
         var preferWordSync = payload.Format is LyricsFormat.Qrc or LyricsFormat.Krc;
         var document = LyricsDocumentNormalizer.FromLyricify(
@@ -50,20 +39,16 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
             payload.ProviderItemId,
             payload.Format,
             preferWordSync,
-            translations);
+            translations,
+            romanizations);
         return ValueTask.FromResult(document);
     }
 
     private static LyricsDocument ParseQrc(LyricsPayload payload)
     {
         var lines = ParseQrcLines(payload.Content).ToArray();
-        var translations = ParseQrcTranslationLines(payload.TranslationContent);
-        if (translations != null)
-        {
-            lines = lines.Select((line, index) => index < translations.Count
-                ? line with { Translation = translations[index] }
-                : line).ToArray();
-        }
+        lines = AttachSecondaryLines(lines, payload.TranslationContent, static (line, text) => line with { Translation = text });
+        lines = AttachSecondaryLines(lines, payload.RomanizationContent, static (line, text) => line with { Romanization = text });
 
         return LyricsDocumentNormalizer.Create(
             lines,
@@ -72,6 +57,48 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
             payload.ProviderItemId,
             payload.Format,
             preferWordSync: true);
+    }
+
+    private static LyricsLine[] AttachSecondaryLines(
+        LyricsLine[] lines,
+        string? content,
+        Func<LyricsLine, string, LyricsLine> attach)
+    {
+        var secondary = ParseSecondaryLines(content);
+        if (secondary == null)
+        {
+            return lines;
+        }
+
+        return lines.Select((line, index) => index < secondary.Count
+            ? attach(line, secondary[index])
+            : line).ToArray();
+    }
+
+    private static IReadOnlyList<string>? ParseSecondaryLines(string? content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        // QQ Music may return encrypted QRC, plaintext QRC, or plain LRC for translation/roma tracks.
+        var qrcLines = ParseQrcLines(content);
+        if (qrcLines.Count > 0)
+        {
+            return qrcLines.Select(line => line.Text).ToArray();
+        }
+
+        try
+        {
+            var parsed = LrcParser.Parse(content.AsSpan());
+            var lines = parsed.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
+            return lines is { Length: > 0 } ? lines : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static IReadOnlyList<LyricsLine> ParseQrcLines(string content)
@@ -173,29 +200,6 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
     private static bool TryParseMilliseconds(ReadOnlySpan<char> value, out int milliseconds) =>
         int.TryParse(value, out milliseconds) && milliseconds >= 0;
 
-    private static IReadOnlyList<string>? ParseQrcTranslationLines(string? content)
-    {
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            return null;
-        }
-
-        var qrcLines = ParseQrcLines(content);
-        if (qrcLines.Count > 0)
-        {
-            return qrcLines.Select(line => line.Text).ToArray();
-        }
-
-        try
-        {
-            var translated = LrcParser.Parse(content.AsSpan());
-            return translated.Lines?.Select(line => line.Text ?? string.Empty).ToArray();
-        }
-        catch
-        {
-            return null;
-        }
-    }
 
     public static string? DecryptQrc(string encrypted)
     {

@@ -96,6 +96,41 @@ public class ManagedLyricsPayloadParserTests
     }
 
     [Fact]
+    public async Task ParseAsync_Qrc_AttachesPlainLrcTranslationAndQrcRomanization()
+    {
+        const string content = """
+            [0,1000]line-one(0,1000)
+            [1000,1000]line-two(1000,1000)
+            """;
+        const string translation = """
+            [00:00.00]translation one
+            [00:01.00]translation two
+            """;
+        const string romanization = """
+            [0,1000]roma one(0,1000)
+            [1000,1000]roma two(1000,1000)
+            """;
+        var payload = new LyricsPayload(
+            LyricsFormat.Qrc,
+            content,
+            LyricsSourceId.QqMusic,
+            "test",
+            new LyricsMetadata("Song", "Artist", null, TimeSpan.FromSeconds(3)),
+            translation,
+            romanization);
+
+        var document = await new ManagedLyricsPayloadParser().ParseAsync(payload, CancellationToken.None);
+
+        Assert.Equal(2, document.Lines.Count);
+        Assert.Equal("line-one", document.Lines[0].Text);
+        Assert.Equal("translation one", document.Lines[0].Translation);
+        Assert.Equal("roma one", document.Lines[0].Romanization);
+        Assert.Equal("line-two", document.Lines[1].Text);
+        Assert.Equal("translation two", document.Lines[1].Translation);
+        Assert.Equal("roma two", document.Lines[1].Romanization);
+    }
+
+    [Fact]
     public async Task ParseAsync_Qrc_PreservesLiteralQuotesAsWords()
     {
         const string content = "[0,1000]A(0,300)\"(300,200)B(500,500)";

@@ -12,7 +12,8 @@ public static class LyricsDocumentNormalizer
         string providerItemId,
         LyricsFormat format,
         bool preferWordSync,
-        IReadOnlyList<string>? translations = null)
+        IReadOnlyList<string>? translations = null,
+        IReadOnlyList<string>? romanizations = null)
     {
         var lines = new List<LyricsLine>();
         var sourceLines = data.Lines ?? [];
@@ -74,12 +75,19 @@ public static class LyricsDocumentNormalizer
                 translation = line.SubLine.Text;
             }
 
+            string? romanization = null;
+            if (romanizations != null && i < romanizations.Count)
+            {
+                romanization = romanizations[i];
+            }
+
             lines.Add(new LyricsLine(
                 start,
                 end,
                 text,
                 words,
-                translation));
+                translation,
+                romanization));
         }
 
         lines = NormalizeLines(lines, metadata.Duration).ToList();

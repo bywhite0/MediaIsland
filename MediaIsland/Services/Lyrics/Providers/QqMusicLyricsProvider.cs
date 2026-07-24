@@ -381,6 +381,7 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
 
             var decrypted = DecodeQrcValue(encrypted.Original);
             var translation = DecodeQrcValue(encrypted.Translation);
+            var romanization = DecodeQrcValue(encrypted.Romanization);
             if (string.IsNullOrWhiteSpace(decrypted))
             {
                 return null;
@@ -392,7 +393,8 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
                 Id,
                 id,
                 new LyricsMetadata(null, null, null, null),
-                translation);
+                translation,
+                romanization);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -410,11 +412,11 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         }
     }
 
-    internal static (string? Original, string? Translation) ParseQrcResponseBody(string? body)
+    internal static (string? Original, string? Translation, string? Romanization) ParseQrcResponseBody(string? body)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
-            return (null, null);
+            return (null, null, null);
         }
 
         var xml = body.Trim();
@@ -432,29 +434,62 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         var document = XDocument.Parse(xml, LoadOptions.None);
         return (
             ReadElementValue(document, "content"),
-            ReadElementValue(document, "contentts"));
+            ReadElementValue(document, "contentts"),
+            ReadElementValue(document, "contentroma"));
     }
 
-    private static string? DecodeQrcValue(string? encrypted)
+    private static string? DecodeQrcValue(string? value)
     {
-        if (string.IsNullOrWhiteSpace(encrypted))
+        if (string.IsNullOrWhiteSpace(value))
         {
             return null;
         }
 
-        var decrypted = ManagedLyricsPayloadParser.DecryptQrc(encrypted);
-        if (string.IsNullOrWhiteSpace(decrypted))
+        // QQ Music returns original/roma QRC as hex-encrypted payloads, but translation is often
+        // already plaintext LRC. Only attempt QRC decryption for hex-looking payloads.
+        if (LooksLikeHexEncryptedPayload(value))
         {
-            return null;
+            var decrypted = ManagedLyricsPayloadParser.DecryptQrc(value);
+            if (string.IsNullOrWhiteSpace(decrypted))
+            {
+                return null;
+            }
+
+            if (!decrypted.Contains('<', StringComparison.Ordinal))
+            {
+                return decrypted;
+            }
+
+            var content = ExtractQrcLyricContent(decrypted);
+            return string.IsNullOrWhiteSpace(content) ? decrypted : content;
         }
 
-        if (!decrypted.Contains('<', StringComparison.Ordinal))
+        return value.Trim();
+    }
+
+    internal static bool LooksLikeHexEncryptedPayload(string value)
+    {
+        var hasHexDigit = false;
+        var hexDigitCount = 0;
+        foreach (var ch in value)
         {
-            return decrypted;
+            if (char.IsWhiteSpace(ch))
+            {
+                continue;
+            }
+
+            var isHex = ch is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F';
+            if (!isHex)
+            {
+                return false;
+            }
+
+            hasHexDigit = true;
+            hexDigitCount++;
         }
 
-        var content = ExtractQrcLyricContent(decrypted);
-        return string.IsNullOrWhiteSpace(content) ? decrypted : content;
+        // Encrypted QRC payloads are long even-length hex strings.
+        return hasHexDigit && hexDigitCount >= 32 && hexDigitCount % 2 == 0;
     }
 
     internal static string? ExtractQrcLyricContent(string decrypted)
@@ -627,6 +662,10 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         if (document.RootElement.TryGetProperty("trans", out var transNode))
         {
             translation = transNode.GetString();
+            if (string.IsNullOrWhiteSpace(translation))
+            {
+                translation = null;
+            }
         }
 
         return new LyricsPayload(

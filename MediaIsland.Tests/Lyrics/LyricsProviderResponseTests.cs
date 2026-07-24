@@ -23,7 +23,7 @@ public class LyricsProviderResponseTests
     }
 
     [Fact]
-    public void QqResponse_ReadsEncryptedOriginalAndTranslationFromCommentEnvelope()
+    public void QqResponse_ReadsEncryptedOriginalTranslationAndRomanizationFromCommentEnvelope()
     {
         const string body = """
             <!--
@@ -32,6 +32,7 @@ public class LyricsProviderResponseTests
               <lyric>
                 <content><![CDATA[ABC123]]></content>
                 <contentts><![CDATA[DEF456]]></contentts>
+                <contentroma><![CDATA[GHI789]]></contentroma>
               </lyric>
             </command>
             -->
@@ -41,6 +42,16 @@ public class LyricsProviderResponseTests
 
         Assert.Equal("ABC123", result.Original);
         Assert.Equal("DEF456", result.Translation);
+        Assert.Equal("GHI789", result.Romanization);
+    }
+
+    [Fact]
+    public void QqDecode_ClassifiesHexPayloadAndPlainLrcTranslation()
+    {
+        const string plaintext = "[00:01.00]translation line";
+        Assert.False(QqMusicLyricsProvider.LooksLikeHexEncryptedPayload(plaintext));
+        Assert.True(QqMusicLyricsProvider.LooksLikeHexEncryptedPayload(
+            "859205DD70724242F4CA47907AD30AE70108865C30114DBE"));
     }
 
     [Fact]
@@ -90,7 +101,7 @@ public class LyricsProviderResponseTests
 
         Assert.Equal(
             "[0,1000]Hello(0,500) world(500,500)\n[1000,1000]Again(1000,1000)",
-            content);
+            content?.Replace("\r\n", "\n"));
     }
 
     [Fact]
