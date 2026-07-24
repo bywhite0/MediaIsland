@@ -182,8 +182,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
+        var displayPart = Settings.DisplayPart;
         var maxWidth = LyricsLayoutMetrics.ComputeMaxSongLineWidth(
-            document.Lines.Select(static line => (line.Text, line.IsBackground)),
+            document.Lines.Select(line => (LyricsDisplayText.Resolve(line, displayPart), line.IsBackground)),
             LyricsText.FontSize,
             MeasureLyricsTextWidth);
 
@@ -258,6 +259,22 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         if (e.PropertyName == nameof(LyricsComponentConfig.RenderFrameRate))
         {
             UpdateRenderCadence();
+            return;
+        }
+
+        if (e.PropertyName == nameof(LyricsComponentConfig.DisplayPart))
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                lock (_syncLock)
+                {
+                    _activeLineIndices = [];
+                }
+
+                ApplyFixedLyricsContentWidth();
+                RenderCurrentPositionOnce();
+                UpdateRenderCadence();
+            });
         }
     }
 
@@ -1104,12 +1121,17 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         TimeSpan position)
     {
         var line = selection.Line;
+        var displayPart = Settings.DisplayPart;
+        var displayText = LyricsDisplayText.Resolve(line, displayPart);
         var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
             LyricsText.FontSize,
             visibleLineCount,
             line.IsBackground);
         // 逐字背景行使用控件满不透明度；0.4 在呈现器画刷内部施加。
-        var useWordVisual = wordMode && line.Words.Count > 0;
+        // 翻译/音译只有行级文本，不使用原文逐字时间轴。
+        var useWordVisual = wordMode &&
+                            line.Words.Count > 0 &&
+                            LyricsDisplayText.UsesOriginalText(line, displayPart);
         var opacity = line.IsBackground
             ? (useWordVisual ? 1.0 : BackgroundActiveOpacity)
             : 1.0;
@@ -1133,14 +1155,14 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 RenderTransform = new TranslateTransform()
             };
             ApplyWordLyricsAnimationSettings(wordPresenter);
-            AutomationProperties.SetName(wordPresenter, line.Text);
+            AutomationProperties.SetName(wordPresenter, displayText);
             visual = wordPresenter;
         }
         else
         {
             visual = new TextBlock
             {
-                Text = line.Text,
+                Text = displayText,
                 FontSize = fontSize,
                 Foreground = LyricsText.Foreground,
                 TextAlignment = textAlignment,
@@ -1174,11 +1196,16 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         TimeSpan position)
     {
         var line = selection.Line;
+        var displayPart = Settings.DisplayPart;
+        var displayText = LyricsDisplayText.Resolve(line, displayPart);
         var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
             LyricsText.FontSize,
             visibleLineCount,
             line.IsBackground);
-        var useWordVisual = visual.WordPresenter != null && wordMode && line.Words.Count > 0;
+        var useWordVisual = visual.WordPresenter != null &&
+                            wordMode &&
+                            line.Words.Count > 0 &&
+                            LyricsDisplayText.UsesOriginalText(line, displayPart);
         var opacity = line.IsBackground
             ? (useWordVisual ? 1.0 : BackgroundActiveOpacity)
             : 1.0;
@@ -1197,11 +1224,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             visual.WordPresenter.Opacity = opacity;
             visual.WordPresenter.IsBackgroundLine = line.IsBackground;
             ApplyWordLyricsAnimationSettings(visual.WordPresenter);
-            AutomationProperties.SetName(visual.WordPresenter, line.Text);
+            AutomationProperties.SetName(visual.WordPresenter, displayText);
         }
         else if (visual.Control is TextBlock textBlock)
         {
-            textBlock.Text = line.Text;
+            textBlock.Text = displayText;
             textBlock.FontSize = fontSize;
             textBlock.Foreground = LyricsText.Foreground;
             textBlock.TextAlignment = textAlignment;

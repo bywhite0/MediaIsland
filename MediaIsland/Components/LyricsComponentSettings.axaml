@@ -57,6 +57,18 @@
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8D2;}"
+                                       Header="显示文本"
+                                       Description="选择展示原文、翻译（如有）或音译（如有）。缺失时回退到原文；非原文时不使用逐字高亮。">
+                <controls:SettingsExpander.Footer>
+                    <ComboBox MinWidth="130"
+                              SelectedIndex="{Binding Settings.DisplayPartIndex, Mode=TwoWay}">
+                        <ComboBoxItem>原文</ComboBoxItem>
+                        <ComboBoxItem>翻译（如有）</ComboBoxItem>
+                        <ComboBoxItem>音译（如有）</ComboBoxItem>
+                    </ComboBox>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBC9;}"
                                        Header="渲染帧率"
                                        Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">

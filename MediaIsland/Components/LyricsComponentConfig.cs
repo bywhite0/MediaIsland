@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using CommunityToolkit.Mvvm.ComponentModel;
+using MediaIsland.Services.Lyrics.Models;
 
 namespace MediaIsland.Components;
 
@@ -12,6 +13,7 @@ public class LyricsComponentConfig : ObservableRecipient
     private bool _isLeftNegativeMargin;
     private bool _isRightNegativeMargin;
     private int _renderFrameRate = 30;
+    private LyricsDisplayPart _displayPart = LyricsDisplayPart.Original;
 
     public bool IsHideWhenEmpty
     {
@@ -81,6 +83,35 @@ public class LyricsComponentConfig : ObservableRecipient
             _isRightNegativeMargin = value;
             OnPropertyChanged();
         }
+    }
+
+    /// <summary>
+    /// 控制歌词组件展示原文、翻译或音译。翻译/音译缺失时回退到原文。
+    /// </summary>
+    public LyricsDisplayPart DisplayPart
+    {
+        get => _displayPart;
+        set
+        {
+            if (!Enum.IsDefined(typeof(LyricsDisplayPart), value))
+            {
+                value = LyricsDisplayPart.Original;
+            }
+
+            if (_displayPart == value) return;
+            _displayPart = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DisplayPartIndex));
+        }
+    }
+
+    [JsonIgnore]
+    public int DisplayPartIndex
+    {
+        get => (int)DisplayPart;
+        set => DisplayPart = Enum.IsDefined(typeof(LyricsDisplayPart), value)
+            ? (LyricsDisplayPart)value
+            : LyricsDisplayPart.Original;
     }
 
     public int RenderFrameRate

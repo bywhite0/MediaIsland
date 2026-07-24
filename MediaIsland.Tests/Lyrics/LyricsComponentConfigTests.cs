@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MediaIsland.Components;
+using MediaIsland.Services.Lyrics.Models;
 using Xunit;
 
 namespace MediaIsland.Tests.Lyrics;
@@ -89,5 +90,41 @@ public class LyricsComponentConfigTests
         var restored = JsonSerializer.Deserialize<LyricsComponentConfig>(json);
         Assert.NotNull(restored);
         Assert.True(restored!.IsFixedWidthToMaxLineEnabled);
+    }
+
+    [Fact]
+    public void DisplayPart_DefaultsToOriginalAndPersists()
+    {
+        var settings = new LyricsComponentConfig();
+        Assert.Equal(LyricsDisplayPart.Original, settings.DisplayPart);
+        Assert.Equal(0, settings.DisplayPartIndex);
+
+        settings.DisplayPart = LyricsDisplayPart.Translation;
+        Assert.Equal(1, settings.DisplayPartIndex);
+
+        var json = JsonSerializer.Serialize(settings);
+        Assert.Contains("\"DisplayPart\":1", json);
+        Assert.DoesNotContain("DisplayPartIndex", json);
+
+        var restored = JsonSerializer.Deserialize<LyricsComponentConfig>(json);
+        Assert.NotNull(restored);
+        Assert.Equal(LyricsDisplayPart.Translation, restored!.DisplayPart);
+    }
+
+    [Theory]
+    [InlineData(-1, LyricsDisplayPart.Original)]
+    [InlineData(0, LyricsDisplayPart.Original)]
+    [InlineData(1, LyricsDisplayPart.Translation)]
+    [InlineData(2, LyricsDisplayPart.Romanization)]
+    [InlineData(99, LyricsDisplayPart.Original)]
+    public void DisplayPartIndex_MapsToSupportedValues(int index, LyricsDisplayPart expected)
+    {
+        var settings = new LyricsComponentConfig
+        {
+            DisplayPartIndex = index
+        };
+
+        Assert.Equal(expected, settings.DisplayPart);
+        Assert.Equal((int)expected, settings.DisplayPartIndex);
     }
 }
