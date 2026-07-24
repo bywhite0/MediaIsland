@@ -22,6 +22,7 @@ public sealed class LyricsSearchService
     private readonly Func<LyricsSourceSettings> _settingsFactory;
     private readonly ILogger<LyricsSearchService>? _logger;
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, CandidateCacheEntry> _candidateCache = new(StringComparer.OrdinalIgnoreCase);
     private string _settingsFingerprint = string.Empty;
     private LyricsSearchResult? _currentResult;
     private string? _currentMediaTitle;
@@ -132,6 +133,7 @@ public sealed class LyricsSearchService
         }
 
         var settings = LyricsSourceSettings.Normalize(_settingsFactory().Clone());
+        EnsureCacheFingerprint(settings);
         var orderedProviders = settings.Sources
             .Where(source => source.IsEnabled)
             .Select(source => _providers.FirstOrDefault(provider => provider.Id == source.Id))
@@ -280,6 +282,7 @@ public sealed class LyricsSearchService
     public void InvalidateCache()
     {
         _cache.Clear();
+        _candidateCache.Clear();
         _settingsFingerprint = string.Empty;
     }
 
@@ -290,16 +293,20 @@ public sealed class LyricsSearchService
         CancellationToken cancellationToken,
         bool includeBelowMinimumScore = false)
     {
+        var candidateCacheKey = BuildCandidateCacheKey(info, settings, provider.Id);
+        if (TryGetCachedCandidates(candidateCacheKey, out var cachedCandidates))
+        {
+            return FilterCandidates(cachedCandidates, info, includeBelowMinimumScore);
+        }
+
         try
         {
             var candidates = await provider.SearchAsync(info, settings, cancellationToken);
             var orderedCandidates = candidates
-                .OrderByDescending(candidate => candidate.Score);
-            return includeBelowMinimumScore
-                ? orderedCandidates.ToArray()
-                : orderedCandidates
-                    .Where(candidate => candidate.Score >= LyricsCandidateScorer.MinimumScore(info))
-                    .ToArray();
+                .OrderByDescending(candidate => candidate.Score)
+                .ToArray();
+            CacheCandidates(candidateCacheKey, orderedCandidates);
+            return FilterCandidates(orderedCandidates, info, includeBelowMinimumScore);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -315,6 +322,43 @@ public sealed class LyricsSearchService
             _logger?.LogWarning(ex, "[歌词:{Provider}] 搜索失败。", provider.Id);
             return [];
         }
+    }
+
+    private static IReadOnlyList<LyricsCandidate> FilterCandidates(
+        IReadOnlyList<LyricsCandidate> candidates,
+        MediaInfo info,
+        bool includeBelowMinimumScore)
+    {
+        if (includeBelowMinimumScore)
+        {
+            return candidates;
+        }
+
+        return candidates
+            .Where(candidate => candidate.Score >= LyricsCandidateScorer.MinimumScore(info))
+            .ToArray();
+    }
+
+    private bool TryGetCachedCandidates(string key, out IReadOnlyList<LyricsCandidate> candidates)
+    {
+        if (_candidateCache.TryGetValue(key, out var cached) && cached.ExpiresAt > DateTimeOffset.UtcNow)
+        {
+            candidates = cached.Candidates;
+            return true;
+        }
+
+        if (cached is not null)
+        {
+            _candidateCache.TryRemove(key, out _);
+        }
+
+        candidates = [];
+        return false;
+    }
+
+    private void CacheCandidates(string key, IReadOnlyList<LyricsCandidate> candidates)
+    {
+        _candidateCache[key] = new CandidateCacheEntry(candidates, DateTimeOffset.UtcNow.AddMinutes(30));
     }
 
     private async Task<LyricsSearchResult?> TrySelectFromProviderAsync(
@@ -447,15 +491,14 @@ public sealed class LyricsSearchService
         if (!string.Equals(fingerprint, _settingsFingerprint, StringComparison.Ordinal))
         {
             _cache.Clear();
+            _candidateCache.Clear();
             _settingsFingerprint = fingerprint;
         }
     }
 
     private static string BuildCacheKey(MediaInfo info, LyricsSourceSettings settings)
     {
-        var durationBucket = info.Duration > TimeSpan.Zero
-            ? ((int)Math.Round(info.Duration.TotalSeconds / 5.0) * 5).ToString()
-            : "0";
+        var durationBucket = GetDurationBucket(info);
         var sourceFlags = string.Join(
             ",",
             settings.Sources.Select(source => $"{source.Id}:{(source.IsEnabled ? 1 : 0)}:{(source.UseWordSyncedLyrics ? 1 : 0)}"));
@@ -467,6 +510,28 @@ public sealed class LyricsSearchService
             durationBucket,
             sourceFlags,
             settings.AmllApiBaseUrl);
+    }
+
+    private static string BuildCandidateCacheKey(
+        MediaInfo info,
+        LyricsSourceSettings settings,
+        LyricsSourceId providerId)
+    {
+        return string.Join(
+            "\u001f",
+            LyricsTextNormalizer.NormalizeComparableText(info.Title),
+            LyricsTextNormalizer.NormalizeComparableText(info.Artist),
+            LyricsTextNormalizer.NormalizeComparableText(info.AlbumTitle),
+            GetDurationBucket(info),
+            providerId,
+            settings.AmllApiBaseUrl);
+    }
+
+    private static string GetDurationBucket(MediaInfo info)
+    {
+        return info.Duration > TimeSpan.Zero
+            ? ((int)Math.Round(info.Duration.TotalSeconds / 5.0) * 5).ToString()
+            : "0";
     }
 
     private void Cache(string key, LyricsSearchResult result)
@@ -497,6 +562,8 @@ public sealed class LyricsSearchService
     }
 
     private sealed record CacheEntry(LyricsSearchResult Result, DateTimeOffset ExpiresAt);
+
+    private sealed record CandidateCacheEntry(IReadOnlyList<LyricsCandidate> Candidates, DateTimeOffset ExpiresAt);
 }
 
 public sealed record LyricsSearchResult(

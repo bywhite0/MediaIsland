@@ -247,6 +247,67 @@ public class LyricsSearchServiceTests
     }
 
     [Fact]
+    public async Task SearchCandidatesAsync_ReusesProviderCandidatesFromSearchAsync()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.Netease,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = false
+                },
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.QqMusic,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = true
+                }
+            ]
+        };
+        var netease = new FakeProvider(LyricsSourceId.Netease, LyricsFormat.Lrc, supportsWordSync: false, score: 40);
+        var qqMusic = new FakeProvider(LyricsSourceId.QqMusic, LyricsFormat.Qrc, supportsWordSync: true, score: 150);
+        var service = new LyricsSearchService([netease, qqMusic], [new FakeParser()], () => settings);
+        var media = CreateMediaInfo();
+
+        var result = await service.SearchAsync(media);
+        var candidates = await service.SearchCandidatesAsync(media);
+
+        Assert.NotNull(result);
+        Assert.Equal(LyricsSourceId.QqMusic, result.Source);
+        Assert.Equal(2, candidates.Count);
+        Assert.Equal(1, netease.SearchCallCount);
+        Assert.Equal(1, qqMusic.SearchCallCount);
+    }
+
+    [Fact]
+    public async Task SearchCandidatesAsync_DoesNotResearchProvidersOnRepeatedCalls()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry { Id = LyricsSourceId.Netease, IsEnabled = true },
+                new LyricsSourceEntry { Id = LyricsSourceId.QqMusic, IsEnabled = true }
+            ]
+        };
+        var netease = new FakeProvider(LyricsSourceId.Netease, LyricsFormat.Lrc, supportsWordSync: false, score: 40);
+        var qqMusic = new FakeProvider(LyricsSourceId.QqMusic, LyricsFormat.Qrc, supportsWordSync: true, score: 150);
+        var service = new LyricsSearchService([netease, qqMusic], [new FakeParser()], () => settings);
+        var media = CreateMediaInfo();
+
+        var first = await service.SearchCandidatesAsync(media);
+        var second = await service.SearchCandidatesAsync(media);
+
+        Assert.Equal(2, first.Count);
+        Assert.Equal(2, second.Count);
+        Assert.Equal(1, netease.SearchCallCount);
+        Assert.Equal(1, qqMusic.SearchCallCount);
+    }
+
+    [Fact]
     public async Task SearchCandidatesAsync_ReturnsAllEnabledSourceCandidatesSortedByScore()
     {
         var settings = new LyricsSourceSettings
