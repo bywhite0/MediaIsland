@@ -82,7 +82,7 @@
 	                    </StackPanel>
 	                </Grid>
 	            </Border>
-	            <ci:IconText Glyph="&#xEF27;" Text="通用" Margin="0 0 0 8" />
+	            <ci:IconText Glyph="&#xEDBF;" Text="播放源" Margin="0 16 0 8" />
 	            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
 	                                       Header="播放源列表"
 	                                       Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息、是否搜索歌词，并可自定义显示名称；留空时自动识别。需要重载组件才能生效。">
@@ -193,7 +193,7 @@
                         </StackPanel>
                     </StackPanel>
                 </controls:SettingsExpander>
-
+            <ci:IconText Glyph="&#xF07B;" Text="歌词" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE2E0;}"
                                        Header="歌词来源"
                                        Description="按列表顺序搜索歌词。可开关来源、逐字歌词偏好，并配置 AMLL TTML API 地址。">
@@ -346,6 +346,7 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEdgeFeatherEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <ci:IconText Glyph="&#xE9B2;" Text="外观" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
                                        Header="正在播放进度条颜色"
                                        Description="控制“正在播放”组件进度条颜色。可使用 ClassIsland 主题色，或从专辑封面提取主题色（如果可用）。">
@@ -363,6 +364,7 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <ci:IconText Glyph="&#xEAEF;" Text="隐私" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
                                        Header="匿名使用情况分析"
                                        Description="本插件使用 Sentry 收集与本插件相关的使用情况与错误信息，以帮助改善本插件，相关信息将被匿名上传。此功能不会收集您的个人信息。">
