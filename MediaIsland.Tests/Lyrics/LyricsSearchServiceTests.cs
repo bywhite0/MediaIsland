@@ -247,6 +247,76 @@ public class LyricsSearchServiceTests
     }
 
     [Fact]
+    public async Task SearchAsync_CoalescesConcurrentSearchesForSameMedia()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.QqMusic,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = true
+                }
+            ]
+        };
+        var provider = new BlockingSuccessProvider(LyricsSourceId.QqMusic, LyricsFormat.Qrc, supportsWordSync: true);
+        var service = new LyricsSearchService([provider], [new FakeParser()], () => settings);
+        var media = CreateMediaInfo();
+
+        var first = service.SearchAsync(media);
+        await provider.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = service.SearchAsync(media);
+
+        Assert.Equal(1, provider.SearchCallCount);
+
+        provider.CompleteSearch();
+        var firstResult = await first;
+        var secondResult = await second;
+
+        Assert.NotNull(firstResult);
+        Assert.Same(firstResult, secondResult);
+        Assert.Equal(1, provider.SearchCallCount);
+        Assert.Equal(1, provider.FetchCallCount);
+    }
+
+    [Fact]
+    public async Task SearchAsync_CallerCancellationDoesNotCancelSharedSearch()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            Sources =
+            [
+                new LyricsSourceEntry
+                {
+                    Id = LyricsSourceId.QqMusic,
+                    IsEnabled = true,
+                    UseWordSyncedLyrics = true
+                }
+            ]
+        };
+        var provider = new BlockingSuccessProvider(LyricsSourceId.QqMusic, LyricsFormat.Qrc, supportsWordSync: true);
+        var service = new LyricsSearchService([provider], [new FakeParser()], () => settings);
+        var media = CreateMediaInfo();
+        using var cancellation = new CancellationTokenSource();
+
+        var first = service.SearchAsync(media, cancellation.Token);
+        await provider.SearchStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        var second = service.SearchAsync(media);
+
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
+
+        provider.CompleteSearch();
+        var secondResult = await second;
+
+        Assert.NotNull(secondResult);
+        Assert.Equal(1, provider.SearchCallCount);
+        Assert.Same(secondResult, service.CurrentResult);
+    }
+
+    [Fact]
     public async Task SearchCandidatesAsync_ReusesProviderCandidatesFromSearchAsync()
     {
         var settings = new LyricsSourceSettings
@@ -545,6 +615,63 @@ public class LyricsSearchServiceTests
             LyricsSourceSettings settings,
             CancellationToken cancellationToken) =>
             Task.FromResult<LyricsPayload?>(null);
+    }
+
+    private sealed class BlockingSuccessProvider(
+        LyricsSourceId id,
+        LyricsFormat format,
+        bool supportsWordSync,
+        int score = 150) : ILyricsProvider
+    {
+        private readonly TaskCompletionSource _searchCompleted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource SearchStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int SearchCallCount { get; private set; }
+
+        public int FetchCallCount { get; private set; }
+
+        public LyricsSourceId Id => id;
+
+        public async Task<IReadOnlyList<LyricsCandidate>> SearchAsync(
+            MediaInfo media,
+            LyricsSourceSettings settings,
+            CancellationToken cancellationToken)
+        {
+            SearchCallCount++;
+            SearchStarted.TrySetResult();
+            await _searchCompleted.Task.WaitAsync(cancellationToken);
+            return
+            [
+                new LyricsCandidate(
+                    id,
+                    id.ToString(),
+                    media.Title ?? string.Empty,
+                    media.Artist ?? string.Empty,
+                    media.AlbumTitle ?? string.Empty,
+                    media.Duration,
+                    score,
+                    supportsWordSync)
+            ];
+        }
+
+        public Task<LyricsPayload?> FetchAsync(
+            LyricsCandidate candidate,
+            LyricsSourceSettings settings,
+            CancellationToken cancellationToken)
+        {
+            FetchCallCount++;
+            return Task.FromResult<LyricsPayload?>(new LyricsPayload(
+                format,
+                "payload",
+                id,
+                candidate.ProviderItemId,
+                new LyricsMetadata(candidate.Title, candidate.Artist, candidate.Album, candidate.Duration)));
+        }
+
+        public void CompleteSearch() => _searchCompleted.TrySetResult();
     }
 
 }

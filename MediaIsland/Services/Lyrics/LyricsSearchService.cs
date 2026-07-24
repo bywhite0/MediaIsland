@@ -23,11 +23,13 @@ public sealed class LyricsSearchService
     private readonly ILogger<LyricsSearchService>? _logger;
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CandidateCacheEntry> _candidateCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _searchSync = new();
     private string _settingsFingerprint = string.Empty;
     private LyricsSearchResult? _currentResult;
     private string? _currentMediaTitle;
     private string? _currentMediaArtist;
     private long _searchVersion;
+    private InflightSearch? _inflightSearch;
 
     public LyricsSearchResult? CurrentResult => Volatile.Read(ref _currentResult);
 
@@ -60,13 +62,12 @@ public sealed class LyricsSearchService
 
     public async Task<LyricsSearchResult?> SearchAsync(MediaInfo info, CancellationToken cancellationToken = default)
     {
-        var searchVersion = Interlocked.Increment(ref _searchVersion);
-        Interlocked.Exchange(ref _currentMediaTitle, info.Title);
-        Interlocked.Exchange(ref _currentMediaArtist, info.Artist);
-        PublishCurrentResult(null, searchVersion);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (string.IsNullOrWhiteSpace(info.Title))
         {
+            var emptyVersion = BeginExclusiveSearch(info);
+            PublishCurrentResult(null, emptyVersion);
             return null;
         }
 
@@ -78,13 +79,76 @@ public sealed class LyricsSearchService
         {
             if (cached.ExpiresAt > DateTimeOffset.UtcNow)
             {
-                PublishCurrentResult(cached.Result, searchVersion);
+                var cachedVersion = BeginExclusiveSearch(info);
+                PublishCurrentResult(cached.Result, cachedVersion);
                 return cached.Result;
             }
 
             _cache.TryRemove(cacheKey, out _);
         }
 
+        var searchTask = GetOrStartSearchAsync(info, settings, cacheKey);
+        try
+        {
+            return await searchTask.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+    }
+
+    private Task<LyricsSearchResult?> GetOrStartSearchAsync(
+        MediaInfo info,
+        LyricsSourceSettings settings,
+        string cacheKey)
+    {
+        lock (_searchSync)
+        {
+            if (_inflightSearch is { } inflight &&
+                string.Equals(inflight.CacheKey, cacheKey, StringComparison.OrdinalIgnoreCase) &&
+                !inflight.Task.IsCompleted)
+            {
+                return inflight.Task;
+            }
+
+            CancelInflightSearch_NoLock();
+
+            var searchVersion = Interlocked.Increment(ref _searchVersion);
+            Interlocked.Exchange(ref _currentMediaTitle, info.Title);
+            Interlocked.Exchange(ref _currentMediaArtist, info.Artist);
+            PublishCurrentResult(null, searchVersion);
+
+            var cts = new CancellationTokenSource();
+            var searchTask = ExecuteSearchAsync(info, settings, cacheKey, searchVersion, cts.Token);
+            _inflightSearch = new InflightSearch(cacheKey, searchTask, cts);
+            _ = searchTask.ContinueWith(
+                task =>
+                {
+                    lock (_searchSync)
+                    {
+                        if (ReferenceEquals(_inflightSearch?.Task, task))
+                        {
+                            _inflightSearch.Cts.Dispose();
+                            _inflightSearch = null;
+                        }
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+
+            return searchTask;
+        }
+    }
+
+    private async Task<LyricsSearchResult?> ExecuteSearchAsync(
+        MediaInfo info,
+        LyricsSourceSettings settings,
+        string cacheKey,
+        long searchVersion,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var orderedProviders = settings.Sources
@@ -121,6 +185,37 @@ public sealed class LyricsSearchService
             PublishCurrentResult(null, searchVersion);
             return null;
         }
+    }
+
+    private long BeginExclusiveSearch(MediaInfo info)
+    {
+        lock (_searchSync)
+        {
+            CancelInflightSearch_NoLock();
+            var searchVersion = Interlocked.Increment(ref _searchVersion);
+            Interlocked.Exchange(ref _currentMediaTitle, info.Title);
+            Interlocked.Exchange(ref _currentMediaArtist, info.Artist);
+            return searchVersion;
+        }
+    }
+
+    private void CancelInflightSearch_NoLock()
+    {
+        if (_inflightSearch is not { } inflight)
+        {
+            return;
+        }
+
+        try
+        {
+            inflight.Cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        inflight.Cts.Dispose();
+        _inflightSearch = null;
     }
 
     public async Task<IReadOnlyList<LyricsCandidate>> SearchCandidatesAsync(
@@ -180,10 +275,8 @@ public sealed class LyricsSearchService
             return null;
         }
 
-        var searchVersion = Interlocked.Increment(ref _searchVersion);
-        Interlocked.Exchange(ref _currentMediaTitle, info.Title);
-        Interlocked.Exchange(ref _currentMediaArtist, info.Artist);
         EnsureCacheFingerprint(settings);
+        var searchVersion = BeginExclusiveSearch(info);
 
         var result = await TrySelectFromProviderAsync(
             provider,
@@ -564,6 +657,11 @@ public sealed class LyricsSearchService
     private sealed record CacheEntry(LyricsSearchResult Result, DateTimeOffset ExpiresAt);
 
     private sealed record CandidateCacheEntry(IReadOnlyList<LyricsCandidate> Candidates, DateTimeOffset ExpiresAt);
+
+    private sealed record InflightSearch(
+        string CacheKey,
+        Task<LyricsSearchResult?> Task,
+        CancellationTokenSource Cts);
 }
 
 public sealed record LyricsSearchResult(
