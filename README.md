@@ -30,14 +30,30 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 
 ![设置截图](./Assets/snpc_settings.png)
 
+**实时歌词**
+
+![截图](./Assets/screenshot_lyrics.gif)
+
+根据当前播放媒体搜索并显示同步歌词。
+
+![设置截图](./Assets/lc_settings.png)
+
+
 > [!IMPORTANT]
 >
 > 本插件的内存占用较大，低性能设备请谨慎使用。
 
+> [!NOTE]
+> 
+> 在较新的 Windows 版本中，使用部分应用可能无法正常获取播放器信息。
 
 ## 要求
 
 本插件需要 Windows 10 Build 17763 (1809) 或以上版本。
+
+## 开发计划 & 已知问题
+
+请移步 [Discussion](https://github.com/bywhite0/MediaIsland/discussions/10)
 
 ## 致谢
 
