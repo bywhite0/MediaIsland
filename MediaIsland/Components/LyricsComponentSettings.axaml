@@ -11,14 +11,14 @@
                   d:DesignHeight="450" d:DesignWidth="800">
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:LyricsComponentSettings}}">
         <StackPanel>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xED1A;}"
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE817;}"
                                        Header="无内容时隐藏组件"
                                        Description="没有媒体会话、未找到歌词或状态文本关闭时隐藏本组件。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsHideWhenEmpty, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE946;}"
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xF07B;}"
                                        Header="显示状态文本"
                                        Description="显示等待媒体信息、查找歌词和未找到歌词等状态。">
                 <controls:SettingsExpander.Footer>
@@ -32,7 +32,7 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowNoteIcon, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE14C;}"
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE0ED;}"
                                        Header="固定歌词宽度"
                                        Description="按当前歌曲最长歌词行的宽度固定歌词区，避免一首歌内组件宽度随换行连续变化。">
                 <controls:SettingsExpander.Footer>
@@ -57,8 +57,8 @@
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8D2;}"
-                                       Header="显示文本"
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEC10;}"
+                                       Header="显示内容"
                                        Description="选择展示原文、翻译（如有）或音译（如有）。缺失时回退到原文；非原文时不使用逐字高亮。">
                 <controls:SettingsExpander.Footer>
                     <ComboBox MinWidth="130"
@@ -69,7 +69,7 @@
                     </ComboBox>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBC9;}"
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8CB;}"
                                        Header="渲染帧率"
                                        Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">
                 <controls:SettingsExpander.Footer>
@@ -84,7 +84,7 @@
                 Powered by MediaIsland
             </Label>
             <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
-                Lyrics powered by Netease Cloud Music
+                Lyrics powered by LttF.
             </Label>
         </StackPanel>
     </ScrollViewer>

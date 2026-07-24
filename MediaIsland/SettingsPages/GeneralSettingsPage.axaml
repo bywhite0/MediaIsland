@@ -332,7 +332,7 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1D4;}"
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE299;}"
                                        Header="启用强调辉光"
                                        Description="强调效果启用时，为长音字素叠加白色柔光。关闭后仅保留缩放与位移。">
                 <controls:SettingsExpander.Footer>

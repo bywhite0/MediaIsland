@@ -21,12 +21,12 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowAlbumArt, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBCB;}" Header="显示当前播放状态" Description="显示当前媒体的播放状态。">
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xF401;}" Header="显示当前播放状态" Description="显示当前媒体的播放状态。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowPlaybackStatus, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE54A;}"
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEDBF;}"
                                        Header="显示播放源图标"
                                        Description="在播放源区域显示播放器图标。"
                                        IsExpanded="{Binding Settings.IsShowSource, Mode=OneWay}">
@@ -47,7 +47,7 @@
                     </controls:SettingsExpanderItem.Footer>
                 </controls:SettingsExpanderItem>
             </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE183;}" Header="显示播放源名称" Description="在播放源图标下方显示播放源名称。">
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBCB;}" Header="显示播放源名称" Description="在播放源图标下方显示播放源名称。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowSourceName, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
