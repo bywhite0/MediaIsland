@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
 		<TargetFramework>net8.0</TargetFramework>
@@ -14,6 +14,9 @@
 		<TtmlNativeCargoOutput>$(MSBuildProjectDirectory)\..\native\ttml-ffi\target\release\mediaisland_ttml.dll</TtmlNativeCargoOutput>
 		<TtmlNativeLibraryName>MediaIsland.Ttml.dll</TtmlNativeLibraryName>
 		<TtmlNativeLibrary>$(MSBuildProjectDirectory)\..\native\ttml-ffi\target\release\$(TtmlNativeLibraryName)</TtmlNativeLibrary>
+		<Version>1.1.1.0</Version>
+		<AssemblyVersion>1.1.1.0</AssemblyVersion>
+		<FileVersion>1.1.1.0</FileVersion>
 	</PropertyGroup>
 
 
