@@ -178,6 +178,54 @@ public class WordLyricsPresenterTests
     }
 
     [Fact]
+    public void EmphasisGlow_UsesAmllBlurAndTextShadowModel()
+    {
+        var start = TimeSpan.FromSeconds(2);
+        var end = TimeSpan.FromSeconds(4); // 2000ms
+        // blur = (2000/3000)^3 * 0.5 = (2/3)^3 * 0.5
+        var blur = WordLyricsPresenter.GetWordEmphasisBlur(start, end, false);
+        var lastBlur = WordLyricsPresenter.GetWordEmphasisBlur(start, end, true);
+        Assert.Equal(8.0 / 27.0 * 0.5, blur, 6);
+        Assert.Equal(8.0 / 27.0 * 0.5 * 1.5, lastBlur, 6);
+
+        // 3s 分界：du/3000 = 1 → blur = 0.5；末词 0.75
+        var threeSecondBlur = WordLyricsPresenter.GetWordEmphasisBlur(
+            start,
+            start + TimeSpan.FromSeconds(3),
+            false);
+        var threeSecondLastBlur = WordLyricsPresenter.GetWordEmphasisBlur(
+            start,
+            start + TimeSpan.FromSeconds(3),
+            true);
+        Assert.Equal(0.5, threeSecondBlur, 6);
+        Assert.Equal(0.75, threeSecondLastBlur, 6);
+
+        // 上限 0.8
+        var cappedBlur = WordLyricsPresenter.GetWordEmphasisBlur(
+            start,
+            start + TimeSpan.FromSeconds(20),
+            true);
+        Assert.Equal(0.8, cappedBlur, 6);
+
+        Assert.Equal(0, WordLyricsPresenter.GetEmphasisGlowLevel(blur, 0), 6);
+        Assert.Equal(0, WordLyricsPresenter.GetEmphasisGlowLevel(0, 1), 6);
+        Assert.Equal(blur, WordLyricsPresenter.GetEmphasisGlowLevel(blur, 1), 6);
+        Assert.Equal(blur * 0.5, WordLyricsPresenter.GetEmphasisGlowLevel(blur, 0.5), 6);
+        Assert.Equal(0.8, WordLyricsPresenter.GetEmphasisGlowLevel(0.8, 1), 6);
+
+        // radius = fontSize * min(0.3, blur * 0.3)
+        Assert.Equal(
+            20 * Math.Min(0.3, blur * 0.3),
+            WordLyricsPresenter.GetEmphasisGlowRadius(20, blur),
+            6);
+        Assert.Equal(
+            20 * Math.Min(0.3, 0.8 * 0.3),
+            WordLyricsPresenter.GetEmphasisGlowRadius(20, 0.8),
+            6);
+        Assert.Equal(0, WordLyricsPresenter.GetEmphasisGlowRadius(20, 0), 6);
+    }
+
+    [Fact]
     public void WordEmphasisScale_KeepsTheWordCenterFixed()
     {
         var center = new Point(20, 10);
@@ -188,4 +236,24 @@ public class WordLyricsPresenterTests
         Assert.Equal(30.96, transformed.X, 6);
         Assert.Equal(10, transformed.Y, 6);
     }
+
+    [Fact]
+    public void BlurBgra8888_SpreadsOpaqueCenterIntoNeighbors()
+    {
+        // 3x3，中心不透明白，其余透明。
+        var source = new byte[3 * 3 * 4];
+        var center = (1 * 3 + 1) * 4;
+        source[center + 0] = 255;
+        source[center + 1] = 255;
+        source[center + 2] = 255;
+        source[center + 3] = 255;
+
+        var blurred = WordLyricsPresenter.BlurBgra8888(source, 3, 3, 1);
+
+        Assert.True(blurred[center + 3] > 0);
+        // 邻像素应被 alpha 柔边点亮
+        Assert.True(blurred[((0 * 3) + 1) * 4 + 3] > 0);
+        Assert.True(blurred[((1 * 3) + 0) * 4 + 3] > 0);
+    }
+
 }

@@ -27,8 +27,8 @@ namespace MediaIsland.Components;
 )]
 public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 {
-    // AMLL main line: opacity 0.3s with 0.1s delay; background vocal: 0.5s / 0.25s delay to ~0.4.
-    // Word-synced BG lines apply 0.4 on glyph brushes (not Control.Opacity) so completed words stay at 0.4.
+    // AMLL 主歌词行：不透明度 0.3 秒、延迟 0.1 秒；背景人声行：0.5 秒 / 延迟 0.25 秒，目标约 0.4。
+    // 逐字背景行在字形画刷上施加 0.4（而不是控件整体不透明度），使已完成单词保持约 0.4。
     private const double TransitionDurationMs = 300;
     private const double TransitionDelayMs = 100;
     private const double BackgroundTransitionDurationMs = 500;
@@ -308,6 +308,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         if (e.PropertyName != nameof(PluginSettings.IsWordLyricsLiftEnabled) &&
             e.PropertyName != nameof(PluginSettings.IsWordLyricsEmphasisEnabled) &&
+            e.PropertyName != nameof(PluginSettings.IsWordLyricsEmphasisGlowEnabled) &&
             e.PropertyName != nameof(PluginSettings.IsWordLyricsEdgeFeatherEnabled))
         {
             return;
@@ -617,8 +618,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
             if (linesChanged)
             {
-                // Overlapping active sets use per-line enter/leave motion; only hard switches
-                // (no shared indices) replay the full-component dual-layer slide/fade.
+                // 活跃集合有重叠时，按行做进入/离开动画；仅在硬切换
+                // （无共享行索引）时重放整组件双层滑动/淡入淡出。
                 var animateFullTransition = ShouldAnimateFullLineTransition(previousIndices, lineIndices);
                 RebuildActiveLineVisuals(
                     activeLines,
@@ -702,7 +703,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _displayedStatusText = string.Empty;
         _displayedStatusOpacity = -1;
 
-        // Shared-line handoff: morph previous layout into the next one instead of swapping the whole frame.
+        // 共享行交接：把上一布局渐变到下一布局，而不是整帧替换。
         if (!animateFullTransition &&
             IsLyricsTransitionEnabled &&
             _activeLineVisuals.Count > 0)
@@ -779,12 +780,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         bool wordMode,
         TimeSpan position)
     {
-        // Finish any whole-frame animation, but keep the current line controls for reuse.
+        // 结束任何整帧动画，但保留当前行控件以便复用。
         CompleteFullFrameTransitionOnly();
         FinishLineMotions(removeExiting: true, settleRemaining: true);
         ClearExitLayer();
 
-        // Snapshot previous on-screen positions in host coordinates before rebuilding the final stack.
+        // 在重建最终堆叠前，以宿主坐标系快照上一帧各行的屏幕位置。
         var previousByIndex = _activeLineVisuals.ToDictionary(item => item.LineIndex);
         var firstFrames = previousByIndex.ToDictionary(
             item => item.Key,
@@ -810,7 +811,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _backgroundFadeTargets.Clear();
         _front.Spacing = isMultiLine ? 0 : 1;
 
-        // Front stack only holds the final active set so layout is already the destination frame.
+        // 前景堆叠只保留最终活跃集合，使布局本身已是目标帧。
         var nextVisuals = new List<ActiveLineVisual>(plan.Count);
         var stayingControls = new List<ActiveLineVisual>();
         _front.Children.Clear();
@@ -866,7 +867,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 RemoveFromExitLayer: false));
         }
 
-        // Park leaving lines on an overlay at their original host Y so they do not reflow the stack.
+        // 离开中的行停在叠加层上的原宿主 Y，避免它们参与堆叠回流。
         foreach (var leave in leaving)
         {
             var first = firstFrames[leave.LineIndex];
@@ -878,8 +879,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             var transform = EnsureLineTransform(leave.Control);
             transform.Y = 0;
             leave.Control.Opacity = first.Opacity;
-            // Canvas does not stretch children; keep the previous host width so
-            // Center/Right TextAlignment (no-duet BG leave, duet leave) stays correct.
+            // 画布不会拉伸子元素；保持原先宿主宽度，
+            // 使居中/右对齐（非对唱背景离开、对唱离开）仍然正确。
             var leaveWidth = first.Width > 0 ? first.Width : LyricsContentHost.Bounds.Width;
             if (leaveWidth > 0)
             {
@@ -919,7 +920,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _back.Opacity = 0;
         ((TranslateTransform)_back.RenderTransform!).Y = 0;
 
-        // Final front layout is already the destination; FLIP shared lines from first host Y to last.
+        // 最终前景布局已是目标位置；对共享行做 FLIP，从首帧宿主 Y 过渡到末帧宿主 Y。
         ForceLineHostLayout();
         foreach (var kept in stayingControls)
         {
@@ -1015,8 +1016,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             width = Math.Max(LyricsText.FontSize * 20, 240);
         }
 
-        // Arrange the final front stack first, then the host so TranslatePoint host-Y is accurate
-        // after multi-line -> single-line height changes (VerticalAlignment=Center).
+        // 先排列最终前景堆叠再排列宿主，这样在多行变为单行、高度变化后
+        // （垂直居中时）TranslatePoint 得到的宿主 Y 仍然准确。
         var available = new Size(width, double.PositiveInfinity);
         _front.Measure(available);
         var frontHeight = Math.Max(_front.DesiredSize.Height, 1);
@@ -1107,7 +1108,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             LyricsText.FontSize,
             visibleLineCount,
             line.IsBackground);
-        // Word-synced BG uses full control opacity; 0.4 is applied inside the presenter brushes.
+        // 逐字背景行使用控件满不透明度；0.4 在呈现器画刷内部施加。
         var useWordVisual = wordMode && line.Words.Count > 0;
         var opacity = line.IsBackground
             ? (useWordVisual ? 1.0 : BackgroundActiveOpacity)
@@ -1267,6 +1268,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         presenter.IsWordLiftEnabled = _pluginSettings?.IsWordLyricsLiftEnabled ?? true;
         presenter.IsWordEmphasisEnabled = _pluginSettings?.IsWordLyricsEmphasisEnabled ?? true;
+        presenter.IsWordEmphasisGlowEnabled = _pluginSettings?.IsWordLyricsEmphasisGlowEnabled ?? true;
         presenter.IsWordEdgeFeatherEnabled = _pluginSettings?.IsWordLyricsEdgeFeatherEnabled ?? true;
     }
 
@@ -1409,7 +1411,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         if (string.IsNullOrWhiteSpace(text))
         {
-            // Empty status should not leave a blank layer; the next lyrics frame will transition in.
+            // 空状态不应留下空白层；下一帧歌词会过渡进入。
             ClearActiveLineVisuals();
             UpdateEmptyVisibility();
             return;

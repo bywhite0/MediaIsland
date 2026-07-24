@@ -25,6 +25,24 @@ public class PluginSettingsTests
     }
 
     [Fact]
+    public void WordLyricsEmphasisGlowEnabled_DefaultsToTrueAndPersists()
+    {
+        Assert.True(new PluginSettings().IsWordLyricsEmphasisGlowEnabled);
+
+        var settings = new PluginSettings
+        {
+            IsWordLyricsEmphasisGlowEnabled = false
+        };
+
+        var json = JsonSerializer.Serialize(settings);
+        var restored = JsonSerializer.Deserialize<PluginSettings>(json);
+
+        Assert.Contains("\"IsWordLyricsEmphasisGlowEnabled\":false", json);
+        Assert.NotNull(restored);
+        Assert.False(restored!.IsWordLyricsEmphasisGlowEnabled);
+    }
+
+    [Fact]
     public void LyricsInterludeAnimationEnabled_DefaultsToTrueAndPersists()
     {
         Assert.True(new PluginSettings().IsLyricsInterludeAnimationEnabled);

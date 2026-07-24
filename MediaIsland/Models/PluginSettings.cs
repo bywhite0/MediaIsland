@@ -127,6 +127,19 @@ namespace MediaIsland.Models
             }
         }
 
+        private bool _isWordLyricsEmphasisGlowEnabled = true;
+
+        public bool IsWordLyricsEmphasisGlowEnabled
+        {
+            get => _isWordLyricsEmphasisGlowEnabled;
+            set
+            {
+                if (_isWordLyricsEmphasisGlowEnabled == value) return;
+                _isWordLyricsEmphasisGlowEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
         private bool _isWordLyricsEdgeFeatherEnabled = true;
 
         public bool IsWordLyricsEdgeFeatherEnabled

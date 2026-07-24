@@ -327,9 +327,16 @@
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE29E;}"
                                        Header="启用强调效果"
-                                       Description="任意单词持续超过 1 秒时，呈现缩放效果。">
+                                       Description="任意单词持续超过 1 秒时，呈现缩放与位移效果。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1D4;}"
+                                       Header="启用强调辉光"
+                                       Description="强调效果启用时，为长音字素叠加白色柔光。关闭后仅保留缩放与位移。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisGlowEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE2A2;}"
