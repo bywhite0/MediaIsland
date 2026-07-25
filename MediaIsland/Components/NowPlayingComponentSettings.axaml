@@ -27,12 +27,19 @@
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEDBF;}"
-                                       Header="显示播放源图标"
-                                       Description="在播放源区域显示播放器图标。"
+                                       Header="显示当前播放源"
+                                       Description="显示当前媒体的播放源。"
                                        IsExpanded="{Binding Settings.IsShowSource, Mode=OneWay}">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowSource, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
+                <controls:SettingsExpanderItem Content="显示当前播放源名称"
+                                               Description="显示当前媒体的播放源名称。"
+                                               IconSource="{ci:FluentIconSource &#xEBCB;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <ToggleSwitch IsChecked="{Binding Settings.IsShowSourceName, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
                 <controls:SettingsExpanderItem Content="图标圆角半径"
                                                Description="播放源图标的圆角半径，默认为圆形。"
                                                IconSource="{ci:FluentIconSource &#xF031;}">
@@ -46,11 +53,6 @@
                                 Classes="auto-tooltip" />
                     </controls:SettingsExpanderItem.Footer>
                 </controls:SettingsExpanderItem>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBCB;}" Header="显示播放源名称" Description="在播放源图标下方显示播放源名称。">
-                <controls:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.IsShowSourceName, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEA97;}"
                                        Header="显示播放进度条"

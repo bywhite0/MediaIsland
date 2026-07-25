@@ -1,4 +1,3 @@
-using System.Text.Json.Serialization;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace MediaIsland.Components
@@ -52,7 +51,6 @@ namespace MediaIsland.Components
                 if (_isShowSource == value) return;
                 _isShowSource = value;
                 OnPropertyChanged();
-                OnPropertyChanged(nameof(IsShowSourceArea));
             }
         }
         public bool IsShowSourceName
@@ -63,12 +61,8 @@ namespace MediaIsland.Components
                 if (_isShowSourceName == value) return;
                 _isShowSourceName = value;
                 OnPropertyChanged();
-                OnPropertyChanged(nameof(IsShowSourceArea));
             }
         }
-
-        [JsonIgnore]
-        public bool IsShowSourceArea => IsShowSource || IsShowSourceName;
 
         public double SourceIconRadius
         {
