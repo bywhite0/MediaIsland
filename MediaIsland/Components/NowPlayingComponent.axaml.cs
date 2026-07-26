@@ -1,14 +1,12 @@
 using System.IO;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Data;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using ClassIsland.Core.Attributes;
 using ClassIsland.Shared.Helpers;
-using MediaIsland.Converters;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
 using MediaIsland.Services.Media;
@@ -39,7 +37,6 @@ namespace MediaIsland.Components
         private bool _isPlaying;
         private bool _isLoaded;
         private MediaInfo? _currentMediaInfo;
-        private IDisposable? _sourceIconRadiusBinding;
 
         public NowPlayingComponent(
             ILogger<NowPlayingComponent> logger,
@@ -67,7 +64,6 @@ namespace MediaIsland.Components
             globalSettings.MediaSourceSettingsSaved += GlobalSettings_OnMediaSourceSettingsSaved;
             globalSettings.PropertyChanged -= GlobalSettings_OnPropertyChanged;
             globalSettings.PropertyChanged += GlobalSettings_OnPropertyChanged;
-            BindSourceIconRadius();
             Settings.PropertyChanged += OnSettingsPropertyChanged;
             UpdateMargin();
             ApplyProgressBarSideMargin();
@@ -80,8 +76,6 @@ namespace MediaIsland.Components
         {
             _isLoaded = false;
             _timelineTimer.Stop();
-            _sourceIconRadiusBinding?.Dispose();
-            _sourceIconRadiusBinding = null;
             globalSettings.MediaSourceSettingsSaved -= GlobalSettings_OnMediaSourceSettingsSaved;
             globalSettings.PropertyChanged -= GlobalSettings_OnPropertyChanged;
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
@@ -124,18 +118,6 @@ namespace MediaIsland.Components
             {
                 ApplyProgressBarColor(AlbumArt.Source as Bitmap);
             });
-        }
-
-        private void BindSourceIconRadius()
-        {
-            _sourceIconRadiusBinding?.Dispose();
-            _sourceIconRadiusBinding = SourceIconBorder.Bind(
-                Border.CornerRadiusProperty,
-                new Binding(nameof(NowPlayingComponentConfig.SourceIconRadius))
-                {
-                    Source = Settings,
-                    Converter = new DoubleToCornerRadiusConverter()
-                });
         }
 
         private void UpdateMargin()
