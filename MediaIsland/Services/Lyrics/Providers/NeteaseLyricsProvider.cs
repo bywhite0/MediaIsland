@@ -23,15 +23,31 @@ public sealed class NeteaseLyricsProvider(ILogger<NeteaseLyricsProvider>? logger
         }
 
         var candidates = new List<LyricsCandidate>();
+        LyricsCandidate? best = null;
         foreach (var query in LyricsTextNormalizer.BuildSearchQueries(media.Title, media.Artist, media.AlbumTitle))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var direct = await SearchNeteaseApiAsync(query, media, cancellationToken);
-            if (direct != null)
+            if (direct == null)
             {
-                candidates.Add(direct);
+                continue;
+            }
+
+            if (best == null || direct.Score > best.Score)
+            {
+                best = direct;
+            }
+
+            // 低分候选仍会保留供用户手动挑选，但只有出现合格候选时才停止尝试更精确的查询。
+            if (direct.Score >= LyricsCandidateScorer.MinimumScore(media))
+            {
                 break;
             }
+        }
+
+        if (best != null)
+        {
+            candidates.Add(best);
         }
 
         return candidates
@@ -137,11 +153,6 @@ public sealed class NeteaseLyricsProvider(ILogger<NeteaseLyricsProvider>? logger
             {
                 best = candidate;
             }
-        }
-
-        if (best == null || best.Score < LyricsCandidateScorer.MinimumScore(media))
-        {
-            return null;
         }
 
         return best;

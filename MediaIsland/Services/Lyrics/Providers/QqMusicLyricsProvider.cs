@@ -52,10 +52,6 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
                     item.Artist,
                     item.Album,
                     item.Duration);
-                if (score < LyricsCandidateScorer.MinimumScore(media))
-                {
-                    continue;
-                }
 
                 candidates.Add(new LyricsCandidate(
                     Id,
@@ -73,7 +69,8 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
                     }));
             }
 
-            if (candidates.Count > 0)
+            // 低分候选仍会保留供用户手动挑选，但只有出现合格候选时才停止尝试更精确的查询。
+            if (candidates.Any(candidate => candidate.Score >= LyricsCandidateScorer.MinimumScore(media)))
             {
                 break;
             }

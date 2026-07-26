@@ -525,7 +525,7 @@ public sealed class LyricsSearchService
                 continue;
             }
 
-            if (document.Lines.Count == 0)
+            if (document.Lines.Count == 0 || IsInstrumentalPlaceholder(document))
             {
                 continue;
             }
@@ -573,6 +573,26 @@ public sealed class LyricsSearchService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 各歌词源对纯音乐会返回占位歌词而非空结果。若当作有效歌词接受，搜索会就此停止，
+    /// 不再尝试其他可能真正收录了歌词的来源，用户看到的就是「搜不到歌词」。
+    /// </summary>
+    private static readonly string[] InstrumentalPlaceholders =
+    [
+        "纯音乐，请欣赏",
+        "纯音乐,请欣赏",
+        "没有填词的纯音乐",
+        "此歌曲为没有填词的纯音乐"
+    ];
+
+    internal static bool IsInstrumentalPlaceholder(LyricsDocument document)
+    {
+        return document.Lines.Any(line =>
+            !string.IsNullOrWhiteSpace(line.Text) &&
+            InstrumentalPlaceholders.Any(placeholder =>
+                line.Text.Contains(placeholder, StringComparison.Ordinal)));
     }
 
     private void EnsureCacheFingerprint(LyricsSourceSettings settings)

@@ -36,10 +36,6 @@ public sealed class KugouLyricsProvider(ILogger<KugouLyricsProvider>? logger = n
                     song.Album,
                     song.Duration,
                     sourceBonus: !string.IsNullOrWhiteSpace(song.Hash) ? 5 : 0);
-                if (score < LyricsCandidateScorer.MinimumScore(media))
-                {
-                    continue;
-                }
 
                 candidates.Add(new LyricsCandidate(
                     Id,
@@ -57,7 +53,8 @@ public sealed class KugouLyricsProvider(ILogger<KugouLyricsProvider>? logger = n
                     }));
             }
 
-            if (candidates.Count > 0)
+            // 低分候选仍会保留供用户手动挑选，但只有出现合格候选时才停止尝试更精确的查询。
+            if (candidates.Any(candidate => candidate.Score >= LyricsCandidateScorer.MinimumScore(media)))
             {
                 break;
             }
