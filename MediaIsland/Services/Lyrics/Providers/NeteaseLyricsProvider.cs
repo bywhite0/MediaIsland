@@ -1,6 +1,6 @@
 using System.Text.Json;
-using Lyricify.Lyrics.Parsers;
 using MediaIsland.Services.Lyrics.Models;
+using MediaIsland.Services.Lyrics.Parsers;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
 
@@ -58,13 +58,9 @@ public sealed class NeteaseLyricsProvider(ILogger<NeteaseLyricsProvider>? logger
         }
 
         // 简单验证 LRC 是否可解析。
-        try
+        if (LrcLyricsParser.Parse(lyrics.Value.Lyric).Count == 0)
         {
-            _ = LrcParser.Parse(lyrics.Value.Lyric.AsSpan());
-        }
-        catch (Exception ex)
-        {
-            logger?.LogWarning(ex, "[歌词:Netease] LRC 解析失败，ID={Id}", candidate.ProviderItemId);
+            logger?.LogWarning("[歌词:Netease] LRC 解析失败，ID={Id}", candidate.ProviderItemId);
             return null;
         }
 

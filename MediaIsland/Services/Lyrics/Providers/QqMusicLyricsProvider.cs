@@ -4,8 +4,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using MediaIsland.Services.Lyrics.Crypto;
 using MediaIsland.Services.Lyrics.Models;
-using MediaIsland.Services.Lyrics.Parsers;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
 
@@ -449,7 +449,7 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         // already plaintext LRC. Only attempt QRC decryption for hex-looking payloads.
         if (LooksLikeHexEncryptedPayload(value))
         {
-            var decrypted = ManagedLyricsPayloadParser.DecryptQrc(value);
+            var decrypted = QrcDecrypter.Decrypt(value);
             if (string.IsNullOrWhiteSpace(decrypted))
             {
                 return null;

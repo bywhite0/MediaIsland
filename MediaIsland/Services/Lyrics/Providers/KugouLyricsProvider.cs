@@ -1,6 +1,6 @@
 using System.Text.Json;
+using MediaIsland.Services.Lyrics.Crypto;
 using MediaIsland.Services.Lyrics.Models;
-using MediaIsland.Services.Lyrics.Parsers;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
 
@@ -106,7 +106,7 @@ public sealed class KugouLyricsProvider(ILogger<KugouLyricsProvider>? logger = n
             return null;
         }
 
-        var decrypted = ManagedLyricsPayloadParser.DecryptKrc(encrypted);
+        var decrypted = KrcDecrypter.Decrypt(encrypted);
         if (string.IsNullOrWhiteSpace(decrypted))
         {
             logger?.LogWarning("[歌词:Kugou] KRC 解密失败，ID={Id}", lyricCandidate.Id);
