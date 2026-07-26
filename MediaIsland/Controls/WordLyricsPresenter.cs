@@ -64,6 +64,10 @@ public sealed class WordLyricsPresenter : Control
     public static readonly StyledProperty<FontFamily> FontFamilyProperty =
         TextElement.FontFamilyProperty.AddOwner<WordLyricsPresenter>();
 
+    // 字重与字体同源，允许按展示部分（原文/翻译/音译）单独配置
+    public static readonly StyledProperty<FontWeight> FontWeightProperty =
+        TextElement.FontWeightProperty.AddOwner<WordLyricsPresenter>();
+
     public static readonly StyledProperty<IBrush?> ForegroundProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, IBrush?>(nameof(Foreground));
 
@@ -90,6 +94,7 @@ public sealed class WordLyricsPresenter : Control
     private string? _cachedText;
     private double _cachedFontSize;
     private FontFamily _cachedFontFamily = Avalonia.Media.FontFamily.Default;
+    private FontWeight _cachedFontWeight = FontWeight.Normal;
     private Typeface _typeface = new(Avalonia.Media.FontFamily.Default);
     private FormattedText? _fullText;
 
@@ -126,6 +131,12 @@ public sealed class WordLyricsPresenter : Control
     {
         get => GetValue(FontFamilyProperty);
         set => SetValue(FontFamilyProperty, value);
+    }
+
+    public FontWeight FontWeight
+    {
+        get => GetValue(FontWeightProperty);
+        set => SetValue(FontWeightProperty, value);
     }
 
     public IBrush? Foreground
@@ -178,6 +189,7 @@ public sealed class WordLyricsPresenter : Control
             PositionProperty,
             FontSizeProperty,
             FontFamilyProperty,
+            FontWeightProperty,
             ForegroundProperty,
             TextAlignmentProperty,
             IsWordLiftEnabledProperty,
@@ -189,6 +201,7 @@ public sealed class WordLyricsPresenter : Control
             LineProperty,
             FontSizeProperty,
             FontFamilyProperty,
+            FontWeightProperty,
             ForegroundProperty,
             IsWordLiftEnabledProperty,
             IsWordEmphasisEnabledProperty);
@@ -1418,6 +1431,7 @@ public sealed class WordLyricsPresenter : Control
             ReferenceEquals(_cachedLine, line) &&
             string.Equals(_cachedText, text, StringComparison.Ordinal) &&
             Math.Abs(_cachedFontSize - FontSize) < 0.01 &&
+            _cachedFontWeight == FontWeight &&
             Equals(_cachedFontFamily, FontFamily))
         {
             return;
@@ -1429,7 +1443,8 @@ public sealed class WordLyricsPresenter : Control
         _cachedText = text;
         _cachedFontSize = FontSize;
         _cachedFontFamily = FontFamily;
-        _typeface = new Typeface(FontFamily);
+        _cachedFontWeight = FontWeight;
+        _typeface = new Typeface(FontFamily, FontStyle.Normal, FontWeight);
         var brush = Foreground ?? Brushes.White;
         _fullText = CreateFormatted(text, brush);
         BuildWordMetrics(line, brush);

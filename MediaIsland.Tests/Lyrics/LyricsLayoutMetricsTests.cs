@@ -46,18 +46,18 @@ public class LyricsLayoutMetricsTests
     [Fact]
     public void ComputeMaxSongLineWidth_UsesLargestFontPerRole()
     {
-        var measured = new List<(string Text, double FontSize)>();
-        double Measure(string text, double fontSize)
+        var measured = new List<(string Text, double FontSize, LyricsDisplayPart Part)>();
+        double Measure(string text, double fontSize, LyricsDisplayPart part)
         {
-            measured.Add((text, fontSize));
+            measured.Add((text, fontSize, part));
             return text.Length * fontSize;
         }
 
         var width = LyricsLayoutMetrics.ComputeMaxSongLineWidth(
             [
-                ("short", false),
-                ("a much longer main line", false),
-                ("background only", true)
+                ("short", false, LyricsDisplayPart.Original),
+                ("a much longer main line", false, LyricsDisplayPart.Original),
+                ("background only", true, LyricsDisplayPart.Translation)
             ],
             defaultFontSize: 14,
             Measure);
@@ -65,15 +65,16 @@ public class LyricsLayoutMetricsTests
         Assert.Equal("a much longer main line".Length * 14, width);
         Assert.Contains(measured, item => item.Text == "background only" && item.FontSize == 10);
         Assert.Contains(measured, item => item.Text == "short" && item.FontSize == 14);
+        Assert.Contains(measured, item => item.Part == LyricsDisplayPart.Translation);
     }
 
     [Fact]
     public void ComputeMaxSongLineWidth_DoesNotCapMeasuredWidth()
     {
         var width = LyricsLayoutMetrics.ComputeMaxSongLineWidth(
-            [("x", false)],
+            [("x", false, LyricsDisplayPart.Original)],
             defaultFontSize: 14,
-            measureTextWidth: static (_, _) => 9999);
+            measureTextWidth: static (_, _, _) => 9999);
 
         Assert.Equal(9999, width);
     }

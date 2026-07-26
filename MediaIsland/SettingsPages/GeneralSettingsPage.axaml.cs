@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -767,6 +768,73 @@ namespace MediaIsland.SettingsPages
         {
             SaveSettings();
             Settings.NotifyMediaSourceSettingsSaved();
+        }
+
+        private const string FollowGlobalFontOption = "跟随全局字体";
+
+        /// <summary>
+        /// 字体下拉选项：首项为“跟随全局字体”，其余为系统已安装字体。
+        /// </summary>
+        public IReadOnlyList<string> FontFamilyOptions { get; } = BuildFontFamilyOptions();
+
+        public string LyricsOriginalFontFamilySelection
+        {
+            get => ToFontOption(Settings.LyricsOriginalFontFamily);
+            set
+            {
+                Settings.LyricsOriginalFontFamily = FromFontOption(value);
+                OnPropertyChanged();
+                SaveSettings();
+            }
+        }
+
+        public string LyricsTranslationFontFamilySelection
+        {
+            get => ToFontOption(Settings.LyricsTranslationFontFamily);
+            set
+            {
+                Settings.LyricsTranslationFontFamily = FromFontOption(value);
+                OnPropertyChanged();
+                SaveSettings();
+            }
+        }
+
+        public string LyricsRomanizationFontFamilySelection
+        {
+            get => ToFontOption(Settings.LyricsRomanizationFontFamily);
+            set
+            {
+                Settings.LyricsRomanizationFontFamily = FromFontOption(value);
+                OnPropertyChanged();
+                SaveSettings();
+            }
+        }
+
+        private static string ToFontOption(string? family) =>
+            string.IsNullOrWhiteSpace(family) ? FollowGlobalFontOption : family;
+
+        private static string FromFontOption(string? option) =>
+            string.IsNullOrWhiteSpace(option) || option == FollowGlobalFontOption
+                ? string.Empty
+                : option;
+
+        private static IReadOnlyList<string> BuildFontFamilyOptions()
+        {
+            var options = new List<string> { FollowGlobalFontOption };
+            try
+            {
+                options.AddRange(FontManager.Current.SystemFonts
+                    .Select(font => font.Name)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name, StringComparer.CurrentCulture));
+            }
+            catch (Exception)
+            {
+                // 系统字体枚举失败时至少保留“跟随全局字体”，不影响设置页打开。
+            }
+
+            return options;
         }
 
         private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

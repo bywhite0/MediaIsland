@@ -127,4 +127,51 @@ public class LyricsComponentConfigTests
         Assert.Equal(expected, settings.DisplayPart);
         Assert.Equal((int)expected, settings.DisplayPartIndex);
     }
+
+    [Fact]
+    public void LineSpacing_DefaultsToZeroAndPersists()
+    {
+        var settings = new LyricsComponentConfig();
+        Assert.Equal(0, settings.LineSpacing);
+
+        settings.LineSpacing = -2.5;
+        var json = JsonSerializer.Serialize(settings);
+        Assert.Contains("\"LineSpacing\":-2.5", json);
+
+        var restored = JsonSerializer.Deserialize<LyricsComponentConfig>(json);
+        Assert.NotNull(restored);
+        Assert.Equal(-2.5, restored!.LineSpacing);
+    }
+
+    [Theory]
+    [InlineData(-20, -8)]
+    [InlineData(-8, -8)]
+    [InlineData(0, 0)]
+    [InlineData(3.5, 3.5)]
+    [InlineData(8, 8)]
+    [InlineData(20, 8)]
+    [InlineData(double.NaN, 0)]
+    [InlineData(double.PositiveInfinity, 0)]
+    public void LineSpacing_ClampsToSupportedRange(double value, double expected)
+    {
+        var settings = new LyricsComponentConfig
+        {
+            LineSpacing = value
+        };
+
+        Assert.Equal(expected, settings.LineSpacing);
+    }
+
+    [Fact]
+    public void LineSpacing_RaisesChangeNotification()
+    {
+        var settings = new LyricsComponentConfig();
+        var changed = new List<string?>();
+        settings.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        settings.LineSpacing = 2;
+        settings.LineSpacing = 2;
+
+        Assert.Equal([nameof(LyricsComponentConfig.LineSpacing)], changed);
+    }
 }

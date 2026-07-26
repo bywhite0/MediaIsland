@@ -13,7 +13,24 @@ public class LyricsComponentConfig : ObservableRecipient
     private bool _isLeftNegativeMargin;
     private bool _isRightNegativeMargin;
     private int _renderFrameRate = 30;
+    private double _lineSpacing;
     private LyricsDisplayPart _displayPart = LyricsDisplayPart.Original;
+
+    /// <summary>
+    /// 多行歌词的附加行距（像素，可为负）。部分日文字体行高偏大，
+    /// 取负值可压缩多行间距；取正值则让主歌词与背景人声行分得更开。
+    /// </summary>
+    public double LineSpacing
+    {
+        get => _lineSpacing;
+        set
+        {
+            var normalizedValue = double.IsFinite(value) ? Math.Clamp(value, -8, 8) : 0;
+            if (Math.Abs(_lineSpacing - normalizedValue) < 0.001) return;
+            _lineSpacing = normalizedValue;
+            OnPropertyChanged();
+        }
+    }
 
     public bool IsHideWhenEmpty
     {
