@@ -240,7 +240,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         var plan = LyricsLayoutMetrics.ResolveFitPlan(
             activeLines.Select(item => item.Line.IsBackground).ToArray(),
             LyricsText.FontSize,
-            Settings.LineSpacing);
+            Settings.LineSpacing,
+            Settings.IsShowQqMusicKana &&
+            activeLines.Any(item =>
+                item.Line.RubySpans is { Count: > 0 } &&
+                LyricsDisplayText.UsesOriginalText(item.Line, Settings.DisplayPart)));
 
         var items = new List<LineLayoutItem>(activeLines.Count);
         for (var i = 0; i < activeLines.Count; i++)
@@ -253,6 +257,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         return items;
     }
+
+    private bool ShouldShowQqMusicKana(LyricsLine line, LyricsDisplayPart displayPart) =>
+        Settings.IsShowQqMusicKana &&
+        LyricsDisplayText.UsesOriginalText(line, displayPart) &&
+        line.RubySpans is { Count: > 0 };
 
     private Thickness ResolveLineMargin(bool isMultiLine, bool isFirstLine)
     {
@@ -313,7 +322,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
 
         if (e.PropertyName is nameof(LyricsComponentConfig.DisplayPart)
-            or nameof(LyricsComponentConfig.LineSpacing))
+            or nameof(LyricsComponentConfig.LineSpacing)
+            or nameof(LyricsComponentConfig.IsShowQqMusicKana))
         {
             Dispatcher.UIThread.Post(() =>
             {
@@ -1369,6 +1379,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Opacity = opacity,
                 IsBackgroundLine = line.IsBackground,
+                IsRubyEnabled = ShouldShowQqMusicKana(line, displayPart),
                 RenderTransform = new TranslateTransform()
             };
             ApplyWordLyricsAnimationSettings(wordPresenter);
@@ -1440,6 +1451,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             visual.WordPresenter.TextAlignment = textAlignment;
             visual.WordPresenter.Opacity = opacity;
             visual.WordPresenter.IsBackgroundLine = line.IsBackground;
+            visual.WordPresenter.IsRubyEnabled = ShouldShowQqMusicKana(line, displayPart);
             ApplyWordLyricsAnimationSettings(visual.WordPresenter);
             AutomationProperties.SetName(visual.WordPresenter, displayText);
         }

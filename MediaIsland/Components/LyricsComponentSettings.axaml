@@ -69,6 +69,13 @@
                     </ComboBox>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xF374;}"
+                                       Header="显示 QQ 音乐歌词假名"
+                                       Description="在原文上方显示 QQ 音乐 QRC 自带的字级假名注音。仅原文有效展示时生效；翻译/音译模式不显示。默认关闭。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowQqMusicKana, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8CB;}"
                                        Header="渲染帧率"
                                        Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">

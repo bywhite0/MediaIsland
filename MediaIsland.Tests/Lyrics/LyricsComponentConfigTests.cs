@@ -111,6 +111,21 @@ public class LyricsComponentConfigTests
         Assert.Equal(LyricsDisplayPart.Translation, restored!.DisplayPart);
     }
 
+    [Fact]
+    public void IsShowQqMusicKana_DefaultsToFalseAndPersists()
+    {
+        var settings = new LyricsComponentConfig();
+        Assert.False(settings.IsShowQqMusicKana);
+
+        settings.IsShowQqMusicKana = true;
+        var json = JsonSerializer.Serialize(settings);
+        Assert.Contains("\"IsShowQqMusicKana\":true", json);
+
+        var restored = JsonSerializer.Deserialize<LyricsComponentConfig>(json);
+        Assert.NotNull(restored);
+        Assert.True(restored!.IsShowQqMusicKana);
+    }
+
     [Theory]
     [InlineData(-1, LyricsDisplayPart.Original)]
     [InlineData(0, LyricsDisplayPart.Original)]

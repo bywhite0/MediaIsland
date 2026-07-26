@@ -20,11 +20,24 @@ public static class QrcLyricsParser
         }
 
         var lines = new List<LyricsLine>();
+        string? kanaPayload = null;
         // QQ Music sometimes returns line breaks escaped as literal "\n" inside a single JSON string.
         foreach (var rawLine in content.Split(
                      ["\r\n", "\n", "\r", "\\r\\n", "\\n", "\\r"],
                      StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
+            var kana = QrcKanaParser.ExtractPayload(rawLine);
+            if (kana != null)
+            {
+                // Real QQ tracks ship a single whole-song stream; keep the first non-empty payload.
+                if (string.IsNullOrEmpty(kanaPayload) && kana.Length > 0)
+                {
+                    kanaPayload = kana;
+                }
+
+                continue;
+            }
+
             if (!TryParseLineHeader(rawLine, out var startMilliseconds, out var durationMilliseconds, out var contentText))
             {
                 continue;
@@ -42,7 +55,7 @@ public static class QrcLyricsParser
                 words));
         }
 
-        return lines;
+        return QrcKanaParser.Attach(lines, kanaPayload);
     }
 
     private static bool TryParseLineHeader(

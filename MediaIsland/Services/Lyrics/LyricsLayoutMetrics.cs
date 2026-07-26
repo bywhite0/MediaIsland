@@ -19,6 +19,9 @@ internal static class LyricsLayoutMetrics
     // 字号到行高的近似系数。预算与实际占用共用该系数，只有行距是绝对像素。
     internal const double LineHeightFactor = 1.3;
 
+    // 开启 QQ 音乐假名时额外预留的行高系数，覆盖字上注音带。
+    internal const double RubyLineHeightExtraFactor = 0.35;
+
     private const double FitEpsilon = 0.01;
 
     public static double GetActiveLineFontSize(
@@ -60,10 +63,12 @@ internal static class LyricsLayoutMetrics
     /// <param name="isBackgroundLine">与活跃行一一对应的背景人声标记。</param>
     /// <param name="defaultFontSize">岛屿正文字号。</param>
     /// <param name="lineSpacing">用户配置的附加行距（像素，可为负）。</param>
+    /// <param name="reserveRubySpace">当前活跃集是否需要为字级假名预留上方高度。</param>
     internal static LyricsFitPlan ResolveFitPlan(
         IReadOnlyList<bool> isBackgroundLine,
         double defaultFontSize,
-        double lineSpacing)
+        double lineSpacing,
+        bool reserveRubySpace = false)
     {
         ArgumentNullException.ThrowIfNull(isBackgroundLine);
 
@@ -76,6 +81,7 @@ internal static class LyricsLayoutMetrics
 
         Array.Fill(keep, true);
         var budget = GetVerticalBudget(defaultFontSize);
+        var lineHeightFactor = LineHeightFactor + (reserveRubySpace ? RubyLineHeightExtraFactor : 0);
         while (true)
         {
             var keptCount = CountKept(keep);
@@ -91,7 +97,7 @@ internal static class LyricsLayoutMetrics
 
                 var size = GetActiveLineFontSize(defaultFontSize, keptCount, isBackgroundLine[i]);
                 fontSizes[i] = size;
-                textExtent += size * LineHeightFactor;
+                textExtent += size * lineHeightFactor;
                 var floor = isBackgroundLine[i]
                     ? MinimumScaledBackgroundFontSize
                     : MinimumScaledMainFontSize;
