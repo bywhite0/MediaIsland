@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using MediaIsland.Services.Lyrics.Models;
 
@@ -10,18 +11,21 @@ namespace MediaIsland.Services.Lyrics.Parsers;
 /// <remarks>
 /// A timed line looks like <c>[lineStart,lineDuration]&lt;offset,duration,0&gt;word...</c>, where each
 /// word offset is relative to the line start. Metadata lines such as <c>[ar:...]</c> carry no timing
-/// and are skipped, except <c>[language:...]</c> which carries the per-line translation.
+/// and are skipped, except <c>[language:...]</c> which carries per-line translation and romanization.
 /// </remarks>
 public static class KrcLyricsParser
 {
     /// <summary>Tag holding the base64-encoded translation document.</summary>
     private const string LanguageTag = "[language:";
 
-    /// <summary>Content block type carrying a plain translation; other types are alternate renderings.</summary>
+    /// <summary>Content block holding one romanization cell per KRC syllable.</summary>
+    private const int RomanizationContentType = 0;
+
+    /// <summary>Content block holding one translation string per line.</summary>
     private const int TranslationContentType = 1;
 
     /// <summary>Kugou marks a line with no translation as "//".</summary>
-    private const string EmptyTranslationMarker = "//";
+    private const string EmptyTextMarker = "//";
 
     public static IReadOnlyList<LyricsLine> Parse(string? content)
     {
@@ -59,7 +63,7 @@ public static class KrcLyricsParser
             timedLineIndexes.Add(timedLineIndex);
         }
 
-        AttachTranslations(lines, timedLineIndexes, content);
+        AttachSecondaryText(lines, timedLineIndexes, content);
         return lines;
     }
 
@@ -149,10 +153,37 @@ public static class KrcLyricsParser
     private static bool TryParseMilliseconds(ReadOnlySpan<char> value, out int milliseconds) =>
         int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out milliseconds);
 
-    private static void AttachTranslations(List<LyricsLine> lines, List<int> timedLineIndexes, string content)
+    private static void AttachSecondaryText(List<LyricsLine> lines, List<int> timedLineIndexes, string content)
     {
-        var translations = ReadTranslations(content);
-        if (translations == null)
+        if (lines.Count == 0 || !TryReadLanguageJson(content, out var json))
+        {
+            return;
+        }
+
+        IReadOnlyList<string>? translations;
+        IReadOnlyList<string>? romanizations;
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            translations = ReadContentBlock(document.RootElement, TranslationContentType, ReadFirstCell);
+            romanizations = ReadContentBlock(document.RootElement, RomanizationContentType, JoinSyllableCells);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+
+        Apply(lines, timedLineIndexes, translations, static (line, text) => line with { Translation = text });
+        Apply(lines, timedLineIndexes, romanizations, static (line, text) => line with { Romanization = text });
+    }
+
+    private static void Apply(
+        List<LyricsLine> lines,
+        List<int> timedLineIndexes,
+        IReadOnlyList<string>? values,
+        Func<LyricsLine, string, LyricsLine> attach)
+    {
+        if (values == null)
         {
             return;
         }
@@ -160,51 +191,54 @@ public static class KrcLyricsParser
         for (var i = 0; i < lines.Count; i++)
         {
             var timedLineIndex = timedLineIndexes[i];
-            if (timedLineIndex >= translations.Count)
+            if (timedLineIndex >= values.Count)
             {
                 break;
             }
 
-            var translation = translations[timedLineIndex];
-            if (!string.IsNullOrWhiteSpace(translation))
+            var value = values[timedLineIndex];
+            if (!string.IsNullOrWhiteSpace(value))
             {
-                lines[i] = lines[i] with { Translation = translation };
+                lines[i] = attach(lines[i], value);
             }
         }
     }
 
     /// <summary>
-    /// Reads the translation lines from the <c>[language:...]</c> tag, which holds base64-encoded
-    /// JSON of the form <c>{"content":[{"type":1,"lyricContent":[["line"],...]}]}</c>.
+    /// Extracts the base64 payload of the <c>[language:...]</c> tag, which decodes to JSON of the form
+    /// <c>{"content":[{"type":1,"lyricContent":[["line"],...]}]}</c>.
     /// </summary>
-    private static IReadOnlyList<string>? ReadTranslations(string content)
+    private static bool TryReadLanguageJson(string content, out byte[] json)
     {
+        json = [];
         var start = content.IndexOf(LanguageTag, StringComparison.Ordinal);
         if (start < 0)
         {
-            return null;
+            return false;
         }
 
         start += LanguageTag.Length;
         var end = content.IndexOf(']', start);
         if (end <= start)
         {
-            return null;
+            return false;
         }
 
         try
         {
-            var json = Convert.FromBase64String(content[start..end].Trim());
-            using var document = JsonDocument.Parse(json);
-            return ReadTranslationDocument(document.RootElement);
+            json = Convert.FromBase64String(content[start..end].Trim());
+            return true;
         }
-        catch (Exception exception) when (exception is FormatException or JsonException)
+        catch (FormatException)
         {
-            return null;
+            return false;
         }
     }
 
-    private static IReadOnlyList<string>? ReadTranslationDocument(JsonElement root)
+    private static IReadOnlyList<string>? ReadContentBlock(
+        JsonElement root,
+        int contentType,
+        Func<JsonElement, string> readRow)
     {
         if (root.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("content", out var blocks) ||
@@ -219,24 +253,25 @@ public static class KrcLyricsParser
                 !block.TryGetProperty("type", out var type) ||
                 type.ValueKind != JsonValueKind.Number ||
                 !type.TryGetInt32(out var typeValue) ||
-                typeValue != TranslationContentType ||
+                typeValue != contentType ||
                 !block.TryGetProperty("lyricContent", out var rows) ||
                 rows.ValueKind != JsonValueKind.Array)
             {
                 continue;
             }
 
-            var translations = rows.EnumerateArray().Select(ReadTranslationRow).ToArray();
-            if (translations.Length > 0)
+            var values = rows.EnumerateArray().Select(readRow).ToArray();
+            if (values.Length > 0)
             {
-                return translations;
+                return values;
             }
         }
 
         return null;
     }
 
-    private static string ReadTranslationRow(JsonElement row)
+    /// <summary>Reads a translation row, which holds the whole line in its first cell.</summary>
+    private static string ReadFirstCell(JsonElement row)
     {
         if (row.ValueKind != JsonValueKind.Array ||
             row.GetArrayLength() == 0 ||
@@ -245,7 +280,35 @@ public static class KrcLyricsParser
             return string.Empty;
         }
 
-        var text = row[0].GetString() ?? string.Empty;
-        return text == EmptyTranslationMarker ? string.Empty : text;
+        return Normalize(row[0].GetString());
+    }
+
+    /// <summary>
+    /// Reads a romanization row, which holds one cell per KRC syllable. Kugou already pads each cell
+    /// with its own trailing space, so concatenating restores the spacing of the original line.
+    /// </summary>
+    private static string JoinSyllableCells(JsonElement row)
+    {
+        if (row.ValueKind != JsonValueKind.Array)
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder();
+        foreach (var cell in row.EnumerateArray())
+        {
+            if (cell.ValueKind == JsonValueKind.String)
+            {
+                builder.Append(cell.GetString());
+            }
+        }
+
+        return Normalize(builder.ToString());
+    }
+
+    private static string Normalize(string? text)
+    {
+        var trimmed = text?.Trim() ?? string.Empty;
+        return trimmed == EmptyTextMarker ? string.Empty : trimmed;
     }
 }

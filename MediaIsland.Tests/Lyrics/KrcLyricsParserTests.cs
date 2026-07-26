@@ -126,12 +126,12 @@ public class KrcLyricsParserTests
     [Fact]
     public void Parse_LanguageTag_AttachesTranslationPerLine()
     {
-        var content = BuildContentWithTranslation(
+        var content = BuildContentWithTags(
             """
             [0,900]<0,900,0>first
             [1000,900]<0,900,0>second
             """,
-            LanguageTag(type: 1, ["第一行", "第二行"]));
+            LanguageTag(TranslationBlock(1, ["第一行", "第二行"])));
 
         var lines = KrcLyricsParser.Parse(content);
 
@@ -142,12 +142,12 @@ public class KrcLyricsParserTests
     [Fact]
     public void Parse_TranslationPlaceholder_LeavesLineUntranslated()
     {
-        var content = BuildContentWithTranslation(
+        var content = BuildContentWithTags(
             """
             [0,900]<0,900,0>first
             [1000,900]<0,900,0>second
             """,
-            LanguageTag(type: 1, ["//", "有翻译"]));
+            LanguageTag(TranslationBlock(1, ["//", "有翻译"])));
 
         var lines = KrcLyricsParser.Parse(content);
 
@@ -158,13 +158,13 @@ public class KrcLyricsParserTests
     [Fact]
     public void Parse_TranslationShorterThanLyrics_LeavesRemainingLinesUntranslated()
     {
-        var content = BuildContentWithTranslation(
+        var content = BuildContentWithTags(
             """
             [0,900]<0,900,0>first
             [1000,900]<0,900,0>second
             [2000,900]<0,900,0>third
             """,
-            LanguageTag(type: 1, ["只有一行"]));
+            LanguageTag(TranslationBlock(1, ["只有一行"])));
 
         var lines = KrcLyricsParser.Parse(content);
 
@@ -174,29 +174,17 @@ public class KrcLyricsParserTests
     }
 
     [Fact]
-    public void Parse_NonTranslationContentType_IsIgnored()
-    {
-        var content = BuildContentWithTranslation(
-            "[0,900]<0,900,0>first",
-            LanguageTag(type: 0, ["romaji"]));
-
-        var line = Assert.Single(KrcLyricsParser.Parse(content));
-
-        Assert.Null(line.Translation);
-    }
-
-    [Fact]
     public void Parse_TimedLineWithoutWords_DoesNotShiftTranslationAlignment()
     {
         // The second timed line yields no words and is dropped, but it still consumes a
         // translation slot, so the third line must keep its own translation.
-        var content = BuildContentWithTranslation(
+        var content = BuildContentWithTags(
             """
             [0,900]<0,900,0>first
             [1000,900]dropped
             [2000,900]<0,900,0>third
             """,
-            LanguageTag(type: 1, ["一", "二", "三"]));
+            LanguageTag(TranslationBlock(1, ["一", "二", "三"])));
 
         var lines = KrcLyricsParser.Parse(content);
 
@@ -205,13 +193,103 @@ public class KrcLyricsParserTests
         Assert.Equal("三", lines[1].Translation);
     }
 
+    [Fact]
+    public void Parse_NonTranslationContentType_IsIgnored()
+    {
+        var content = BuildContentWithTags(
+            "[0,900]<0,900,0>first",
+            LanguageTag(TranslationBlock(2, ["not a translation"])));
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+
+        Assert.Null(line.Translation);
+        Assert.Null(line.Romanization);
+    }
+
+    [Fact]
+    public void Parse_RomanizationBlock_JoinsSyllableCellsIntoLine()
+    {
+        var content = BuildContentWithTags(
+            """
+            [0,900]<0,300,0>米<300,300,0>津<600,300,0>玄
+            [1000,900]<0,900,0>春
+            """,
+            LanguageTag(RomanizationBlock([["yo ne ", "tsu ", "ge n "], ["ha ru "]])));
+
+        var lines = KrcLyricsParser.Parse(content);
+
+        Assert.Equal("yo ne tsu ge n", lines[0].Romanization);
+        Assert.Equal("ha ru", lines[1].Romanization);
+    }
+
+    [Fact]
+    public void Parse_TranslationAndRomanizationBlocks_BothAttach()
+    {
+        var content = BuildContentWithTags(
+            "[0,900]<0,450,0>春<450,450,0>雨",
+            LanguageTag(
+                TranslationBlock(1, ["春雨"]),
+                RomanizationBlock([["ha ru ", "sa me "]])));
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+
+        Assert.Equal("春雨", line.Translation);
+        Assert.Equal("ha ru sa me", line.Romanization);
+    }
+
+    [Fact]
+    public void Parse_RomanizationRowWithFewerCellsThanWords_StillJoinsAvailableCells()
+    {
+        var content = BuildContentWithTags(
+            "[0,900]<0,300,0>a<300,300,0>b<600,300,0>c",
+            LanguageTag(RomanizationBlock([["x ", "y "]])));
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+
+        Assert.Equal("x y", line.Romanization);
+    }
+
+    [Fact]
+    public void Parse_EmptyRomanizationRow_LeavesLineWithoutRomanization()
+    {
+        var content = BuildContentWithTags(
+            """
+            [0,900]<0,900,0>first
+            [1000,900]<0,900,0>second
+            """,
+            LanguageTag(RomanizationBlock([[], ["ni "]])));
+
+        var lines = KrcLyricsParser.Parse(content);
+
+        Assert.Null(lines[0].Romanization);
+        Assert.Equal("ni", lines[1].Romanization);
+    }
+
+    [Fact]
+    public void Parse_TimedLineWithoutWords_DoesNotShiftRomanizationAlignment()
+    {
+        var content = BuildContentWithTags(
+            """
+            [0,900]<0,900,0>first
+            [1000,900]dropped
+            [2000,900]<0,900,0>third
+            """,
+            LanguageTag(RomanizationBlock([["i chi "], ["ni "], ["sa n "]])));
+
+        var lines = KrcLyricsParser.Parse(content);
+
+        Assert.Equal(2, lines.Count);
+        Assert.Equal("i chi", lines[0].Romanization);
+        Assert.Equal("sa n", lines[1].Romanization);
+    }
+
     [Theory]
     [InlineData("[language:not-base64]")]
     [InlineData("[language:]")]
     [InlineData("[language:eyJib2d1cyI6dHJ1ZX0=]")]         // {"bogus":true}
     [InlineData("[language:eyJjb250ZW50IjpbXX0=]")]         // {"content":[]}
     [InlineData("[language:AAAA")]                          // unterminated tag
-    public void Parse_MalformedLanguageTag_FallsBackToNoTranslation(string languageTag)
+    public void Parse_MalformedLanguageTag_FallsBackToNoSecondaryText(string languageTag)
     {
         var content = $"{languageTag}\n[0,900]<0,900,0>first";
 
@@ -219,16 +297,28 @@ public class KrcLyricsParserTests
 
         Assert.Equal("first", line.Text);
         Assert.Null(line.Translation);
+        Assert.Null(line.Romanization);
     }
 
-    private static string BuildContentWithTranslation(string lyrics, string languageTag) =>
+    private static string BuildContentWithTags(string lyrics, string languageTag) =>
         $"[id:$00000000]\n[ar:Artist]\n{languageTag}\n{lyrics}";
 
     /// <summary>Builds the <c>[language:...]</c> tag the way Kugou ships it.</summary>
-    private static string LanguageTag(int type, string[] translations)
+    private static string LanguageTag(params string[] blocks) =>
+        "[language:" + Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            $$"""{"content":[{{string.Join(",", blocks)}}],"version":1}""")) + "]";
+
+    /// <summary>A translation block stores the whole line in the first cell of each row.</summary>
+    private static string TranslationBlock(int type, string[] translations) =>
+        Block(type, translations.Select(text => new[] { text }).ToArray());
+
+    /// <summary>A romanization block stores one cell per KRC syllable.</summary>
+    private static string RomanizationBlock(string[][] rows) => Block(0, rows);
+
+    private static string Block(int type, string[][] rows)
     {
-        var rows = string.Join(",", translations.Select(t => $"[{JsonSerializer.Serialize(t)}]"));
-        var json = $$"""{"content":[{"language":0,"type":{{type}},"lyricContent":[{{rows}}]}],"version":1}""";
-        return $"[language:{Convert.ToBase64String(Encoding.UTF8.GetBytes(json))}]";
+        var content = string.Join(",", rows.Select(row =>
+            $"[{string.Join(",", row.Select(cell => JsonSerializer.Serialize<string>(cell)))}]"));
+        return $$"""{"language":0,"type":{{type}},"lyricContent":[{{content}}]}""";
     }
 }
