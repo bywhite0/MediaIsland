@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using MediaIsland.Services.Lyrics.Parsers;
 using Xunit;
 
@@ -119,5 +121,114 @@ public class KrcLyricsParserTests
     public void Parse_UnusableContent_ReturnsEmpty(string? content)
     {
         Assert.Empty(KrcLyricsParser.Parse(content));
+    }
+
+    [Fact]
+    public void Parse_LanguageTag_AttachesTranslationPerLine()
+    {
+        var content = BuildContentWithTranslation(
+            """
+            [0,900]<0,900,0>first
+            [1000,900]<0,900,0>second
+            """,
+            LanguageTag(type: 1, ["第一行", "第二行"]));
+
+        var lines = KrcLyricsParser.Parse(content);
+
+        Assert.Equal("第一行", lines[0].Translation);
+        Assert.Equal("第二行", lines[1].Translation);
+    }
+
+    [Fact]
+    public void Parse_TranslationPlaceholder_LeavesLineUntranslated()
+    {
+        var content = BuildContentWithTranslation(
+            """
+            [0,900]<0,900,0>first
+            [1000,900]<0,900,0>second
+            """,
+            LanguageTag(type: 1, ["//", "有翻译"]));
+
+        var lines = KrcLyricsParser.Parse(content);
+
+        Assert.Null(lines[0].Translation);
+        Assert.Equal("有翻译", lines[1].Translation);
+    }
+
+    [Fact]
+    public void Parse_TranslationShorterThanLyrics_LeavesRemainingLinesUntranslated()
+    {
+        var content = BuildContentWithTranslation(
+            """
+            [0,900]<0,900,0>first
+            [1000,900]<0,900,0>second
+            [2000,900]<0,900,0>third
+            """,
+            LanguageTag(type: 1, ["只有一行"]));
+
+        var lines = KrcLyricsParser.Parse(content);
+
+        Assert.Equal("只有一行", lines[0].Translation);
+        Assert.Null(lines[1].Translation);
+        Assert.Null(lines[2].Translation);
+    }
+
+    [Fact]
+    public void Parse_NonTranslationContentType_IsIgnored()
+    {
+        var content = BuildContentWithTranslation(
+            "[0,900]<0,900,0>first",
+            LanguageTag(type: 0, ["romaji"]));
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+
+        Assert.Null(line.Translation);
+    }
+
+    [Fact]
+    public void Parse_TimedLineWithoutWords_DoesNotShiftTranslationAlignment()
+    {
+        // The second timed line yields no words and is dropped, but it still consumes a
+        // translation slot, so the third line must keep its own translation.
+        var content = BuildContentWithTranslation(
+            """
+            [0,900]<0,900,0>first
+            [1000,900]dropped
+            [2000,900]<0,900,0>third
+            """,
+            LanguageTag(type: 1, ["一", "二", "三"]));
+
+        var lines = KrcLyricsParser.Parse(content);
+
+        Assert.Equal(2, lines.Count);
+        Assert.Equal("一", lines[0].Translation);
+        Assert.Equal("三", lines[1].Translation);
+    }
+
+    [Theory]
+    [InlineData("[language:not-base64]")]
+    [InlineData("[language:]")]
+    [InlineData("[language:eyJib2d1cyI6dHJ1ZX0=]")]         // {"bogus":true}
+    [InlineData("[language:eyJjb250ZW50IjpbXX0=]")]         // {"content":[]}
+    [InlineData("[language:AAAA")]                          // unterminated tag
+    public void Parse_MalformedLanguageTag_FallsBackToNoTranslation(string languageTag)
+    {
+        var content = $"{languageTag}\n[0,900]<0,900,0>first";
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+
+        Assert.Equal("first", line.Text);
+        Assert.Null(line.Translation);
+    }
+
+    private static string BuildContentWithTranslation(string lyrics, string languageTag) =>
+        $"[id:$00000000]\n[ar:Artist]\n{languageTag}\n{lyrics}";
+
+    /// <summary>Builds the <c>[language:...]</c> tag the way Kugou ships it.</summary>
+    private static string LanguageTag(int type, string[] translations)
+    {
+        var rows = string.Join(",", translations.Select(t => $"[{JsonSerializer.Serialize(t)}]"));
+        var json = $$"""{"content":[{"language":0,"type":{{type}},"lyricContent":[{{rows}}]}],"version":1}""";
+        return $"[language:{Convert.ToBase64String(Encoding.UTF8.GetBytes(json))}]";
     }
 }
