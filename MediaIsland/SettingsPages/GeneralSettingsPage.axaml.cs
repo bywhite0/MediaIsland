@@ -21,6 +21,7 @@ using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.SourceDisplay;
+using MediaIsland.Services.Realtime;
 
 namespace MediaIsland.SettingsPages
 {
@@ -40,6 +41,8 @@ namespace MediaIsland.SettingsPages
         private readonly IMediaService _mediaService;
         private readonly IMediaSourceDisplayService _mediaSourceDisplayService;
         private readonly LyricsSearchService _lyricsSearchService;
+        private readonly IRealtimeGateway? _realtimeGateway;
+        private string _realtimeStatusText = "未启用";
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -184,17 +187,25 @@ namespace MediaIsland.SettingsPages
             private set => SetProperty(ref _currentLyricsCandidatesStatus, value);
         }
 
+        public string RealtimeStatusText
+        {
+            get => _realtimeStatusText;
+            private set => SetProperty(ref _realtimeStatusText, value);
+        }
+
         public GeneralSettingsPage(
             Plugin plugin,
             IMediaService mediaService,
             IMediaSourceDisplayService mediaSourceDisplayService,
-            LyricsSearchService lyricsSearchService)
+            LyricsSearchService lyricsSearchService,
+            IRealtimeGateway? realtimeGateway = null)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
             _mediaService = mediaService;
             _mediaSourceDisplayService = mediaSourceDisplayService;
             _lyricsSearchService = lyricsSearchService;
+            _realtimeGateway = realtimeGateway;
             RemoveNullMediaSources();
             InitializeComponent();
             LoadLyricsSettings();
@@ -215,6 +226,7 @@ namespace MediaIsland.SettingsPages
             AddCurrentMediaSourceIfAvailable();
             _ = RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
             RefreshMediaSourceDisplayInfos();
+            RefreshRealtimeStatus();
             var screenshotApp = new MediaSource
             {
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
@@ -837,6 +849,55 @@ namespace MediaIsland.SettingsPages
             return options;
         }
 
+
+        private void RefreshRealtimeStatus()
+        {
+            if (_realtimeGateway is null)
+            {
+                RealtimeStatusText = "实时服务不可用";
+                return;
+            }
+
+            var endpoint = _realtimeGateway.Endpoint ?? "-";
+            var fingerprint = _realtimeGateway.CertFingerprint;
+            var shortFp = string.IsNullOrEmpty(fingerprint)
+                ? "-"
+                : (fingerprint.Length <= 16 ? fingerprint : fingerprint[..16] + "…");
+            var running = _realtimeGateway.IsRunning ? "运行中" : "已停止";
+            var error = string.IsNullOrWhiteSpace(_realtimeGateway.LastError)
+                ? string.Empty
+                : $"；错误：{_realtimeGateway.LastError}";
+            RealtimeStatusText = $"{running} · {endpoint} · 指纹 {shortFp}{error}";
+        }
+
+        private async void CopyRealtimeTokenOnClick(object? sender, RoutedEventArgs e)
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.Clipboard is null)
+            {
+                return;
+            }
+
+            await top.Clipboard.SetTextAsync(Settings.RealtimeToken ?? string.Empty);
+        }
+
+        private void RegenerateRealtimeTokenOnClick(object? sender, RoutedEventArgs e)
+        {
+            Settings.RealtimeToken = RealtimeAuth.GenerateToken();
+            RefreshRealtimeStatus();
+        }
+
+        private async void CopyRealtimeFingerprintOnClick(object? sender, RoutedEventArgs e)
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.Clipboard is null)
+            {
+                return;
+            }
+
+            await top.Clipboard.SetTextAsync(_realtimeGateway?.CertFingerprint ?? string.Empty);
+        }
+
         private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
         {
             if (EqualityComparer<T>.Default.Equals(field, value))
@@ -1078,3 +1139,5 @@ namespace MediaIsland.SettingsPages
         public string SyncCapability { get; }
     }
 }
+
+

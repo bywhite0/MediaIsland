@@ -300,6 +300,71 @@ namespace MediaIsland.Models
             }
         }
 
+        private bool _realtimeIsEnabled;
+        private string _realtimeListenAddress = "0.0.0.0";
+        private int _realtimePort = 17654;
+        private string _realtimeToken = string.Empty;
+        private int _realtimeTimelineMinIntervalMs = 200;
+
+        public bool RealtimeIsEnabled
+        {
+            get => _realtimeIsEnabled;
+            set
+            {
+                if (_realtimeIsEnabled == value) return;
+                _realtimeIsEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public string RealtimeListenAddress
+        {
+            get => _realtimeListenAddress;
+            set
+            {
+                var normalized = string.IsNullOrWhiteSpace(value) ? "0.0.0.0" : value.Trim();
+                if (_realtimeListenAddress == normalized) return;
+                _realtimeListenAddress = normalized;
+                OnPropertyChanged();
+            }
+        }
+
+        public int RealtimePort
+        {
+            get => _realtimePort;
+            set
+            {
+                var normalized = value is < 1 or > 65535 ? 17654 : value;
+                if (_realtimePort == normalized) return;
+                _realtimePort = normalized;
+                OnPropertyChanged();
+            }
+        }
+
+        public string RealtimeToken
+        {
+            get => _realtimeToken;
+            set
+            {
+                var normalized = value ?? string.Empty;
+                if (_realtimeToken == normalized) return;
+                _realtimeToken = normalized;
+                OnPropertyChanged();
+            }
+        }
+
+        public int RealtimeTimelineMinIntervalMs
+        {
+            get => _realtimeTimelineMinIntervalMs;
+            set
+            {
+                var normalized = value < 0 ? 200 : value;
+                if (_realtimeTimelineMinIntervalMs == normalized) return;
+                _realtimeTimelineMinIntervalMs = normalized;
+                OnPropertyChanged();
+            }
+        }
+
     }
     public class MediaSource : ObservableObject
     {
@@ -423,3 +488,4 @@ namespace MediaIsland.Models
         }
     }
 }
+
