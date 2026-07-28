@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
@@ -20,6 +21,7 @@ using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.SourceDisplay;
+using MediaIsland.Services.MediaLink;
 
 namespace MediaIsland.SettingsPages
 {
@@ -39,6 +41,11 @@ namespace MediaIsland.SettingsPages
         private readonly IMediaService _mediaService;
         private readonly IMediaSourceDisplayService _mediaSourceDisplayService;
         private readonly LyricsSearchService _lyricsSearchService;
+        private readonly IMediaLinkGateway? _mediaLinkGateway;
+        private readonly IEffectiveMediaSource? _effectiveMediaSource;
+        private readonly MediaLinkInjectionStore? _injectionStore;
+        private string _mediaLinkStatusText = "未启用";
+        private DispatcherTimer? _mediaLinkStatusTimer;
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -205,37 +212,84 @@ namespace MediaIsland.SettingsPages
             private set => SetProperty(ref _currentLyricsCandidatesStatus, value);
         }
 
+        public string MediaLinkStatusText
+        {
+            get => _mediaLinkStatusText;
+            private set => SetProperty(ref _mediaLinkStatusText, value);
+        }
+
+        public int MediaLinkMediaSourceModeIndex
+        {
+            get => (int)Settings.MediaLinkMediaSourceMode;
+            set
+            {
+                var normalized = value is < 0 or > 2 ? 0 : value;
+                var mode = (MediaLinkMediaSourceMode)normalized;
+                if (Settings.MediaLinkMediaSourceMode == mode)
+                {
+                    return;
+                }
+
+                Settings.MediaLinkMediaSourceMode = mode;
+                OnPropertyChanged();
+            }
+        }
+
+
         public GeneralSettingsPage(
             Plugin plugin,
             IMediaService mediaService,
             IMediaSourceDisplayService mediaSourceDisplayService,
-            LyricsSearchService lyricsSearchService)
+            LyricsSearchService lyricsSearchService,
+            IMediaLinkGateway? mediaLinkGateway = null,
+            IEffectiveMediaSource? effectiveMediaSource = null,
+            MediaLinkInjectionStore? injectionStore = null)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
             _mediaService = mediaService;
             _mediaSourceDisplayService = mediaSourceDisplayService;
             _lyricsSearchService = lyricsSearchService;
+            _mediaLinkGateway = mediaLinkGateway;
+            _effectiveMediaSource = effectiveMediaSource;
+            _injectionStore = injectionStore;
             RemoveNullMediaSources();
             InitializeComponent();
             LoadLyricsSettings();
             DetachedFromVisualTree += (_, _) =>
             {
                 _isDetached = true;
+                StopMediaLinkStatusPolling();
+                Settings.PropertyChanged -= OnPluginSettingsChangedForMediaLink;
+                if (_effectiveMediaSource is not null)
+                {
+                    _effectiveMediaSource.EffectiveMediaChanged -= EffectiveMediaSource_OnMediaInfoChanged;
+                }
+
                 _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
                 _lyricsSearchService.CurrentResultChanged -= LyricsSearchService_OnCurrentResultChanged;
                 CancelLyricsCandidateSearch();
                 CancelLyricsCandidateApply();
             };
             Settings.needRestart += RequestRestart;
-            _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+            Settings.PropertyChanged += OnPluginSettingsChangedForMediaLink;
+            if (_effectiveMediaSource is not null)
+            {
+                _effectiveMediaSource.EffectiveMediaChanged += EffectiveMediaSource_OnMediaInfoChanged;
+            }
+            else
+            {
+                _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+            }
             _lyricsSearchService.CurrentResultChanged += LyricsSearchService_OnCurrentResultChanged;
             UpdateCurrentLyricsSource(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo));
             _ = RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
             StartMediaServiceAsync();
             AddCurrentMediaSourceIfAvailable();
-            _ = RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
+            _ = RefreshCurrentMediaInfoAsync(_effectiveMediaSource?.EffectiveMediaInfo ?? _mediaService.CurrentMediaInfo);
             RefreshMediaSourceDisplayInfos();
+            RefreshMediaLinkStatus();
+            StartMediaLinkStatusPolling();
             var screenshotApp = new MediaSource
             {
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
@@ -261,6 +315,12 @@ namespace MediaIsland.SettingsPages
             {
                 // Media source discovery is best-effort on the settings page.
             }
+        }
+
+
+        private void EffectiveMediaSource_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
+        {
+            MediaService_OnMediaInfoChanged(sender, e);
         }
 
         private void MediaService_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
@@ -801,6 +861,177 @@ namespace MediaIsland.SettingsPages
             Settings.NotifyMediaSourceSettingsSaved();
         }
 
+        private const string FollowGlobalFontOption = "跟随全局字体";
+
+        /// <summary>
+        /// 字体下拉选项：首项为“跟随全局字体”，其余为系统已安装字体。
+        /// </summary>
+        public IReadOnlyList<string> FontFamilyOptions { get; } = BuildFontFamilyOptions();
+
+        public string LyricsOriginalFontFamilySelection
+        {
+            get => ToFontOption(Settings.LyricsOriginalFontFamily);
+            set
+            {
+                Settings.LyricsOriginalFontFamily = FromFontOption(value);
+                OnPropertyChanged();
+                SaveSettings();
+            }
+        }
+
+        public string LyricsTranslationFontFamilySelection
+        {
+            get => ToFontOption(Settings.LyricsTranslationFontFamily);
+            set
+            {
+                Settings.LyricsTranslationFontFamily = FromFontOption(value);
+                OnPropertyChanged();
+                SaveSettings();
+            }
+        }
+
+        public string LyricsRomanizationFontFamilySelection
+        {
+            get => ToFontOption(Settings.LyricsRomanizationFontFamily);
+            set
+            {
+                Settings.LyricsRomanizationFontFamily = FromFontOption(value);
+                OnPropertyChanged();
+                SaveSettings();
+            }
+        }
+
+        private static string ToFontOption(string? family) =>
+            string.IsNullOrWhiteSpace(family) ? FollowGlobalFontOption : family;
+
+        private static string FromFontOption(string? option) =>
+            string.IsNullOrWhiteSpace(option) || option == FollowGlobalFontOption
+                ? string.Empty
+                : option;
+
+        private static IReadOnlyList<string> BuildFontFamilyOptions()
+        {
+            var options = new List<string> { FollowGlobalFontOption };
+            try
+            {
+                options.AddRange(FontManager.Current.SystemFonts
+                    .Select(font => font.Name)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(name => name, StringComparer.CurrentCulture));
+            }
+            catch (Exception)
+            {
+                // 系统字体枚举失败时至少保留“跟随全局字体”，不影响设置页打开。
+            }
+
+            return options;
+        }
+
+
+        private void RefreshMediaLinkStatus()
+        {
+            if (_mediaLinkGateway is null)
+            {
+                MediaLinkStatusText = "媒体链接服务不可用";
+                return;
+            }
+
+            var endpoint = _mediaLinkGateway.Endpoint ?? "-";
+            var running = _mediaLinkGateway.IsRunning ? "运行中" : "已停止";
+            var error = string.IsNullOrWhiteSpace(_mediaLinkGateway.LastError)
+                ? string.Empty
+                : $"；错误：{_mediaLinkGateway.LastError}";
+            var inject = string.Empty;
+            if (_injectionStore is not null &&
+                (_injectionStore.HasExternalMedia || _injectionStore.HasExternalLyrics))
+            {
+                inject = "；外部注入中";
+            }
+
+            MediaLinkStatusText = $"{running} · {endpoint}{error}{inject}";
+        }
+
+        private void StartMediaLinkStatusPolling()
+        {
+            if (_mediaLinkGateway is null || _mediaLinkStatusTimer is not null)
+            {
+                return;
+            }
+
+            _mediaLinkStatusTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _mediaLinkStatusTimer.Tick += (_, _) =>
+            {
+                if (_isDetached)
+                {
+                    return;
+                }
+
+                RefreshMediaLinkStatus();
+            };
+            _mediaLinkStatusTimer.Start();
+        }
+
+        private void StopMediaLinkStatusPolling()
+        {
+            if (_mediaLinkStatusTimer is null)
+            {
+                return;
+            }
+
+            _mediaLinkStatusTimer.Stop();
+            _mediaLinkStatusTimer = null;
+        }
+
+        private void OnPluginSettingsChangedForMediaLink(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(PluginSettings.MediaLinkMediaSourceMode))
+            {
+                OnPropertyChanged(nameof(MediaLinkMediaSourceModeIndex));
+                RefreshMediaLinkStatus();
+                return;
+            }
+
+            if (e.PropertyName is nameof(PluginSettings.MediaLinkIsEnabled)
+                or nameof(PluginSettings.MediaLinkListenAddress)
+                or nameof(PluginSettings.MediaLinkPort)
+                or nameof(PluginSettings.MediaLinkToken)
+                or nameof(PluginSettings.MediaLinkTimelineMinIntervalMs)
+                or nameof(PluginSettings.MediaLinkUiUsesEffective)
+                or nameof(PluginSettings.MediaLinkPushUsesEffective))
+            {
+                // 热更新异步完成，短延迟后再读 gateway 状态。
+                Dispatcher.UIThread.Post(async () =>
+                {
+                    await Task.Delay(300);
+                    if (!_isDetached)
+                    {
+                        RefreshMediaLinkStatus();
+                    }
+                });
+            }
+        }
+
+        private async void CopyMediaLinkTokenOnClick(object? sender, RoutedEventArgs e)
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.Clipboard is null)
+            {
+                return;
+            }
+
+            await top.Clipboard.SetTextAsync(Settings.MediaLinkToken ?? string.Empty);
+        }
+
+        private void RegenerateMediaLinkTokenOnClick(object? sender, RoutedEventArgs e)
+        {
+            Settings.MediaLinkToken = MediaLinkAuth.GenerateToken();
+            RefreshMediaLinkStatus();
+        }
+
         private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
         {
             if (EqualityComparer<T>.Default.Equals(field, value))
@@ -1072,3 +1303,5 @@ namespace MediaIsland.SettingsPages
         public string SyncCapability { get; }
     }
 }
+
+

@@ -1,111 +1,9 @@
-using Lyricify.Lyrics.Models;
 using MediaIsland.Services.Lyrics.Models;
 
 namespace MediaIsland.Services.Lyrics;
 
 public static class LyricsDocumentNormalizer
 {
-    public static LyricsDocument FromLyricify(
-        LyricsData data,
-        LyricsMetadata metadata,
-        LyricsSourceId source,
-        string providerItemId,
-        LyricsFormat format,
-        bool preferWordSync,
-        IReadOnlyList<string>? translations = null,
-        IReadOnlyList<string>? romanizations = null)
-    {
-        var lines = new List<LyricsLine>();
-        var sourceLines = data.Lines ?? [];
-        for (var i = 0; i < sourceLines.Count; i++)
-        {
-            var line = sourceLines[i];
-            var start = Clamp(FromMilliseconds(line.StartTime));
-            var end = line.EndTime.HasValue
-                ? Clamp(FromMilliseconds(line.EndTime))
-                : TimeSpan.Zero;
-            if (end <= start)
-            {
-                end = i + 1 < sourceLines.Count && sourceLines[i + 1].StartTime.HasValue
-                    ? Clamp(FromMilliseconds(sourceLines[i + 1].StartTime))
-                    : (metadata.Duration ?? start);
-                if (end < start)
-                {
-                    end = start;
-                }
-            }
-
-            var words = new List<LyricsWord>();
-            if (preferWordSync && line is SyllableLineInfo syllableLine && syllableLine.Syllables is { Count: > 0 })
-            {
-                for (var wordIndex = 0; wordIndex < syllableLine.Syllables.Count; wordIndex++)
-                {
-                    var syllable = syllableLine.Syllables[wordIndex];
-                    var wordStart = Clamp(TimeSpan.FromMilliseconds(syllable.StartTime));
-                    var wordEnd = Clamp(TimeSpan.FromMilliseconds(syllable.EndTime));
-                    if (wordEnd < wordStart)
-                    {
-                        wordEnd = wordIndex + 1 < syllableLine.Syllables.Count
-                            ? Clamp(TimeSpan.FromMilliseconds(syllableLine.Syllables[wordIndex + 1].StartTime))
-                            : end;
-                    }
-
-                    if (wordEnd < wordStart)
-                    {
-                        wordEnd = wordStart;
-                    }
-
-                    words.Add(new LyricsWord(wordStart, wordEnd, syllable.Text ?? string.Empty));
-                }
-            }
-
-            var text = line.Text ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(text) && words.Count > 0)
-            {
-                text = string.Concat(words.Select(word => word.Text));
-            }
-
-            string? translation = null;
-            if (translations != null && i < translations.Count)
-            {
-                translation = translations[i];
-            }
-            else if (line.SubLine != null && !string.IsNullOrWhiteSpace(line.SubLine.Text))
-            {
-                translation = line.SubLine.Text;
-            }
-
-            string? romanization = null;
-            if (romanizations != null && i < romanizations.Count)
-            {
-                romanization = romanizations[i];
-            }
-
-            lines.Add(new LyricsLine(
-                start,
-                end,
-                text,
-                words,
-                translation,
-                romanization));
-        }
-
-        lines = NormalizeLines(lines, metadata.Duration).ToList();
-        var syncMode = preferWordSync && lines.Any(line => line.Words.Count > 0)
-            ? LyricsSyncMode.Word
-            : lines.Count > 0
-                ? LyricsSyncMode.Line
-                : LyricsSyncMode.Unsynced;
-
-        if (!preferWordSync)
-        {
-            lines = lines.Select(line => line with { Words = Array.Empty<LyricsWord>() }).ToList();
-            syncMode = lines.Count > 0 ? LyricsSyncMode.Line : LyricsSyncMode.Unsynced;
-        }
-
-        return new LyricsDocument(metadata, lines, syncMode, source, providerItemId, format);
-    }
-
     public static LyricsDocument Create(
         IEnumerable<LyricsLine> lines,
         LyricsMetadata metadata,
@@ -325,9 +223,6 @@ public static class LyricsDocumentNormalizer
             hasPrevLine = true;
         }
     }
-
-    private static TimeSpan FromMilliseconds(int? value) =>
-        value.HasValue ? TimeSpan.FromMilliseconds(Math.Max(0, value.Value)) : TimeSpan.Zero;
 
     private static TimeSpan Clamp(TimeSpan value) => value < TimeSpan.Zero ? TimeSpan.Zero : value;
 

@@ -69,6 +69,13 @@
                     </ComboBox>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xF374;}"
+                                       Header="显示歌词假名"
+                                       Description="在原文上方显示歌词源自带的字级假名注音（QQ 音乐 QRC、酷狗 KRC 等）。仅原文有效展示时生效；翻译/音译模式不显示。默认关闭。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowLyricsKana, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8CB;}"
                                        Header="渲染帧率"
                                        Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">
@@ -78,6 +85,25 @@
                         <ComboBoxItem>30 FPS</ComboBoxItem>
                         <ComboBoxItem>60 FPS</ComboBoxItem>
                     </ComboBox>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE0F1;}"
+                                       Header="多行歌词行距"
+                                       Description="主歌词与背景人声行同时显示时的附加行距（像素）。部分日文字体行高偏大，取负值可压缩多行显示；取正值时可用高度变紧，可能触发自动缩放或省略第二条背景人声行。">
+                <controls:SettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Slider Width="160"
+                                Minimum="-8"
+                                Maximum="8"
+                                TickFrequency="0.5"
+                                IsSnapToTickEnabled="True"
+                                VerticalAlignment="Center"
+                                Value="{Binding Settings.LineSpacing, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Classes="auto-tooltip" />
+                        <TextBlock Text="{Binding Settings.LineSpacing, StringFormat={}{0:0.#} px}"
+                                   MinWidth="44"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">

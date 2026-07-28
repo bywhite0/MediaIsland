@@ -1989,3 +1989,29 @@ express Statement of Purpose.
  d. Affirmer understands and acknowledges that Creative Commons is not a
     party to this document and has no duty or obligation with respect to
     this CC0 or use of the Work.
+
+============================================================
+Lyricify-Lyrics-Helper
+============================================================
+Repository: https://github.com/WXRIW/Lyricify-Lyrics-Helper
+License: Apache-2.0
+
+MediaIsland no longer references the Lyricify.Lyrics.Helper NuGet package. The QQ Music
+QRC and Kugou KRC decryption algorithms were ported from it into the following files,
+and those files have been modified relative to the original source:
+
+  - MediaIsland/Services/Lyrics/Crypto/QqMusicDes.cs
+      derived from Lyricify.Lyrics.Decrypter.Qrc.DESHelper
+  - MediaIsland/Services/Lyrics/Crypto/QrcDecrypter.cs
+      derived from Lyricify.Lyrics.Decrypter.Qrc.Decrypter
+  - MediaIsland/Services/Lyrics/Crypto/KrcDecrypter.cs
+      derived from Lyricify.Lyrics.Decrypter.Krc.Decrypter
+
+Modifications include: restructuring into MediaIsland naming and types, replacing the
+SharpZipLib inflater with System.IO.Compression.ZLibStream, adding a decompression size
+limit, and returning null instead of throwing on malformed input.
+
+The LRC, QRC and KRC lyric parsers under MediaIsland/Services/Lyrics/Parsers are
+independent MediaIsland implementations and are not derived from this project.
+
+A copy of the Apache License 2.0 is reproduced above under the lx-music-desktop entry.

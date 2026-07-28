@@ -359,6 +359,85 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEdgeFeatherEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE2C0;}"
+                                       Header="歌词字体"
+                                       Description="分别为原文、翻译、音译设置字体与字重。留空或选择「跟随全局字体」时使用 ClassIsland 的主界面字体。">
+                <controls:SettingsExpanderItem Content="原文"
+                                               Description="展示原文歌词时使用的字体与字重。"
+                                               IconSource="{ci:FluentIconSource &#xE8D2;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ComboBox MinWidth="220"
+                                      MaxDropDownHeight="360"
+                                      ItemsSource="{Binding FontFamilyOptions}"
+                                      SelectedItem="{Binding LyricsOriginalFontFamilySelection, Mode=TwoWay}" />
+                            <ComboBox MinWidth="140"
+                                      SelectedIndex="{Binding Settings.LyricsOriginalFontWeightIndex, Mode=TwoWay}">
+                                <ComboBoxItem>跟随全局</ComboBoxItem>
+                                <ComboBoxItem>100 Thin</ComboBoxItem>
+                                <ComboBoxItem>200 ExtraLight</ComboBoxItem>
+                                <ComboBoxItem>300 Light</ComboBoxItem>
+                                <ComboBoxItem>400 Regular</ComboBoxItem>
+                                <ComboBoxItem>500 Medium</ComboBoxItem>
+                                <ComboBoxItem>600 SemiBold</ComboBoxItem>
+                                <ComboBoxItem>700 Bold</ComboBoxItem>
+                                <ComboBoxItem>800 ExtraBold</ComboBoxItem>
+                                <ComboBoxItem>900 Black</ComboBoxItem>
+                            </ComboBox>
+                        </StackPanel>
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+                <controls:SettingsExpanderItem Content="翻译"
+                                               Description="展示翻译歌词时使用的字体与字重；该行没有翻译而回退到原文时，仍按原文设置渲染。"
+                                               IconSource="{ci:FluentIconSource &#xF2B7;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ComboBox MinWidth="220"
+                                      MaxDropDownHeight="360"
+                                      ItemsSource="{Binding FontFamilyOptions}"
+                                      SelectedItem="{Binding LyricsTranslationFontFamilySelection, Mode=TwoWay}" />
+                            <ComboBox MinWidth="140"
+                                      SelectedIndex="{Binding Settings.LyricsTranslationFontWeightIndex, Mode=TwoWay}">
+                                <ComboBoxItem>跟随全局</ComboBoxItem>
+                                <ComboBoxItem>100 Thin</ComboBoxItem>
+                                <ComboBoxItem>200 ExtraLight</ComboBoxItem>
+                                <ComboBoxItem>300 Light</ComboBoxItem>
+                                <ComboBoxItem>400 Regular</ComboBoxItem>
+                                <ComboBoxItem>500 Medium</ComboBoxItem>
+                                <ComboBoxItem>600 SemiBold</ComboBoxItem>
+                                <ComboBoxItem>700 Bold</ComboBoxItem>
+                                <ComboBoxItem>800 ExtraBold</ComboBoxItem>
+                                <ComboBoxItem>900 Black</ComboBoxItem>
+                            </ComboBox>
+                        </StackPanel>
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+                <controls:SettingsExpanderItem Content="音译"
+                                               Description="展示音译歌词时使用的字体与字重；该行没有音译而回退到原文时，仍按原文设置渲染。"
+                                               IconSource="{ci:FluentIconSource &#xE8C1;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ComboBox MinWidth="220"
+                                      MaxDropDownHeight="360"
+                                      ItemsSource="{Binding FontFamilyOptions}"
+                                      SelectedItem="{Binding LyricsRomanizationFontFamilySelection, Mode=TwoWay}" />
+                            <ComboBox MinWidth="140"
+                                      SelectedIndex="{Binding Settings.LyricsRomanizationFontWeightIndex, Mode=TwoWay}">
+                                <ComboBoxItem>跟随全局</ComboBoxItem>
+                                <ComboBoxItem>100 Thin</ComboBoxItem>
+                                <ComboBoxItem>200 ExtraLight</ComboBoxItem>
+                                <ComboBoxItem>300 Light</ComboBoxItem>
+                                <ComboBoxItem>400 Regular</ComboBoxItem>
+                                <ComboBoxItem>500 Medium</ComboBoxItem>
+                                <ComboBoxItem>600 SemiBold</ComboBoxItem>
+                                <ComboBoxItem>700 Bold</ComboBoxItem>
+                                <ComboBoxItem>800 ExtraBold</ComboBoxItem>
+                                <ComboBoxItem>900 Black</ComboBoxItem>
+                            </ComboBox>
+                        </StackPanel>
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+            </controls:SettingsExpander>
             <ci:IconText Glyph="&#xE9B2;" Text="外观" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
                                        Header="正在播放进度条颜色"
@@ -377,6 +456,77 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+                        <ci:IconText Glyph="&#xE968;" Text="媒体链接（WebSocket）" Margin="0 16 0 8" />
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
+                                       Header="启用媒体链接推送"
+                                       Description="明文 ws 推送媒体与歌词；必须 Token；勿对不可信网络暴露；仅本机可用 127.0.0.1。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkIsEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1F7;}"
+                                       Header="监听地址与端口"
+                                       Description="默认 0.0.0.0:17654。仅本机可改为 127.0.0.1。">
+                <controls:SettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox Width="140"
+                                 Watermark="0.0.0.0"
+                                 Text="{Binding Settings.MediaLinkListenAddress, Mode=TwoWay}" />
+                        <TextBox Width="80"
+                                 Watermark="17654"
+                                 Text="{Binding Settings.MediaLinkPort, Mode=TwoWay}" />
+                    </StackPanel>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0B0;}"
+                                       Header="访问 Token"
+                                       Description="连接后首条业务消息需 auth。可复制或重新生成。">
+                <controls:SettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox Width="220"
+                                 IsReadOnly="True"
+                                 Text="{Binding Settings.MediaLinkToken}" />
+                        <Button Content="复制" Click="CopyMediaLinkTokenOnClick" />
+                        <Button Content="重新生成" Click="RegenerateMediaLinkTokenOnClick" />
+                    </StackPanel>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
+                                       Header="媒体源模式"
+                                       Description="仅系统会话 / 仅外部注入 / 外部优先。默认仅系统会话与 MVP 一致。">
+                <controls:SettingsExpander.Footer>
+                    <ComboBox Width="200"
+                              SelectedIndex="{Binding MediaLinkMediaSourceModeIndex, Mode=TwoWay}">
+                        <ComboBoxItem Content="仅系统会话" />
+                        <ComboBoxItem Content="仅外部注入" />
+                        <ComboBoxItem Content="外部优先" />
+                    </ComboBox>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE285;}"
+                                       Header="界面使用合成状态"
+                                       Description="NowPlaying / 歌词组件读取 MediaLink 合成结果。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUiUsesEffective, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
+                                       Header="推送使用合成状态"
+                                       Description="WebSocket media/lyrics 推送走合成结果。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkPushUsesEffective, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0A2;}"
+                                       Header="服务状态"
+                                       Description="路径固定为 /v1/ws。">
+                <controls:SettingsExpander.Footer>
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding MediaLinkStatusText}"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="360" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <ci:IconText Glyph="&#xEAEF;" Text="隐私" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
                                        Header="匿名使用情况分析"
@@ -388,3 +538,4 @@
         </StackPanel>
     </ScrollViewer>
 </ci:SettingsPageBase>
+

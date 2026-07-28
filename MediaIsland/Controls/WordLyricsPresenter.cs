@@ -64,6 +64,10 @@ public sealed class WordLyricsPresenter : Control
     public static readonly StyledProperty<FontFamily> FontFamilyProperty =
         TextElement.FontFamilyProperty.AddOwner<WordLyricsPresenter>();
 
+    // 字重与字体同源，允许按展示部分（原文/翻译/音译）单独配置
+    public static readonly StyledProperty<FontWeight> FontWeightProperty =
+        TextElement.FontWeightProperty.AddOwner<WordLyricsPresenter>();
+
     public static readonly StyledProperty<IBrush?> ForegroundProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, IBrush?>(nameof(Foreground));
 
@@ -85,11 +89,16 @@ public sealed class WordLyricsPresenter : Control
     public static readonly StyledProperty<bool> IsBackgroundLineProperty =
         AvaloniaProperty.Register<WordLyricsPresenter, bool>(nameof(IsBackgroundLine));
 
+    public static readonly StyledProperty<bool> IsRubyEnabledProperty =
+        AvaloniaProperty.Register<WordLyricsPresenter, bool>(nameof(IsRubyEnabled));
+
     // 缓存当前排版结果，避免播放期间逐帧重复创建格式化文本并测量字符宽度
     private LyricsLine? _cachedLine;
     private string? _cachedText;
     private double _cachedFontSize;
     private FontFamily _cachedFontFamily = Avalonia.Media.FontFamily.Default;
+    private FontWeight _cachedFontWeight = FontWeight.Normal;
+    private bool _cachedIsRubyEnabled;
     private Typeface _typeface = new(Avalonia.Media.FontFamily.Default);
     private FormattedText? _fullText;
 
@@ -101,6 +110,7 @@ public sealed class WordLyricsPresenter : Control
     private CharacterSegment[][] _characterSegments = [];
     private CharacterTiming[][] _characterTimings = [];
     private CharacterTiming[][] _characterEmphasisTimings = [];
+    private RubyDrawSegment[] _rubySegments = [];
     // 模糊辉光位图缓存：按字素/字号/半径复用，避免逐帧重渲染与重模糊
     private readonly Dictionary<string, GlowBitmapCacheEntry> _glowBitmapCache = new();
 
@@ -126,6 +136,12 @@ public sealed class WordLyricsPresenter : Control
     {
         get => GetValue(FontFamilyProperty);
         set => SetValue(FontFamilyProperty, value);
+    }
+
+    public FontWeight FontWeight
+    {
+        get => GetValue(FontWeightProperty);
+        set => SetValue(FontWeightProperty, value);
     }
 
     public IBrush? Foreground
@@ -170,6 +186,15 @@ public sealed class WordLyricsPresenter : Control
         set => SetValue(IsBackgroundLineProperty, value);
     }
 
+    /// <summary>
+    /// 是否在主字上方绘制 QQ 音乐字级假名。由组件根据开关与 DisplayPart 注入。
+    /// </summary>
+    public bool IsRubyEnabled
+    {
+        get => GetValue(IsRubyEnabledProperty);
+        set => SetValue(IsRubyEnabledProperty, value);
+    }
+
     static WordLyricsPresenter()
     {
         // 排版相关属性改变时，需要重新测量和绘制
@@ -178,20 +203,24 @@ public sealed class WordLyricsPresenter : Control
             PositionProperty,
             FontSizeProperty,
             FontFamilyProperty,
+            FontWeightProperty,
             ForegroundProperty,
             TextAlignmentProperty,
             IsWordLiftEnabledProperty,
             IsWordEmphasisEnabledProperty,
             IsWordEmphasisGlowEnabledProperty,
             IsWordEdgeFeatherEnabledProperty,
-            IsBackgroundLineProperty);
+            IsBackgroundLineProperty,
+            IsRubyEnabledProperty);
         AffectsMeasure<WordLyricsPresenter>(
             LineProperty,
             FontSizeProperty,
             FontFamilyProperty,
+            FontWeightProperty,
             ForegroundProperty,
             IsWordLiftEnabledProperty,
-            IsWordEmphasisEnabledProperty);
+            IsWordEmphasisEnabledProperty,
+            IsRubyEnabledProperty);
     }
 
     protected override Size MeasureOverride(Size availableSize)
@@ -209,7 +238,8 @@ public sealed class WordLyricsPresenter : Control
             : desiredWidth;
         // 把上浮和缩放需要的纵向空间放在文字上方，因此基线需要相应下移
         var motionSpace = GetMotionSpace();
-        return new Size(width, Math.Max(_fullText.Height, FontSize * 1.2) + motionSpace);
+        var rubySpace = GetRubySpace();
+        return new Size(width, Math.Max(_fullText.Height, FontSize * 1.2) + motionSpace + rubySpace);
     }
 
     public override void Render(DrawingContext context)
@@ -228,14 +258,21 @@ public sealed class WordLyricsPresenter : Control
             ? CreateOpacityBrush(foreground, BackgroundLineActiveOpacity)
             : foreground;
         var motionSpace = GetMotionSpace();
-        var origin = new Point(GetHorizontalOrigin(_fullText.Width),
-            Math.Max(0, (Bounds.Height - _fullText.Height + motionSpace) / 2));
+        var rubySpace = GetRubySpace();
+        // Content stack from top: [rubySpace][motionSpace][main text].
+        // Extra host height is split above/below that stack — do not add rubySpace twice.
+        var origin = new Point(
+            GetHorizontalOrigin(_fullText.Width),
+            Math.Max(0, (Bounds.Height - _fullText.Height - motionSpace - rubySpace) / 2)
+                + rubySpace
+                + motionSpace);
 
         var mutedText = CreateFormatted(Line.Text ?? string.Empty, mutedBrush);
         var activeText = CreateFormatted(Line.Text ?? string.Empty, activeBrush);
         if (ShouldRenderAnimatedWords())
         {
             DrawAnimatedWords(context, mutedText, activeText, origin, Position);
+            DrawRuby(context, origin, foreground);
             return;
         }
 
@@ -243,20 +280,20 @@ public sealed class WordLyricsPresenter : Control
         context.DrawText(mutedText, origin);
 
         var filledWidth = ComputeFilledWidth(Position);
-        if (filledWidth <= 0)
+        if (filledWidth > 0)
         {
-            return;
+            var clipRect = new Rect(
+                origin.X,
+                origin.Y,
+                filledWidth,
+                Math.Max(activeText.Height, Bounds.Height));
+            using (context.PushClip(clipRect))
+            {
+                context.DrawText(activeText, origin);
+            }
         }
 
-        var clipRect = new Rect(
-            origin.X,
-            origin.Y,
-            filledWidth,
-            Math.Max(activeText.Height, Bounds.Height));
-        using (context.PushClip(clipRect))
-        {
-            context.DrawText(activeText, origin);
-        }
+        DrawRuby(context, origin, foreground);
     }
 
     private bool ShouldRenderAnimatedWords()
@@ -973,6 +1010,40 @@ public sealed class WordLyricsPresenter : Control
         return motionSpace > 0 ? motionSpace + GetBaselineOffset() : 0;
     }
 
+    private double GetRubySpace()
+    {
+        if (!IsRubyEnabled || _rubySegments.Length == 0)
+        {
+            return 0;
+        }
+
+        return Math.Max(FontSize * 0.55, 8);
+    }
+
+    private void DrawRuby(DrawingContext context, Point mainOrigin, IBrush foreground)
+    {
+        if (!IsRubyEnabled || _rubySegments.Length == 0)
+        {
+            return;
+        }
+
+        var rubyFontSize = Math.Max(FontSize * 0.45, 7);
+        var rubyBrush = CreateOpacityBrush(foreground, IsBackgroundLine ? 0.55 : 0.82);
+        foreach (var segment in _rubySegments)
+        {
+            var rubyText = new FormattedText(
+                segment.Reading,
+                CultureInfo.CurrentUICulture,
+                FlowDirection.LeftToRight,
+                _typeface,
+                rubyFontSize,
+                rubyBrush);
+            var x = mainOrigin.X + segment.Start + ((segment.Width - rubyText.Width) / 2);
+            var y = Math.Max(0, mainOrigin.Y - rubyText.Height - Math.Max(1, FontSize * 0.04));
+            context.DrawText(rubyText, new Point(x, y));
+        }
+    }
+
     private double GetWordLiftDistance()
     {
         return Math.Clamp(FontSize * 0.07, 0.75, 1.15);
@@ -1418,7 +1489,9 @@ public sealed class WordLyricsPresenter : Control
             ReferenceEquals(_cachedLine, line) &&
             string.Equals(_cachedText, text, StringComparison.Ordinal) &&
             Math.Abs(_cachedFontSize - FontSize) < 0.01 &&
-            Equals(_cachedFontFamily, FontFamily))
+            _cachedFontWeight == FontWeight &&
+            Equals(_cachedFontFamily, FontFamily) &&
+            _cachedIsRubyEnabled == IsRubyEnabled)
         {
             return;
         }
@@ -1429,10 +1502,58 @@ public sealed class WordLyricsPresenter : Control
         _cachedText = text;
         _cachedFontSize = FontSize;
         _cachedFontFamily = FontFamily;
-        _typeface = new Typeface(FontFamily);
+        _cachedFontWeight = FontWeight;
+        _cachedIsRubyEnabled = IsRubyEnabled;
+        _typeface = new Typeface(FontFamily, FontStyle.Normal, FontWeight);
         var brush = Foreground ?? Brushes.White;
         _fullText = CreateFormatted(text, brush);
         BuildWordMetrics(line, brush);
+        BuildRubyMetrics(line, brush);
+    }
+
+    private void BuildRubyMetrics(LyricsLine? line, IBrush brush)
+    {
+        _rubySegments = [];
+        if (!IsRubyEnabled ||
+            line?.RubySpans is not { Count: > 0 } spans ||
+            string.IsNullOrEmpty(line.Text) ||
+            _fullText == null)
+        {
+            return;
+        }
+
+        var text = line.Text;
+        var segments = new List<RubyDrawSegment>(spans.Count);
+        foreach (var span in spans)
+        {
+            if (span.BaseStart < 0 ||
+                span.BaseLength <= 0 ||
+                span.BaseStart + span.BaseLength > text.Length ||
+                string.IsNullOrWhiteSpace(span.Reading))
+            {
+                continue;
+            }
+
+            var prefix = text[..span.BaseStart];
+            var baseText = text.Substring(span.BaseStart, span.BaseLength);
+            var prefixWidth = string.IsNullOrEmpty(prefix)
+                ? 0
+                : CreateFormatted(prefix, brush).WidthIncludingTrailingWhitespace;
+            var baseWidth = CreateFormatted(baseText, brush).WidthIncludingTrailingWhitespace;
+            if (baseWidth <= 0)
+            {
+                baseWidth = CreateFormatted(baseText, brush).Width;
+            }
+
+            if (_fullText.Width > 0 && prefix.Length + span.BaseLength == text.Length)
+            {
+                // Keep the final span flush with the measured full line when trailing metrics drift.
+            }
+
+            segments.Add(new RubyDrawSegment(prefixWidth, Math.Max(baseWidth, 1), span.Reading));
+        }
+
+        _rubySegments = segments.ToArray();
     }
 
     private void BuildWordMetrics(LyricsLine? line, IBrush brush)
@@ -1637,5 +1758,8 @@ public sealed class WordLyricsPresenter : Control
 
     // 单个动画窗口的绝对播放时间；高亮/上浮与强调各自维护一套窗口
     private readonly record struct CharacterTiming(TimeSpan Start, TimeSpan End);
+
+    // 假名绘制几何：Start/Width 相对主字整行坐标系
+    private readonly record struct RubyDrawSegment(double Start, double Width, string Reading);
 
 }

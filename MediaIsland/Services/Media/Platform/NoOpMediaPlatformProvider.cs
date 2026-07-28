@@ -11,6 +11,8 @@ public sealed class NoOpMediaPlatformProvider : IMediaPlatformProvider
     public IMediaSessionProvider SessionProvider { get; } = new NoOpMediaSessionProvider();
 
     public IMediaSourceInfoProvider SourceInfoProvider { get; } = new NoOpMediaSourceInfoProvider();
+
+    public IMediaPlaybackController? PlaybackController => null;
 }
 
 public sealed class NoOpMediaSessionProvider : IMediaSessionProvider

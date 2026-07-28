@@ -13,6 +13,8 @@ public interface IMediaPlatformProvider
     IMediaSessionProvider SessionProvider { get; }
 
     IMediaSourceInfoProvider SourceInfoProvider { get; }
+
+    IMediaPlaybackController? PlaybackController { get; }
 }
 
 public interface IMediaSessionProvider : IAsyncDisposable

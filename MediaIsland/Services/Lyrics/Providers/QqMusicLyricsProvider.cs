@@ -4,8 +4,8 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using MediaIsland.Services.Lyrics.Crypto;
 using MediaIsland.Services.Lyrics.Models;
-using MediaIsland.Services.Lyrics.Parsers;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
 
@@ -52,10 +52,6 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
                     item.Artist,
                     item.Album,
                     item.Duration);
-                if (score < LyricsCandidateScorer.MinimumScore(media))
-                {
-                    continue;
-                }
 
                 candidates.Add(new LyricsCandidate(
                     Id,
@@ -73,7 +69,8 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
                     }));
             }
 
-            if (candidates.Count > 0)
+            // 低分候选仍会保留供用户手动挑选，但只有出现合格候选时才停止尝试更精确的查询。
+            if (candidates.Any(candidate => candidate.Score >= LyricsCandidateScorer.MinimumScore(media)))
             {
                 break;
             }
@@ -449,7 +446,7 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         // already plaintext LRC. Only attempt QRC decryption for hex-looking payloads.
         if (LooksLikeHexEncryptedPayload(value))
         {
-            var decrypted = ManagedLyricsPayloadParser.DecryptQrc(value);
+            var decrypted = QrcDecrypter.Decrypt(value);
             if (string.IsNullOrWhiteSpace(decrypted))
             {
                 return null;

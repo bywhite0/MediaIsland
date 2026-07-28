@@ -13,7 +13,25 @@ public class LyricsComponentConfig : ObservableRecipient
     private bool _isLeftNegativeMargin;
     private bool _isRightNegativeMargin;
     private int _renderFrameRate = 30;
+    private double _lineSpacing;
     private LyricsDisplayPart _displayPart = LyricsDisplayPart.Original;
+    private bool _isShowLyricsKana;
+
+    /// <summary>
+    /// 多行歌词的附加行距（像素，可为负）。部分日文字体行高偏大，
+    /// 取负值可压缩多行间距；取正值则让主歌词与背景人声行分得更开。
+    /// </summary>
+    public double LineSpacing
+    {
+        get => _lineSpacing;
+        set
+        {
+            var normalizedValue = double.IsFinite(value) ? Math.Clamp(value, -8, 8) : 0;
+            if (Math.Abs(_lineSpacing - normalizedValue) < 0.001) return;
+            _lineSpacing = normalizedValue;
+            OnPropertyChanged();
+        }
+    }
 
     public bool IsHideWhenEmpty
     {
@@ -102,6 +120,21 @@ public class LyricsComponentConfig : ObservableRecipient
             _displayPart = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(DisplayPartIndex));
+        }
+    }
+
+    /// <summary>
+    /// 在原文上方显示歌词源自带的字级假名（QRC/KRC 的 <c>[kana:]</c>）。
+    /// 仅当实际展示原文时生效；与音译 DisplayPart 无关，默认关闭。
+    /// </summary>
+    public bool IsShowLyricsKana
+    {
+        get => _isShowLyricsKana;
+        set
+        {
+            if (_isShowLyricsKana == value) return;
+            _isShowLyricsKana = value;
+            OnPropertyChanged();
         }
     }
 

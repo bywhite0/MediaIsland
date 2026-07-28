@@ -441,6 +441,70 @@ public class LyricsSearchServiceTests
         Assert.Same(result, applied);
     }
 
+    [Theory]
+    [InlineData("纯音乐，请欣赏")]
+    [InlineData("纯音乐,请欣赏")]
+    [InlineData("此歌曲为没有填词的纯音乐，请您欣赏")]
+    [InlineData("没有填词的纯音乐")]
+    public void IsInstrumentalPlaceholder_KnownPlaceholders_AreDetected(string text)
+    {
+        Assert.True(LyricsSearchService.IsInstrumentalPlaceholder(CreatePlaceholderDocument(text)));
+    }
+
+    [Fact]
+    public void IsInstrumentalPlaceholder_PlaceholderAfterCreditLine_IsDetected()
+    {
+        // Netease ships the placeholder after a credit line rather than on its own.
+        var document = CreatePlaceholderDocument("作曲 : Beethoven/Ludwig van", "纯音乐，请欣赏");
+
+        Assert.True(LyricsSearchService.IsInstrumentalPlaceholder(document));
+    }
+
+    [Fact]
+    public void IsInstrumentalPlaceholder_RealLyrics_AreNotDetected()
+    {
+        var document = CreatePlaceholderDocument(
+            "Lemon - 米津玄師",
+            "词：米津玄師",
+            "夢ならばどれほどよかったでしょう");
+
+        Assert.False(LyricsSearchService.IsInstrumentalPlaceholder(document));
+    }
+
+    [Fact]
+    public void IsInstrumentalPlaceholder_LyricsMentioningInstrumentalWords_AreNotDetected()
+    {
+        var document = CreatePlaceholderDocument("这首纯音乐让我想起你", "请欣赏这段旋律");
+
+        Assert.False(LyricsSearchService.IsInstrumentalPlaceholder(document));
+    }
+
+    [Fact]
+    public void IsInstrumentalPlaceholder_EmptyOrBlankDocument_IsNotDetected()
+    {
+        Assert.False(LyricsSearchService.IsInstrumentalPlaceholder(CreatePlaceholderDocument()));
+        Assert.False(LyricsSearchService.IsInstrumentalPlaceholder(CreatePlaceholderDocument("   ", "")));
+    }
+
+    private static LyricsDocument CreatePlaceholderDocument(params string[] texts)
+    {
+        var lines = texts
+            .Select((text, index) => new LyricsLine(
+                TimeSpan.FromSeconds(index),
+                TimeSpan.FromSeconds(index + 1),
+                text,
+                []))
+            .ToArray();
+
+        return new LyricsDocument(
+            new LyricsMetadata("Song", "Artist", null, TimeSpan.FromMinutes(4)),
+            lines,
+            lines.Length > 0 ? LyricsSyncMode.Line : LyricsSyncMode.Unsynced,
+            LyricsSourceId.Kugou,
+            "test",
+            LyricsFormat.Lrc);
+    }
+
     private static LyricsSourceSettings CreateSettings() => new()
     {
         Sources =

@@ -14,6 +14,7 @@ using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
+using MediaIsland.Services.MediaLink;
 using Microsoft.Extensions.Logging;
 using RoutedEventArgs = Avalonia.Interactivity.RoutedEventArgs;
 
@@ -38,6 +39,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private static readonly TimeSpan TransitionFrameInterval = TimeSpan.FromMilliseconds(16);
 
     private readonly IMediaService _mediaService;
+    private readonly IEffectiveMediaSource? _effectiveSource;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly ILogger<LyricsComponent> _logger;
     private readonly DispatcherTimer _lyricsTimer;
@@ -70,6 +72,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private bool _isWordMode;
     private bool _isInterludeAnimationActive;
     private bool _isLoaded;
+    private double _availableContentHeight;
     private PluginSettings? _pluginSettings;
     private CancellationTokenSource? _searchCts;
     private int _searchVersion;
@@ -77,7 +80,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     public LyricsComponent(
         IMediaService mediaService,
         LyricsSearchService lyricsSearchService,
-        ILogger<LyricsComponent> logger)
+        ILogger<LyricsComponent> logger,
+        IEffectiveMediaSource? effectiveSource = null)
     {
         InitializeComponent();
         _front = LyricsFrontLayer;
@@ -86,6 +90,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _mediaService = mediaService;
         _lyricsSearchService = lyricsSearchService;
         _logger = logger;
+        _effectiveSource = effectiveSource;
         _lyricsTimer = new DispatcherTimer
         {
             Interval = LineRenderInterval
@@ -101,8 +106,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private async void LyricsComponent_OnLoaded(object? sender, RoutedEventArgs e)
     {
         _isLoaded = true;
-        _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
-        _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+        SubscribeMediaSource();
+        if (_effectiveSource is not null)
+        {
+            _effectiveSource.EffectiveLyricsChanged -= EffectiveSource_OnEffectiveLyricsChanged;
+            _effectiveSource.EffectiveLyricsChanged += EffectiveSource_OnEffectiveLyricsChanged;
+        }
         _lyricsSearchService.CandidateApplied -= LyricsSearchService_OnCandidateApplied;
         _lyricsSearchService.CandidateApplied += LyricsSearchService_OnCandidateApplied;
         Settings.PropertyChanged += Settings_OnPropertyChanged;
@@ -122,7 +131,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         try
         {
             await _mediaService.EnsureStartedAsync();
-            await HandleMediaInfoAsync(_mediaService.CurrentMediaInfo);
+            await HandleMediaInfoAsync(CurrentUiMediaInfo);
         }
         catch (Exception ex)
         {
@@ -135,7 +144,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         _isLoaded = false;
         _lyricsTimer.Stop();
-        _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+        UnsubscribeMediaSource();
+        if (_effectiveSource is not null)
+        {
+            _effectiveSource.EffectiveLyricsChanged -= EffectiveSource_OnEffectiveLyricsChanged;
+        }
         _lyricsSearchService.CandidateApplied -= LyricsSearchService_OnCandidateApplied;
         Settings.PropertyChanged -= Settings_OnPropertyChanged;
         if (_pluginSettings != null)
@@ -184,7 +197,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         var displayPart = Settings.DisplayPart;
         var maxWidth = LyricsLayoutMetrics.ComputeMaxSongLineWidth(
-            document.Lines.Select(line => (LyricsDisplayText.Resolve(line, displayPart), line.IsBackground)),
+            document.Lines.Select(line => (
+                LyricsDisplayText.Resolve(line, displayPart),
+                line.IsBackground,
+                LyricsDisplayText.ResolveEffectivePart(line, displayPart))),
             LyricsText.FontSize,
             MeasureLyricsTextWidth);
 
@@ -204,9 +220,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         LyricsContentHost.ClearValue(Layoutable.WidthProperty);
     }
 
-    private double MeasureLyricsTextWidth(string text, double fontSize)
+    private double MeasureLyricsTextWidth(string text, double fontSize, LyricsDisplayPart part)
     {
-        var typeface = new Typeface(LyricsText.FontFamily, LyricsText.FontStyle, LyricsText.FontWeight);
+        var typography = ResolvePartTypography(part);
+        var typeface = new Typeface(typography.Family, LyricsText.FontStyle, typography.Weight);
         var formatted = new FormattedText(
             text,
             CultureInfo.CurrentUICulture,
@@ -215,6 +232,60 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             fontSize,
             LyricsText.Foreground ?? Brushes.White);
         return formatted.WidthIncludingTrailingWhitespace;
+    }
+
+    private LyricsPartTypography ResolvePartTypography(LyricsDisplayPart part) =>
+        LyricsTypography.Resolve(
+            _pluginSettings,
+            part,
+            LyricsText.FontFamily,
+            LyricsText.FontWeight);
+
+    private LyricsPartTypography ResolveLineTypography(LyricsLine line) =>
+        ResolvePartTypography(LyricsDisplayText.ResolveEffectivePart(line, Settings.DisplayPart));
+
+    /// <summary>
+    /// 把选中的活跃行压进灵动岛的纵向预算：先整体等比缩小，缩到可读性下限仍装不下时丢弃末尾的背景人声行。
+    /// </summary>
+    private IReadOnlyList<LineLayoutItem> ResolveLineLayout(IReadOnlyList<LyricsLineSelection> activeLines)
+    {
+        var plan = LyricsLayoutMetrics.ResolveFitPlan(
+            activeLines.Select(item => item.Line.IsBackground).ToArray(),
+            LyricsText.FontSize,
+            Settings.LineSpacing,
+            Settings.IsShowLyricsKana &&
+            activeLines.Any(item =>
+                item.Line.RubySpans is { Count: > 0 } &&
+                LyricsDisplayText.UsesOriginalText(item.Line, Settings.DisplayPart)));
+
+        var items = new List<LineLayoutItem>(activeLines.Count);
+        for (var i = 0; i < activeLines.Count; i++)
+        {
+            if (plan.KeepLine[i])
+            {
+                items.Add(new LineLayoutItem(activeLines[i], plan.FontSizes[i]));
+            }
+        }
+
+        return items;
+    }
+
+    private bool ShouldShowLyricsKana(LyricsLine line, LyricsDisplayPart displayPart) =>
+        Settings.IsShowLyricsKana &&
+        LyricsDisplayText.UsesOriginalText(line, displayPart) &&
+        line.RubySpans is { Count: > 0 };
+
+    private Thickness ResolveLineMargin(bool isMultiLine, bool isFirstLine)
+    {
+        if (!isMultiLine)
+        {
+            return default;
+        }
+
+        // 原有的 -1 保持默认观感不变；用户行距只加在行与行之间（首行不加），
+        // 使实际占用恰好等于纵向适配所用的 LineSpacing * (行数 - 1)。
+        var extra = isFirstLine ? 0 : Settings.LineSpacing;
+        return new Thickness(0, -1 + extra, 0, -1);
     }
 
     private void UpdateMargin()
@@ -262,7 +333,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
-        if (e.PropertyName == nameof(LyricsComponentConfig.DisplayPart))
+        if (e.PropertyName is nameof(LyricsComponentConfig.DisplayPart)
+            or nameof(LyricsComponentConfig.LineSpacing)
+            or nameof(LyricsComponentConfig.IsShowLyricsKana))
         {
             Dispatcher.UIThread.Post(() =>
             {
@@ -323,6 +396,26 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
+        if (e.PropertyName is nameof(PluginSettings.LyricsOriginalFontFamily)
+            or nameof(PluginSettings.LyricsTranslationFontFamily)
+            or nameof(PluginSettings.LyricsRomanizationFontFamily)
+            or nameof(PluginSettings.LyricsOriginalFontWeight)
+            or nameof(PluginSettings.LyricsTranslationFontWeight)
+            or nameof(PluginSettings.LyricsRomanizationFontWeight))
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                lock (_syncLock)
+                {
+                    _activeLineIndices = [];
+                }
+
+                ApplyFixedLyricsContentWidth();
+                RenderCurrentPositionOnce();
+            });
+            return;
+        }
+
         if (e.PropertyName != nameof(PluginSettings.IsWordLyricsLiftEnabled) &&
             e.PropertyName != nameof(PluginSettings.IsWordLyricsEmphasisEnabled) &&
             e.PropertyName != nameof(PluginSettings.IsWordLyricsEmphasisGlowEnabled) &&
@@ -347,7 +440,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         Dispatcher.UIThread.Post(() =>
         {
-            if (_mediaService.CurrentMediaInfo is { } mediaInfo)
+            if (CurrentUiMediaInfo is { } mediaInfo)
             {
                 _ = HandleMediaInfoAsync(mediaInfo);
             }
@@ -404,6 +497,24 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
+        if (_effectiveSource?.IsExternalMediaEffective == true)
+        {
+            _clock.Update(e.MediaInfo);
+            switch (e.ChangeKind)
+            {
+                case MediaInfoChangeKind.CurrentSession:
+                case MediaInfoChangeKind.MediaProperties:
+                    await HandleMediaInfoAsync(e.MediaInfo);
+                    break;
+                case MediaInfoChangeKind.Playback:
+                case MediaInfoChangeKind.Timeline:
+                    RenderCurrentPositionOnce();
+                    UpdateRenderCadence();
+                    break;
+            }
+            return;
+        }
+
         if (!CanSearchLyrics(e.MediaInfo))
         {
             return;
@@ -427,6 +538,72 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
     }
 
+    private MediaInfo? CurrentUiMediaInfo =>
+        _effectiveSource?.EffectiveMediaInfo ?? _mediaService.CurrentMediaInfo;
+
+    private void SubscribeMediaSource()
+    {
+        UnsubscribeMediaSource();
+        if (_effectiveSource is not null)
+        {
+            _effectiveSource.EffectiveMediaChanged += MediaService_OnMediaInfoChanged;
+        }
+        else
+        {
+            _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+        }
+    }
+
+    private void UnsubscribeMediaSource()
+    {
+        if (_effectiveSource is not null)
+        {
+            _effectiveSource.EffectiveMediaChanged -= MediaService_OnMediaInfoChanged;
+        }
+
+        _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+    }
+
+    private void EffectiveSource_OnEffectiveLyricsChanged(object? sender, LyricsSearchResultChangedEventArgs e)
+    {
+        if (!_isLoaded)
+        {
+            return;
+        }
+
+        if (_effectiveSource?.IsExternalMediaEffective == true ||
+            e.Result?.Source == LyricsSourceId.External)
+        {
+            ApplyExternalLyrics(e.Result);
+        }
+    }
+
+    private void ApplyExternalLyrics(LyricsSearchResult? result)
+    {
+        Interlocked.Increment(ref _searchVersion);
+        CancelCurrentSearch();
+        var document = result?.Document;
+        lock (_syncLock)
+        {
+            _currentLyrics = document;
+            _activeLineIndices = [];
+            _isWordMode = document?.SyncMode == LyricsSyncMode.Word;
+            _isInterludeAnimationActive = false;
+        }
+
+        if (CurrentUiMediaInfo is { } media)
+        {
+            _clock.Update(media);
+            _lastTitle = media.Title;
+            _lastArtist = media.Artist;
+        }
+
+        SetStatus(document == null ? "未找到歌词" : string.Empty);
+        Dispatcher.UIThread.InvokeAsync(ApplyFixedLyricsContentWidth);
+        RenderCurrentPositionOnce();
+        UpdateRenderCadence();
+    }
+
     private async Task HandleMediaInfoAsync(MediaInfo? info)
     {
         try
@@ -435,6 +612,15 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             {
                 ResetSkippedLyricsSearchState();
                 ClearLyrics("没有可用的媒体会话");
+                return;
+            }
+
+            // External inject: display EffectiveLyrics only; do not trigger online search.
+            if (_effectiveSource?.IsExternalMediaEffective == true)
+            {
+                ResetSkippedLyricsSearchState();
+                _clock.Update(info);
+                ApplyExternalLyrics(_effectiveSource.EffectiveLyrics);
                 return;
             }
 
@@ -531,7 +717,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         Dispatcher.UIThread.Post(() =>
         {
             if (!_isLoaded ||
-                !ReferenceEquals(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo), e.Result))
+                !ReferenceEquals(_lyricsSearchService.GetCurrentResultFor(
+                    _effectiveSource is null || _effectiveSource.IsExternalMediaEffective
+                        ? _mediaService.CurrentMediaInfo
+                        : CurrentUiMediaInfo), e.Result))
             {
                 return;
             }
@@ -712,6 +901,133 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         });
     }
 
+    /// <summary>
+    /// 记录宿主给出的可用高度。灵动岛给的是固定值（与本组件内容无关），因此不会形成布局反馈环。
+    /// </summary>
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        if (double.IsFinite(availableSize.Height) && availableSize.Height > 0)
+        {
+            _availableContentHeight = availableSize.Height;
+        }
+
+        return base.MeasureOverride(availableSize);
+    }
+
+    /// <summary>
+    /// 用真实测量把多行歌词收敛进可用高度：先整体缩小，缩到可读性下限仍超高时丢弃末尾背景人声行。
+    /// 逐字呈现器会为上浮/强调预留额外高度，日文字体行高也偏大，估算模型覆盖不了，所以这里以实测为准。
+    /// </summary>
+    private void ApplyVerticalFit(Panel layer, List<ActiveLineVisual> visuals)
+    {
+        if (_availableContentHeight <= 0 || visuals.Count <= 1)
+        {
+            return;
+        }
+
+        var width = LyricsContentHost.Bounds.Width > 0
+            ? LyricsContentHost.Bounds.Width
+            : Math.Max(LyricsText.FontSize * 20, 240);
+        var constraint = new Size(width, double.PositiveInfinity);
+        var spacing = layer is StackPanel stack ? stack.Spacing : 0;
+
+        for (var attempt = 0; attempt < 6 && visuals.Count > 1; attempt++)
+        {
+            var desired = MeasureStackHeight(visuals, constraint, spacing);
+            if (desired <= _availableContentHeight + 0.5)
+            {
+                return;
+            }
+
+            if (TryScaleVisualFontSizes(visuals, _availableContentHeight / desired))
+            {
+                continue;
+            }
+
+            if (!TryDropTrailingBackgroundVisual(layer, visuals))
+            {
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 逐行测量再求和。父层在整帧过渡期间可能不可见，直接量父层会得到 0。
+    /// </summary>
+    private static double MeasureStackHeight(
+        List<ActiveLineVisual> visuals,
+        Size constraint,
+        double spacing)
+    {
+        var total = 0d;
+        foreach (var visual in visuals)
+        {
+            visual.Control.Measure(constraint);
+            total += visual.Control.DesiredSize.Height;
+        }
+
+        return total + (spacing * Math.Max(0, visuals.Count - 1));
+    }
+
+    private static bool TryScaleVisualFontSizes(List<ActiveLineVisual> visuals, double scale)
+    {
+        if (scale >= 0.999)
+        {
+            return false;
+        }
+
+        var changed = false;
+        foreach (var visual in visuals)
+        {
+            var floor = visual.IsBackground
+                ? LyricsLayoutMetrics.MinimumScaledBackgroundFontSize
+                : LyricsLayoutMetrics.MinimumScaledMainFontSize;
+            var current = GetLineFontSize(visual);
+            var next = Math.Max(floor, current * scale);
+            if (next < current - 0.05)
+            {
+                SetLineFontSize(visual, next);
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    private bool TryDropTrailingBackgroundVisual(Panel layer, List<ActiveLineVisual> visuals)
+    {
+        for (var i = visuals.Count - 1; i >= 0; i--)
+        {
+            if (!visuals[i].IsBackground)
+            {
+                continue;
+            }
+
+            var dropped = visuals[i];
+            visuals.RemoveAt(i);
+            layer.Children.Remove(dropped.Control);
+            _backgroundFadeTargets.RemoveAll(item => ReferenceEquals(item.Control, dropped.Control));
+            _lineMotions.RemoveAll(item => ReferenceEquals(item.Control, dropped.Control));
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void SetLineFontSize(ActiveLineVisual visual, double fontSize)
+    {
+        if (visual.WordPresenter != null)
+        {
+            visual.WordPresenter.FontSize = fontSize;
+            return;
+        }
+
+        if (visual.Control is TextBlock textBlock)
+        {
+            textBlock.FontSize = fontSize;
+        }
+    }
+
     private void RebuildActiveLineVisuals(
         IReadOnlyList<LyricsLineSelection> activeLines,
         bool wordMode,
@@ -746,23 +1062,31 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         targetLayer.Children.Clear();
 
         var hasDuet = GetDocumentHasDuet();
-        var isMultiLine = activeLines.Count > 1;
+        var layoutItems = ResolveLineLayout(activeLines);
+        var isMultiLine = layoutItems.Count > 1;
         targetLayer.Spacing = isMultiLine ? 0 : 1;
 
-        foreach (var selection in activeLines)
+        foreach (var item in layoutItems)
         {
             var visual = CreateLineVisual(
-                selection,
-                activeLines.Count,
+                item,
                 hasDuet,
                 isMultiLine,
+                isFirstLine: ReferenceEquals(item, layoutItems[0]),
                 wordMode,
                 position);
             targetLayer.Children.Add(visual.Control);
             _activeLineVisuals.Add(visual);
+        }
+
+        // 估算模型只是初值，最终以实测收敛为准。
+        ApplyVerticalFit(targetLayer, _activeLineVisuals);
+
+        foreach (var visual in _activeLineVisuals)
+        {
             if (visual.IsBackground)
             {
-                var isNewBackground = !previousSet.Contains(selection.LineIndex);
+                var isNewBackground = !previousSet.Contains(visual.LineIndex);
                 var shouldFadeBackground = IsLyricsTransitionEnabled &&
                                            (animateFullTransition || isNewBackground);
                 if (shouldFadeBackground)
@@ -820,8 +1144,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 GetLineFontSize(item.Value)));
 
         var hasDuet = GetDocumentHasDuet();
-        var isMultiLine = activeLines.Count > 1;
-        var plan = PrecomputeLinePlan(activeLines, hasDuet, isMultiLine);
+        var layoutItems = ResolveLineLayout(activeLines);
+        var isMultiLine = layoutItems.Count > 1;
+        var plan = PrecomputeLinePlan(layoutItems, hasDuet, isMultiLine);
         var nextIndices = plan.Select(item => item.LineIndex).ToHashSet();
         var leaving = _activeLineVisuals
             .Where(item => !nextIndices.Contains(item.LineIndex))
@@ -844,10 +1169,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 var first = firstFrames[planned.LineIndex];
                 UpdateLineVisual(
                     kept,
-                    planned.Selection,
-                    activeLines.Count,
+                    planned.Item,
                     hasDuet,
                     isMultiLine,
+                    planned.Order == 0,
                     wordMode,
                     position);
                 var transform = EnsureLineTransform(kept.Control);
@@ -860,10 +1185,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             }
 
             var created = CreateLineVisual(
-                planned.Selection,
-                activeLines.Count,
+                planned.Item,
                 hasDuet,
                 isMultiLine,
+                planned.Order == 0,
                 wordMode,
                 position);
             var enterTransform = EnsureLineTransform(created.Control);
@@ -934,6 +1259,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
         _activeLineVisuals.Clear();
         _activeLineVisuals.AddRange(nextVisuals);
+        ApplyVerticalFit(_front, _activeLineVisuals);
         _front.IsVisible = true;
         _front.Opacity = 1;
         ((TranslateTransform)_front.RenderTransform!).Y = 0;
@@ -946,6 +1272,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         ForceLineHostLayout();
         foreach (var kept in stayingControls)
         {
+            // 纵向收敛可能已经丢弃了某条背景行，跳过不再挂在前景堆叠上的控件。
+            if (kept.Control.Parent == null)
+            {
+                continue;
+            }
+
             if (!firstFrames.TryGetValue(kept.LineIndex, out var first))
             {
                 continue;
@@ -999,28 +1331,24 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     }
 
     private IReadOnlyList<PlannedLineState> PrecomputeLinePlan(
-        IReadOnlyList<LyricsLineSelection> activeLines,
+        IReadOnlyList<LineLayoutItem> layoutItems,
         bool hasDuet,
         bool isMultiLine)
     {
-        var plan = new List<PlannedLineState>(activeLines.Count);
-        for (var order = 0; order < activeLines.Count; order++)
+        var plan = new List<PlannedLineState>(layoutItems.Count);
+        for (var order = 0; order < layoutItems.Count; order++)
         {
-            var selection = activeLines[order];
-            var line = selection.Line;
-            var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
-                LyricsText.FontSize,
-                activeLines.Count,
-                line.IsBackground);
+            var item = layoutItems[order];
+            var line = item.Selection.Line;
             var opacity = line.IsBackground ? BackgroundActiveOpacity : 1.0;
             var textAlignment = LyricsLayoutMetrics.ResolveLineTextAlignment(
-                selection.IsDuetSide,
+                item.Selection.IsDuetSide,
                 hasDuet);
             plan.Add(new PlannedLineState(
-                selection.LineIndex,
+                item.Selection.LineIndex,
                 order,
-                selection,
-                fontSize,
+                item,
+                item.FontSize,
                 opacity,
                 textAlignment,
                 isMultiLine,
@@ -1051,7 +1379,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         var hostBounds = LyricsContentHost.Bounds;
         if (hostBounds.Width > 0 && hostBounds.Height > 0)
         {
-            LyricsContentHost.Arrange(new Rect(hostBounds.X, hostBounds.Y, hostBounds.Width, hostBounds.Height));
+            // 宿主 ClipToBounds=True：沿用旧高度会把新增的行（例如第二条背景人声）底部裁掉，
+            // 因此这里取旧高度与本帧内容高度的较大值，宽度仍保持稳定避免抖动。
+            LyricsContentHost.Arrange(new Rect(
+                hostBounds.X,
+                hostBounds.Y,
+                hostBounds.Width,
+                Math.Max(hostBounds.Height, hostHeight)));
         }
         else
         {
@@ -1118,20 +1452,19 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     }
 
     private ActiveLineVisual CreateLineVisual(
-        LyricsLineSelection selection,
-        int visibleLineCount,
+        LineLayoutItem item,
         bool hasDuet,
         bool isMultiLine,
+        bool isFirstLine,
         bool wordMode,
         TimeSpan position)
     {
+        var selection = item.Selection;
         var line = selection.Line;
         var displayPart = Settings.DisplayPart;
         var displayText = LyricsDisplayText.Resolve(line, displayPart);
-        var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
-            LyricsText.FontSize,
-            visibleLineCount,
-            line.IsBackground);
+        var fontSize = item.FontSize;
+        var typography = ResolveLineTypography(line);
         // 逐字背景行使用控件满不透明度；0.4 在呈现器画刷内部施加。
         // 翻译/音译只有行级文本，不使用原文逐字时间轴。
         var useWordVisual = wordMode &&
@@ -1152,11 +1485,14 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 Line = line,
                 Position = position,
                 FontSize = fontSize,
+                FontFamily = typography.Family,
+                FontWeight = typography.Weight,
                 Foreground = LyricsText.Foreground,
                 TextAlignment = textAlignment,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Opacity = opacity,
                 IsBackgroundLine = line.IsBackground,
+                IsRubyEnabled = ShouldShowLyricsKana(line, displayPart),
                 RenderTransform = new TranslateTransform()
             };
             ApplyWordLyricsAnimationSettings(wordPresenter);
@@ -1169,6 +1505,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             {
                 Text = displayText,
                 FontSize = fontSize,
+                FontFamily = typography.Family,
+                FontWeight = typography.Weight,
                 Foreground = LyricsText.Foreground,
                 TextAlignment = textAlignment,
                 TextWrapping = TextWrapping.NoWrap,
@@ -1178,10 +1516,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             };
         }
 
-        if (isMultiLine)
-        {
-            visual.Margin = new Thickness(0, -1, 0, -1);
-        }
+        visual.Margin = ResolveLineMargin(isMultiLine, isFirstLine);
 
         return new ActiveLineVisual(
             selection.LineIndex,
@@ -1193,20 +1528,19 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void UpdateLineVisual(
         ActiveLineVisual visual,
-        LyricsLineSelection selection,
-        int visibleLineCount,
+        LineLayoutItem item,
         bool hasDuet,
         bool isMultiLine,
+        bool isFirstLine,
         bool wordMode,
         TimeSpan position)
     {
+        var selection = item.Selection;
         var line = selection.Line;
         var displayPart = Settings.DisplayPart;
         var displayText = LyricsDisplayText.Resolve(line, displayPart);
-        var fontSize = LyricsLayoutMetrics.GetActiveLineFontSize(
-            LyricsText.FontSize,
-            visibleLineCount,
-            line.IsBackground);
+        var fontSize = item.FontSize;
+        var typography = ResolveLineTypography(line);
         var useWordVisual = visual.WordPresenter != null &&
                             wordMode &&
                             line.Words.Count > 0 &&
@@ -1224,10 +1558,13 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             visual.WordPresenter.Line = line;
             visual.WordPresenter.Position = position;
             visual.WordPresenter.FontSize = fontSize;
+            visual.WordPresenter.FontFamily = typography.Family;
+            visual.WordPresenter.FontWeight = typography.Weight;
             visual.WordPresenter.Foreground = LyricsText.Foreground;
             visual.WordPresenter.TextAlignment = textAlignment;
             visual.WordPresenter.Opacity = opacity;
             visual.WordPresenter.IsBackgroundLine = line.IsBackground;
+            visual.WordPresenter.IsRubyEnabled = ShouldShowLyricsKana(line, displayPart);
             ApplyWordLyricsAnimationSettings(visual.WordPresenter);
             AutomationProperties.SetName(visual.WordPresenter, displayText);
         }
@@ -1235,14 +1572,14 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         {
             textBlock.Text = displayText;
             textBlock.FontSize = fontSize;
+            textBlock.FontFamily = typography.Family;
+            textBlock.FontWeight = typography.Weight;
             textBlock.Foreground = LyricsText.Foreground;
             textBlock.TextAlignment = textAlignment;
             textBlock.Opacity = opacity;
         }
 
-        visual.Control.Margin = isMultiLine
-            ? new Thickness(0, -1, 0, -1)
-            : default;
+        visual.Control.Margin = ResolveLineMargin(isMultiLine, isFirstLine);
     }
 
     private void RebuildInterludeVisual(LyricsInterlude interlude, TimeSpan position)
@@ -1789,12 +2126,17 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private sealed record PlannedLineState(
         int LineIndex,
         int Order,
-        LyricsLineSelection Selection,
+        LineLayoutItem Item,
         double TargetFontSize,
         double TargetOpacity,
         TextAlignment TextAlignment,
         bool IsMultiLine,
         bool IsBackground);
+
+    /// <summary>
+    /// 一条待渲染的活跃行及其经纵向适配后的最终字号。
+    /// </summary>
+    private sealed record LineLayoutItem(LyricsLineSelection Selection, double FontSize);
 
     private sealed record LineMotion(
         Control Control,

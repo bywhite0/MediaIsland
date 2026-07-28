@@ -25,6 +25,7 @@ public enum LyricsSourceId
     Kugou,
     AmllTtml,
     SPlayerNext
+    External
 }
 
 public sealed record LyricsMetadata(
@@ -38,6 +39,17 @@ public sealed record LyricsWord(
     TimeSpan EndTime,
     string Text);
 
+/// <summary>
+/// 字级注音片段，锚定在 <see cref="LyricsLine.Text"/> 的 UTF-16 区间上。
+/// </summary>
+/// <param name="BaseStart">原文起点（UTF-16 索引）。</param>
+/// <param name="BaseLength">覆盖的原文码元长度；多字注音时通常大于 1。</param>
+/// <param name="Reading">假名读音；不应包含 QRC 内嵌 timing。</param>
+public sealed record LyricsRubySpan(
+    int BaseStart,
+    int BaseLength,
+    string Reading);
+
 public sealed record LyricsLine(
     TimeSpan StartTime,
     TimeSpan EndTime,
@@ -46,7 +58,8 @@ public sealed record LyricsLine(
     string? Translation = null,
     string? Romanization = null,
     bool IsBackground = false,
-    bool IsDuet = false);
+    bool IsDuet = false,
+    IReadOnlyList<LyricsRubySpan>? RubySpans = null);
 
 public sealed record LyricsDocument(
     LyricsMetadata Metadata,
