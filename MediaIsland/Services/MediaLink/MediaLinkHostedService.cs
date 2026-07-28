@@ -41,7 +41,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
     public string? Endpoint => _server?.Endpoint;
 
-    // Certificate store removed; fingerprint UI residual until Task 5/settings rewrite.
+    // UI residual until settings rewrite.
     public string? CertFingerprint => null;
 
     public string? LastError { get; private set; }

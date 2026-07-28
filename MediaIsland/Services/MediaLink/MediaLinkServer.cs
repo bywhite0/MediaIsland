@@ -1,10 +1,6 @@
 using System.Net;
-using System.Net.Security;
 using System.Net.Sockets;
 using System.Net.WebSockets;
-using System.Security.Authentication;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
@@ -22,7 +18,6 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private Task? _acceptLoop;
     private readonly List<Task> _sessionTasks = [];
     private readonly object _gate = new();
-    private X509Certificate2? _ephemeralCertificate;
 
     public MediaLinkServer(
         MediaLinkSessionHub hub,
@@ -53,10 +48,6 @@ public sealed class MediaLinkServer : IAsyncDisposable
             throw new InvalidOperationException(LastError);
         }
 
-        // Task 5 owns plain-ws rewrite. Keep ephemeral TLS only so accept loop still compiles/runs
-        // without MediaLinkCertificateStore.
-        var certificate = CreateEphemeralCertificate();
-        _ephemeralCertificate = certificate;
         if (!IPAddress.TryParse(listenAddress, out var address))
         {
             LastError = $"无法解析监听地址：{listenAddress}";
@@ -66,13 +57,13 @@ public sealed class MediaLinkServer : IAsyncDisposable
         var listener = new TcpListener(address, port);
         listener.Start();
         _listener = listener;
-        Endpoint = $"wss://{FormatHost(address)}:{port}{MediaLinkProtocol.Path}";
+        Endpoint = $"ws://{FormatHost(address)}:{port}{MediaLinkProtocol.Path}";
         LastError = null;
         IsRunning = true;
         _acceptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var ct = _acceptCts.Token;
-        _acceptLoop = Task.Run(() => AcceptLoopAsync(certificate, token, ct), CancellationToken.None);
-        _logger?.LogInformation("MediaLink WSS 已监听 {Endpoint}", Endpoint);
+        _acceptLoop = Task.Run(() => AcceptLoopAsync(token, ct), CancellationToken.None);
+        _logger?.LogInformation("MediaLink WS 已监听 {Endpoint}", Endpoint);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -105,11 +96,9 @@ public sealed class MediaLinkServer : IAsyncDisposable
         await _hub.DisposeAllAsync();
         _acceptCts?.Dispose();
         _acceptCts = null;
-        _ephemeralCertificate?.Dispose();
-        _ephemeralCertificate = null;
     }
 
-    private async Task AcceptLoopAsync(X509Certificate2 certificate, string token, CancellationToken cancellationToken)
+    private async Task AcceptLoopAsync(string token, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested && _listener is not null)
         {
@@ -132,7 +121,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
                 continue;
             }
 
-            var task = Task.Run(() => HandleClientAsync(client, certificate, token, cancellationToken), CancellationToken.None);
+            var task = Task.Run(() => HandleClientAsync(client, token, cancellationToken), CancellationToken.None);
             lock (_gate)
             {
                 _sessionTasks.Add(task);
@@ -143,7 +132,6 @@ public sealed class MediaLinkServer : IAsyncDisposable
 
     private async Task HandleClientAsync(
         TcpClient client,
-        X509Certificate2 certificate,
         string token,
         CancellationToken cancellationToken)
     {
@@ -152,23 +140,13 @@ public sealed class MediaLinkServer : IAsyncDisposable
             try
             {
                 await using var network = client.GetStream();
-                await using var ssl = new SslStream(network, leaveInnerStreamOpen: false);
-                var sslOptions = new SslServerAuthenticationOptions
-                {
-                    ServerCertificate = certificate,
-                    EnabledSslProtocols = SslProtocols.Tls13,
-                    CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
-                    ClientCertificateRequired = false
-                };
-                await ssl.AuthenticateAsServerAsync(sslOptions, cancellationToken);
-
-                if (!await TryUpgradeAsync(ssl, cancellationToken))
+                if (!await TryUpgradeAsync(network, cancellationToken))
                 {
                     return;
                 }
 
                 var webSocket = WebSocket.CreateFromStream(
-                    ssl,
+                    network,
                     isServer: true,
                     subProtocol: null,
                     keepAliveInterval: TimeSpan.FromSeconds(30));
@@ -268,24 +246,6 @@ public sealed class MediaLinkServer : IAsyncDisposable
         var bytes = Encoding.ASCII.GetBytes(response);
         await stream.WriteAsync(bytes, cancellationToken);
         return true;
-    }
-
-    private static X509Certificate2 CreateEphemeralCertificate()
-    {
-        using var rsa = RSA.Create(2048);
-        var request = new CertificateRequest(
-            "CN=MediaIsland-MediaLink-Ephemeral",
-            rsa,
-            HashAlgorithmName.SHA256,
-            RSASignaturePadding.Pkcs1);
-        var notBefore = DateTimeOffset.UtcNow.AddDays(-1);
-        var notAfter = notBefore.AddYears(1);
-        using var created = request.CreateSelfSigned(notBefore, notAfter);
-        // Export/reimport so the private key stays usable with SslStream after disposing RSA.
-        var pfx = created.Export(X509ContentType.Pfx);
-#pragma warning disable SYSLIB0057
-        return new X509Certificate2(pfx, (string?)null, X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
-#pragma warning restore SYSLIB0057
     }
 
     private static string FormatHost(IPAddress address) =>
