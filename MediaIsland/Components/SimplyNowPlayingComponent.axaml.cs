@@ -8,6 +8,7 @@ using ClassIsland.Shared.Helpers;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
 using MediaIsland.Services.Media;
+using MediaIsland.Services.MediaLink;
 using Microsoft.Extensions.Logging;
 using RoutedEventArgs = Avalonia.Interactivity.RoutedEventArgs;
 
@@ -23,20 +24,28 @@ namespace MediaIsland.Components
     public partial class SimplyNowPlayingComponent : ComponentBase<SimplyNowPlayingComponentConfig>
     {
         private readonly IMediaService _mediaService;
+        private readonly IEffectiveMediaSource? _effectiveSource;
         private ILogger<SimplyNowPlayingComponent> Logger { get; }
 
         private PluginSettings globalSettings;
         private bool _isLoaded;
         private MediaInfo? _currentMediaInfo;
 
-        public SimplyNowPlayingComponent(ILogger<SimplyNowPlayingComponent> logger, IMediaService mediaService)
+        public SimplyNowPlayingComponent(
+            ILogger<SimplyNowPlayingComponent> logger,
+            IMediaService mediaService,
+            IEffectiveMediaSource? effectiveSource = null)
         {
             InitializeComponent();
             Logger = logger;
             _mediaService = mediaService;
+            _effectiveSource = effectiveSource;
             globalSettings = Plugin.Instance?.Settings ??
                              ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(Plugin.globalConfigFolder!, "Settings.json"));
         }
+
+        private MediaInfo? CurrentUiMediaInfo =>
+            _effectiveSource?.EffectiveMediaInfo ?? _mediaService.CurrentMediaInfo;
 
         private void SimplyNowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
         {
@@ -54,7 +63,7 @@ namespace MediaIsland.Components
             _isLoaded = false;
             globalSettings.MediaSourceSettingsSaved -= GlobalSettings_OnMediaSourceSettingsSaved;
             Settings.PropertyChanged -= OnSettingsPropertyChanged;
-            _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+            UnsubscribeMediaSource();
         }
 
         private void GlobalSettings_OnMediaSourceSettingsSaved(object? sender, EventArgs e)
@@ -66,7 +75,7 @@ namespace MediaIsland.Components
 
             Dispatcher.UIThread.Post(() =>
             {
-                if (_mediaService.CurrentMediaInfo is { } mediaInfo)
+                if (CurrentUiMediaInfo is { } mediaInfo)
                 {
                     _ = RefreshMediaInfo(mediaInfo);
                 }
@@ -113,24 +122,47 @@ namespace MediaIsland.Components
             }
         }
 
+        private void SubscribeMediaSource()
+        {
+            UnsubscribeMediaSource();
+            if (_effectiveSource is not null)
+            {
+                _effectiveSource.EffectiveMediaChanged += MediaService_OnMediaInfoChanged;
+            }
+            else
+            {
+                _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+            }
+        }
+
+        private void UnsubscribeMediaSource()
+        {
+            if (_effectiveSource is not null)
+            {
+                _effectiveSource.EffectiveMediaChanged -= MediaService_OnMediaInfoChanged;
+            }
+
+            _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+        }
+
         /// <summary>
         /// 获取媒体服务信息并更新 UI
         /// </summary>
         // ReSharper disable once AsyncVoidMethod
         private async void LoadCurrentPlayingInfoAsync()
         {
-            _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
-            _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+            SubscribeMediaSource();
 
             try
             {
                 await _mediaService.EnsureStartedAsync();
                 Logger.LogInformation("尝试获取媒体会话信息");
-                if (_mediaService.CurrentMediaInfo != null)
+                var mediaInfo = CurrentUiMediaInfo;
+                if (mediaInfo != null)
                 {
                     Logger.LogInformation("存在媒体会话信息");
                     Logger.LogDebug("刷新【正在播放】组件内容");
-                    await RefreshMediaInfo(_mediaService.CurrentMediaInfo);
+                    await RefreshMediaInfo(mediaInfo);
                 }
                 else
                 {

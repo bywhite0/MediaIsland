@@ -14,6 +14,7 @@ using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
+using MediaIsland.Services.MediaLink;
 using Microsoft.Extensions.Logging;
 using RoutedEventArgs = Avalonia.Interactivity.RoutedEventArgs;
 
@@ -38,6 +39,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private static readonly TimeSpan TransitionFrameInterval = TimeSpan.FromMilliseconds(16);
 
     private readonly IMediaService _mediaService;
+    private readonly IEffectiveMediaSource? _effectiveSource;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly ILogger<LyricsComponent> _logger;
     private readonly DispatcherTimer _lyricsTimer;
@@ -78,7 +80,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     public LyricsComponent(
         IMediaService mediaService,
         LyricsSearchService lyricsSearchService,
-        ILogger<LyricsComponent> logger)
+        ILogger<LyricsComponent> logger,
+        IEffectiveMediaSource? effectiveSource = null)
     {
         InitializeComponent();
         _front = LyricsFrontLayer;
@@ -87,6 +90,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _mediaService = mediaService;
         _lyricsSearchService = lyricsSearchService;
         _logger = logger;
+        _effectiveSource = effectiveSource;
         _lyricsTimer = new DispatcherTimer
         {
             Interval = LineRenderInterval
@@ -102,8 +106,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     private async void LyricsComponent_OnLoaded(object? sender, RoutedEventArgs e)
     {
         _isLoaded = true;
-        _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
-        _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+        SubscribeMediaSource();
+        if (_effectiveSource is not null)
+        {
+            _effectiveSource.EffectiveLyricsChanged -= EffectiveSource_OnEffectiveLyricsChanged;
+            _effectiveSource.EffectiveLyricsChanged += EffectiveSource_OnEffectiveLyricsChanged;
+        }
         _lyricsSearchService.CandidateApplied -= LyricsSearchService_OnCandidateApplied;
         _lyricsSearchService.CandidateApplied += LyricsSearchService_OnCandidateApplied;
         Settings.PropertyChanged += Settings_OnPropertyChanged;
@@ -123,7 +131,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         try
         {
             await _mediaService.EnsureStartedAsync();
-            await HandleMediaInfoAsync(_mediaService.CurrentMediaInfo);
+            await HandleMediaInfoAsync(CurrentUiMediaInfo);
         }
         catch (Exception ex)
         {
@@ -136,7 +144,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         _isLoaded = false;
         _lyricsTimer.Stop();
-        _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+        UnsubscribeMediaSource();
+        if (_effectiveSource is not null)
+        {
+            _effectiveSource.EffectiveLyricsChanged -= EffectiveSource_OnEffectiveLyricsChanged;
+        }
         _lyricsSearchService.CandidateApplied -= LyricsSearchService_OnCandidateApplied;
         Settings.PropertyChanged -= Settings_OnPropertyChanged;
         if (_pluginSettings != null)
@@ -428,7 +440,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         Dispatcher.UIThread.Post(() =>
         {
-            if (_mediaService.CurrentMediaInfo is { } mediaInfo)
+            if (CurrentUiMediaInfo is { } mediaInfo)
             {
                 _ = HandleMediaInfoAsync(mediaInfo);
             }
@@ -483,6 +495,24 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
+        if (_effectiveSource?.IsExternalMediaEffective == true)
+        {
+            _clock.Update(e.MediaInfo);
+            switch (e.ChangeKind)
+            {
+                case MediaInfoChangeKind.CurrentSession:
+                case MediaInfoChangeKind.MediaProperties:
+                    await HandleMediaInfoAsync(e.MediaInfo);
+                    break;
+                case MediaInfoChangeKind.Playback:
+                case MediaInfoChangeKind.Timeline:
+                    RenderCurrentPositionOnce();
+                    UpdateRenderCadence();
+                    break;
+            }
+            return;
+        }
+
         if (!CanSearchLyrics(e.MediaInfo))
         {
             return;
@@ -506,6 +536,72 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
     }
 
+    private MediaInfo? CurrentUiMediaInfo =>
+        _effectiveSource?.EffectiveMediaInfo ?? _mediaService.CurrentMediaInfo;
+
+    private void SubscribeMediaSource()
+    {
+        UnsubscribeMediaSource();
+        if (_effectiveSource is not null)
+        {
+            _effectiveSource.EffectiveMediaChanged += MediaService_OnMediaInfoChanged;
+        }
+        else
+        {
+            _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+        }
+    }
+
+    private void UnsubscribeMediaSource()
+    {
+        if (_effectiveSource is not null)
+        {
+            _effectiveSource.EffectiveMediaChanged -= MediaService_OnMediaInfoChanged;
+        }
+
+        _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
+    }
+
+    private void EffectiveSource_OnEffectiveLyricsChanged(object? sender, LyricsSearchResultChangedEventArgs e)
+    {
+        if (!_isLoaded)
+        {
+            return;
+        }
+
+        if (_effectiveSource?.IsExternalMediaEffective == true ||
+            e.Result?.Source == LyricsSourceId.External)
+        {
+            ApplyExternalLyrics(e.Result);
+        }
+    }
+
+    private void ApplyExternalLyrics(LyricsSearchResult? result)
+    {
+        Interlocked.Increment(ref _searchVersion);
+        CancelCurrentSearch();
+        var document = result?.Document;
+        lock (_syncLock)
+        {
+            _currentLyrics = document;
+            _activeLineIndices = [];
+            _isWordMode = document?.SyncMode == LyricsSyncMode.Word;
+            _isInterludeAnimationActive = false;
+        }
+
+        if (CurrentUiMediaInfo is { } media)
+        {
+            _clock.Update(media);
+            _lastTitle = media.Title;
+            _lastArtist = media.Artist;
+        }
+
+        SetStatus(document == null ? "未找到歌词" : string.Empty);
+        Dispatcher.UIThread.InvokeAsync(ApplyFixedLyricsContentWidth);
+        RenderCurrentPositionOnce();
+        UpdateRenderCadence();
+    }
+
     private async Task HandleMediaInfoAsync(MediaInfo? info)
     {
         try
@@ -514,6 +610,15 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             {
                 ResetSkippedLyricsSearchState();
                 ClearLyrics("没有可用的媒体会话");
+                return;
+            }
+
+            // External inject: display EffectiveLyrics only; do not trigger online search.
+            if (_effectiveSource?.IsExternalMediaEffective == true)
+            {
+                ResetSkippedLyricsSearchState();
+                _clock.Update(info);
+                ApplyExternalLyrics(_effectiveSource.EffectiveLyrics);
                 return;
             }
 
@@ -607,7 +712,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         Dispatcher.UIThread.Post(() =>
         {
             if (!_isLoaded ||
-                !ReferenceEquals(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo), e.Result))
+                !ReferenceEquals(_lyricsSearchService.GetCurrentResultFor(
+                    _effectiveSource is null || _effectiveSource.IsExternalMediaEffective
+                        ? _mediaService.CurrentMediaInfo
+                        : CurrentUiMediaInfo), e.Result))
             {
                 return;
             }

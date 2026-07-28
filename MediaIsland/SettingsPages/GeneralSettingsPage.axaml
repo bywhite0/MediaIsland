@@ -478,6 +478,32 @@
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
+                                       Header="媒体源模式"
+                                       Description="仅系统会话 / 仅外部注入 / 外部优先。默认仅系统会话与 MVP 一致。">
+                <controls:SettingsExpander.Footer>
+                    <ComboBox Width="200"
+                              SelectedIndex="{Binding MediaLinkMediaSourceModeIndex, Mode=TwoWay}">
+                        <ComboBoxItem Content="仅系统会话" />
+                        <ComboBoxItem Content="仅外部注入" />
+                        <ComboBoxItem Content="外部优先" />
+                    </ComboBox>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE285;}"
+                                       Header="界面使用合成状态"
+                                       Description="NowPlaying / 歌词组件读取 MediaLink 合成结果。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUiUsesEffective, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
+                                       Header="推送使用合成状态"
+                                       Description="WebSocket media/lyrics 推送走合成结果。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkPushUsesEffective, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0A2;}"
                                        Header="服务状态"
                                        Description="路径固定为 /v1/ws。">

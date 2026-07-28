@@ -42,6 +42,8 @@ namespace MediaIsland.SettingsPages
         private readonly IMediaSourceDisplayService _mediaSourceDisplayService;
         private readonly LyricsSearchService _lyricsSearchService;
         private readonly IMediaLinkGateway? _mediaLinkGateway;
+        private readonly IEffectiveMediaSource? _effectiveMediaSource;
+        private readonly MediaLinkInjectionStore? _injectionStore;
         private string _mediaLinkStatusText = "未启用";
         private DispatcherTimer? _mediaLinkStatusTimer;
         private bool _isDetached;
@@ -194,12 +196,32 @@ namespace MediaIsland.SettingsPages
             private set => SetProperty(ref _mediaLinkStatusText, value);
         }
 
+        public int MediaLinkMediaSourceModeIndex
+        {
+            get => (int)Settings.MediaLinkMediaSourceMode;
+            set
+            {
+                var normalized = value is < 0 or > 2 ? 0 : value;
+                var mode = (MediaLinkMediaSourceMode)normalized;
+                if (Settings.MediaLinkMediaSourceMode == mode)
+                {
+                    return;
+                }
+
+                Settings.MediaLinkMediaSourceMode = mode;
+                OnPropertyChanged();
+            }
+        }
+
+
         public GeneralSettingsPage(
             Plugin plugin,
             IMediaService mediaService,
             IMediaSourceDisplayService mediaSourceDisplayService,
             LyricsSearchService lyricsSearchService,
-            IMediaLinkGateway? mediaLinkGateway = null)
+            IMediaLinkGateway? mediaLinkGateway = null,
+            IEffectiveMediaSource? effectiveMediaSource = null,
+            MediaLinkInjectionStore? injectionStore = null)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
@@ -207,6 +229,8 @@ namespace MediaIsland.SettingsPages
             _mediaSourceDisplayService = mediaSourceDisplayService;
             _lyricsSearchService = lyricsSearchService;
             _mediaLinkGateway = mediaLinkGateway;
+            _effectiveMediaSource = effectiveMediaSource;
+            _injectionStore = injectionStore;
             RemoveNullMediaSources();
             InitializeComponent();
             LoadLyricsSettings();
@@ -215,6 +239,11 @@ namespace MediaIsland.SettingsPages
                 _isDetached = true;
                 StopMediaLinkStatusPolling();
                 Settings.PropertyChanged -= OnPluginSettingsChangedForMediaLink;
+                if (_effectiveMediaSource is not null)
+                {
+                    _effectiveMediaSource.EffectiveMediaChanged -= EffectiveMediaSource_OnMediaInfoChanged;
+                }
+
                 _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
                 _lyricsSearchService.CurrentResultChanged -= LyricsSearchService_OnCurrentResultChanged;
                 CancelLyricsCandidateSearch();
@@ -222,13 +251,20 @@ namespace MediaIsland.SettingsPages
             };
             Settings.needRestart += RequestRestart;
             Settings.PropertyChanged += OnPluginSettingsChangedForMediaLink;
-            _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+            if (_effectiveMediaSource is not null)
+            {
+                _effectiveMediaSource.EffectiveMediaChanged += EffectiveMediaSource_OnMediaInfoChanged;
+            }
+            else
+            {
+                _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+            }
             _lyricsSearchService.CurrentResultChanged += LyricsSearchService_OnCurrentResultChanged;
             UpdateCurrentLyricsSource(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo));
             _ = RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
             StartMediaServiceAsync();
             AddCurrentMediaSourceIfAvailable();
-            _ = RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
+            _ = RefreshCurrentMediaInfoAsync(_effectiveMediaSource?.EffectiveMediaInfo ?? _mediaService.CurrentMediaInfo);
             RefreshMediaSourceDisplayInfos();
             RefreshMediaLinkStatus();
             StartMediaLinkStatusPolling();
@@ -257,6 +293,12 @@ namespace MediaIsland.SettingsPages
             {
                 // Media source discovery is best-effort on the settings page.
             }
+        }
+
+
+        private void EffectiveMediaSource_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
+        {
+            MediaService_OnMediaInfoChanged(sender, e);
         }
 
         private void MediaService_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
@@ -868,7 +910,14 @@ namespace MediaIsland.SettingsPages
             var error = string.IsNullOrWhiteSpace(_mediaLinkGateway.LastError)
                 ? string.Empty
                 : $"；错误：{_mediaLinkGateway.LastError}";
-            MediaLinkStatusText = $"{running} · {endpoint}{error}";
+            var inject = string.Empty;
+            if (_injectionStore is not null &&
+                (_injectionStore.HasExternalMedia || _injectionStore.HasExternalLyrics))
+            {
+                inject = "；外部注入中";
+            }
+
+            MediaLinkStatusText = $"{running} · {endpoint}{error}{inject}";
         }
 
         private void StartMediaLinkStatusPolling()
@@ -907,11 +956,20 @@ namespace MediaIsland.SettingsPages
 
         private void OnPluginSettingsChangedForMediaLink(object? sender, PropertyChangedEventArgs e)
         {
+            if (e.PropertyName == nameof(PluginSettings.MediaLinkMediaSourceMode))
+            {
+                OnPropertyChanged(nameof(MediaLinkMediaSourceModeIndex));
+                RefreshMediaLinkStatus();
+                return;
+            }
+
             if (e.PropertyName is nameof(PluginSettings.MediaLinkIsEnabled)
                 or nameof(PluginSettings.MediaLinkListenAddress)
                 or nameof(PluginSettings.MediaLinkPort)
                 or nameof(PluginSettings.MediaLinkToken)
-                or nameof(PluginSettings.MediaLinkTimelineMinIntervalMs))
+                or nameof(PluginSettings.MediaLinkTimelineMinIntervalMs)
+                or nameof(PluginSettings.MediaLinkUiUsesEffective)
+                or nameof(PluginSettings.MediaLinkPushUsesEffective))
             {
                 // 热更新异步完成，短延迟后再读 gateway 状态。
                 Dispatcher.UIThread.Post(async () =>
