@@ -41,8 +41,8 @@ namespace MediaIsland.SettingsPages
         private readonly IMediaService _mediaService;
         private readonly IMediaSourceDisplayService _mediaSourceDisplayService;
         private readonly LyricsSearchService _lyricsSearchService;
-        private readonly IMediaLinkGateway? _realtimeGateway;
-        private string _realtimeStatusText = "未启用";
+        private readonly IMediaLinkGateway? _mediaLinkGateway;
+        private string _mediaLinkStatusText = "未启用";
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -187,10 +187,10 @@ namespace MediaIsland.SettingsPages
             private set => SetProperty(ref _currentLyricsCandidatesStatus, value);
         }
 
-        public string RealtimeStatusText
+        public string MediaLinkStatusText
         {
-            get => _realtimeStatusText;
-            private set => SetProperty(ref _realtimeStatusText, value);
+            get => _mediaLinkStatusText;
+            private set => SetProperty(ref _mediaLinkStatusText, value);
         }
 
         public GeneralSettingsPage(
@@ -198,14 +198,14 @@ namespace MediaIsland.SettingsPages
             IMediaService mediaService,
             IMediaSourceDisplayService mediaSourceDisplayService,
             LyricsSearchService lyricsSearchService,
-            IMediaLinkGateway? realtimeGateway = null)
+            IMediaLinkGateway? mediaLinkGateway = null)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
             _mediaService = mediaService;
             _mediaSourceDisplayService = mediaSourceDisplayService;
             _lyricsSearchService = lyricsSearchService;
-            _realtimeGateway = realtimeGateway;
+            _mediaLinkGateway = mediaLinkGateway;
             RemoveNullMediaSources();
             InitializeComponent();
             LoadLyricsSettings();
@@ -226,7 +226,7 @@ namespace MediaIsland.SettingsPages
             AddCurrentMediaSourceIfAvailable();
             _ = RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
             RefreshMediaSourceDisplayInfos();
-            RefreshRealtimeStatus();
+            RefreshMediaLinkStatus();
             var screenshotApp = new MediaSource
             {
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
@@ -850,23 +850,23 @@ namespace MediaIsland.SettingsPages
         }
 
 
-        private void RefreshRealtimeStatus()
+        private void RefreshMediaLinkStatus()
         {
-            if (_realtimeGateway is null)
+            if (_mediaLinkGateway is null)
             {
-                RealtimeStatusText = "MediaLink 服务不可用";
+                MediaLinkStatusText = "媒体链接服务不可用";
                 return;
             }
 
-            var endpoint = _realtimeGateway.Endpoint ?? "-";
-            var running = _realtimeGateway.IsRunning ? "运行中" : "已停止";
-            var error = string.IsNullOrWhiteSpace(_realtimeGateway.LastError)
+            var endpoint = _mediaLinkGateway.Endpoint ?? "-";
+            var running = _mediaLinkGateway.IsRunning ? "运行中" : "已停止";
+            var error = string.IsNullOrWhiteSpace(_mediaLinkGateway.LastError)
                 ? string.Empty
-                : $"；错误：{_realtimeGateway.LastError}";
-            RealtimeStatusText = $"{running} · {endpoint}{error}";
+                : $"；错误：{_mediaLinkGateway.LastError}";
+            MediaLinkStatusText = $"{running} · {endpoint}{error}";
         }
 
-        private async void CopyRealtimeTokenOnClick(object? sender, RoutedEventArgs e)
+        private async void CopyMediaLinkTokenOnClick(object? sender, RoutedEventArgs e)
         {
             var top = TopLevel.GetTopLevel(this);
             if (top?.Clipboard is null)
@@ -877,15 +877,10 @@ namespace MediaIsland.SettingsPages
             await top.Clipboard.SetTextAsync(Settings.MediaLinkToken ?? string.Empty);
         }
 
-        private void RegenerateRealtimeTokenOnClick(object? sender, RoutedEventArgs e)
+        private void RegenerateMediaLinkTokenOnClick(object? sender, RoutedEventArgs e)
         {
             Settings.MediaLinkToken = MediaLinkAuth.GenerateToken();
-            RefreshRealtimeStatus();
-        }
-
-        private void CopyRealtimeFingerprintOnClick(object? sender, RoutedEventArgs e)
-        {
-            // Certificate fingerprint removed with plain ws; Task 8 will drop this control.
+            RefreshMediaLinkStatus();
         }
 
         private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

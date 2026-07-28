@@ -443,10 +443,10 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-                        <ci:IconText Glyph="&#xE968;" Text="MediaLink WebSocket" Margin="0 16 0 8" />
+                        <ci:IconText Glyph="&#xE968;" Text="媒体链接（WebSocket）" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
-                                       Header="启用 MediaLink 推送服务"
-                                       Description="以 ws 推送当前媒体与歌词。可绑定局域网；必须配置 Token。">
+                                       Header="启用媒体链接推送"
+                                       Description="明文 ws 推送媒体与歌词；必须 Token；勿对不可信网络暴露；仅本机可用 127.0.0.1。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkIsEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
@@ -473,8 +473,8 @@
                         <TextBox Width="220"
                                  IsReadOnly="True"
                                  Text="{Binding Settings.MediaLinkToken}" />
-                        <Button Content="复制" Click="CopyRealtimeTokenOnClick" />
-                        <Button Content="重新生成" Click="RegenerateRealtimeTokenOnClick" />
+                        <Button Content="复制" Click="CopyMediaLinkTokenOnClick" />
+                        <Button Content="重新生成" Click="RegenerateMediaLinkTokenOnClick" />
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
@@ -482,13 +482,10 @@
                                        Header="服务状态"
                                        Description="路径固定为 /v1/ws。">
                 <controls:SettingsExpander.Footer>
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBlock VerticalAlignment="Center"
-                                   Text="{Binding RealtimeStatusText}"
-                                   TextTrimming="CharacterEllipsis"
-                                   MaxWidth="360" />
-                        <Button Content="复制指纹" Click="CopyRealtimeFingerprintOnClick" IsVisible="False" />
-                    </StackPanel>
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding MediaLinkStatusText}"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="360" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <ci:IconText Glyph="&#xEAEF;" Text="隐私" Margin="0 16 0 8" />
