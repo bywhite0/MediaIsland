@@ -8,8 +8,7 @@ namespace MediaIsland.Services.MediaLink;
 
 public sealed class MediaLinkStatePublisher : IDisposable
 {
-    private readonly IMediaService _mediaService;
-    private readonly LyricsSearchService _lyricsSearchService;
+    private readonly MediaSourceCoordinator _coordinator;
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<int> _timelineMinIntervalMs;
     private readonly Func<DateTimeOffset> _utcNow;
@@ -20,16 +19,14 @@ public sealed class MediaLinkStatePublisher : IDisposable
     private bool _disposed;
 
     public MediaLinkStatePublisher(
-        IMediaService mediaService,
-        LyricsSearchService lyricsSearchService,
+        MediaSourceCoordinator coordinator,
         MediaLinkSessionHub hub,
         Func<int>? timelineMinIntervalMs = null,
         Func<DateTimeOffset>? utcNow = null,
         ILogger<MediaLinkStatePublisher>? logger = null)
     {
-        _mediaService = mediaService;
-        _lyricsSearchService = lyricsSearchService;
-        _hub = hub;
+        _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        _hub = hub ?? throw new ArgumentNullException(nameof(hub));
         _timelineMinIntervalMs = timelineMinIntervalMs ?? (() => 200);
         _utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
         _logger = logger;
@@ -43,8 +40,8 @@ public sealed class MediaLinkStatePublisher : IDisposable
             return;
         }
 
-        _mediaService.MediaInfoChanged += OnMediaInfoChanged;
-        _lyricsSearchService.CurrentResultChanged += OnLyricsChanged;
+        _coordinator.EffectiveMediaChanged += OnEffectiveMediaChanged;
+        _coordinator.EffectiveLyricsChanged += OnEffectiveLyricsChanged;
         _started = true;
     }
 
@@ -55,14 +52,14 @@ public sealed class MediaLinkStatePublisher : IDisposable
             return;
         }
 
-        _mediaService.MediaInfoChanged -= OnMediaInfoChanged;
-        _lyricsSearchService.CurrentResultChanged -= OnLyricsChanged;
+        _coordinator.EffectiveMediaChanged -= OnEffectiveMediaChanged;
+        _coordinator.EffectiveLyricsChanged -= OnEffectiveLyricsChanged;
         _started = false;
     }
 
     public async Task PublishSnapshotAsync(MediaLinkSession session, CancellationToken cancellationToken = default)
     {
-        var media = _mediaService.CurrentMediaInfo;
+        var media = _coordinator.GetMediaForPush();
         if (session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia))
         {
             await session.SendEventAsync(
@@ -73,7 +70,7 @@ public sealed class MediaLinkStatePublisher : IDisposable
 
         if (session.IsSubscribedTo(MediaLinkProtocol.ChannelLyrics))
         {
-            var lyrics = _lyricsSearchService.GetCurrentResultFor(media) ?? _lyricsSearchService.CurrentResult;
+            var lyrics = _coordinator.GetLyricsForPush();
             await session.SendEventAsync(
                 MediaLinkProtocol.EventLyricsUpdated,
                 MediaLinkDtoMapper.ToLyricsDto(lyrics),
@@ -81,7 +78,7 @@ public sealed class MediaLinkStatePublisher : IDisposable
         }
     }
 
-    private void OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
+    private void OnEffectiveMediaChanged(object? sender, MediaInfoChangedEventArgs e)
     {
         if (e.ChangeKind == MediaInfoChangeKind.Timeline && !ShouldBroadcastTimeline())
         {
@@ -96,13 +93,16 @@ public sealed class MediaLinkStatePublisher : IDisposable
             }
         }
 
-        var dto = MediaLinkDtoMapper.ToMediaDto(e.MediaInfo, e.ChangeKind);
+        // Always re-read push view so PushUsesEffective is honored at send time.
+        var media = _coordinator.GetMediaForPush();
+        var dto = MediaLinkDtoMapper.ToMediaDto(media, e.ChangeKind);
         _ = SafeBroadcastAsync(MediaLinkProtocol.ChannelMedia, MediaLinkProtocol.EventMediaUpdated, dto);
     }
 
-    private void OnLyricsChanged(object? sender, LyricsSearchResultChangedEventArgs e)
+    private void OnEffectiveLyricsChanged(object? sender, LyricsSearchResultChangedEventArgs e)
     {
-        var dto = MediaLinkDtoMapper.ToLyricsDto(e.Result);
+        var lyrics = _coordinator.GetLyricsForPush();
+        var dto = MediaLinkDtoMapper.ToLyricsDto(lyrics);
         _ = SafeBroadcastAsync(MediaLinkProtocol.ChannelLyrics, MediaLinkProtocol.EventLyricsUpdated, dto);
     }
 

@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
+using MediaIsland.Services.Media;
+using MediaIsland.Services.Media.Platform;
 using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
 
@@ -18,6 +20,11 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<MediaLinkSession, Task> _onSubscribedAsync;
     private readonly Func<string> _tokenFactory;
+    private readonly MediaLinkInjectionStore? _injectionStore;
+    private readonly MediaSourceCoordinator? _coordinator;
+    private readonly Func<IMediaPlaybackController?>? _playbackControllerAccessor;
+    private readonly Func<MediaInfoChangeKind, Task>? _onEffectiveMediaMutatedAsync;
+    private readonly Func<Task>? _onEffectiveLyricsMutatedAsync;
     private readonly ILogger<MediaLinkServer>? _logger;
     private TcpListener? _listener;
     private CancellationTokenSource? _acceptCts;
@@ -30,11 +37,21 @@ public sealed class MediaLinkServer : IAsyncDisposable
         MediaLinkSessionHub hub,
         Func<MediaLinkSession, Task> onSubscribedAsync,
         Func<string> tokenFactory,
+        MediaLinkInjectionStore? injectionStore = null,
+        MediaSourceCoordinator? coordinator = null,
+        Func<IMediaPlaybackController?>? playbackControllerAccessor = null,
+        Func<MediaInfoChangeKind, Task>? onEffectiveMediaMutatedAsync = null,
+        Func<Task>? onEffectiveLyricsMutatedAsync = null,
         ILogger<MediaLinkServer>? logger = null)
     {
         _hub = hub;
         _onSubscribedAsync = onSubscribedAsync;
         _tokenFactory = tokenFactory;
+        _injectionStore = injectionStore;
+        _coordinator = coordinator;
+        _playbackControllerAccessor = playbackControllerAccessor;
+        _onEffectiveMediaMutatedAsync = onEffectiveMediaMutatedAsync;
+        _onEffectiveLyricsMutatedAsync = onEffectiveLyricsMutatedAsync;
         _logger = logger;
     }
 
@@ -175,7 +192,12 @@ public sealed class MediaLinkServer : IAsyncDisposable
                     new MediaLinkSessionOptions
                     {
                         ExpectedToken = token,
-                        OnSubscribedAsync = _onSubscribedAsync
+                        OnSubscribedAsync = _onSubscribedAsync,
+                        InjectionStore = _injectionStore,
+                        Coordinator = _coordinator,
+                        PlaybackControllerAccessor = _playbackControllerAccessor,
+                        OnEffectiveMediaMutatedAsync = _onEffectiveMediaMutatedAsync,
+                        OnEffectiveLyricsMutatedAsync = _onEffectiveLyricsMutatedAsync
                     },
                     _logger);
                 _hub.Add(session);

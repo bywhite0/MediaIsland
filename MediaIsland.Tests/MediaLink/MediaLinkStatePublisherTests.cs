@@ -1,9 +1,9 @@
+using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink;
 using MediaIsland.Services.MediaLink.Protocol;
-using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace MediaIsland.Tests.MediaLink;
@@ -20,8 +20,11 @@ internal sealed class FakeMediaService : IMediaService
 
     public Task EnsureStartedAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-    public void Raise(MediaInfo? info, MediaInfoChangeKind kind) =>
+    public void Raise(MediaInfo? info, MediaInfoChangeKind kind)
+    {
+        CurrentMediaInfo = info;
         MediaInfoChanged?.Invoke(this, new MediaInfoChangedEventArgs(info, kind));
+    }
 }
 
 public class MediaLinkStatePublisherTests
@@ -31,6 +34,14 @@ public class MediaLinkStatePublisherTests
     {
         var media = new FakeMediaService();
         var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+
         var hub = new MediaLinkSessionHub();
         var socket = new FakeMediaLinkSocket();
         var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
@@ -41,8 +52,7 @@ public class MediaLinkStatePublisherTests
 
         var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
         using var publisher = new MediaLinkStatePublisher(
-            media,
-            lyrics,
+            coordinator,
             hub,
             timelineMinIntervalMs: () => 200,
             utcNow: () => now);
@@ -62,7 +72,9 @@ public class MediaLinkStatePublisherTests
         Assert.Single(socket.Outgoing);
 
         socket.ClearOutgoing();
-        media.Raise(sample with { PlaybackInfo = new MediaPlaybackInfo(MediaPlaybackState.Paused) }, MediaInfoChangeKind.Playback);
+        media.Raise(
+            sample with { PlaybackInfo = new MediaPlaybackInfo(MediaPlaybackState.Paused) },
+            MediaInfoChangeKind.Playback);
         await Task.Delay(50);
         Assert.Single(socket.Outgoing);
         Assert.Contains(socket.Outgoing, json => json.Contains("Paused", StringComparison.Ordinal));
@@ -73,6 +85,14 @@ public class MediaLinkStatePublisherTests
     {
         var media = new FakeMediaService();
         var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+
         var hub = new MediaLinkSessionHub();
         var socket = new FakeMediaLinkSocket();
         var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
@@ -81,15 +101,89 @@ public class MediaLinkStatePublisherTests
         await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelLyrics), CancellationToken.None);
         socket.ClearOutgoing();
 
-        using var publisher = new MediaLinkStatePublisher(media, lyrics, hub);
+        using var publisher = new MediaLinkStatePublisher(coordinator, hub);
         publisher.Start();
 
-        // LyricsSearchService has no public raise; use reflection on Publish path via CurrentResultChanged
-        // Instead publish snapshot after manually invoking through a temporary event by searching with empty providers yields null - use hub direct for independence? 
-        // Better: call PublishSnapshotAsync after setting nothing - still null payload event.
         await publisher.PublishSnapshotAsync(session);
         await Task.Delay(20);
         Assert.Contains(socket.Outgoing, json => json.Contains(MediaLinkProtocol.EventLyricsUpdated, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PublishSnapshot_UsesPushEffective_ExternalOnly()
+    {
+        var media = new FakeMediaService
+        {
+            CurrentMediaInfo = new MediaInfo(
+                "app", "platform", "a", null,
+                TimeSpan.Zero, TimeSpan.FromMinutes(1),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null)
+        };
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "ext", PlaybackState = "Paused"
+        }, out _);
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.ExternalOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+        coordinator.Recompute();
+
+        var hub = new MediaLinkSessionHub();
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+        hub.Add(session);
+        await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
+        await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
+        socket.ClearOutgoing();
+
+        using var publisher = new MediaLinkStatePublisher(coordinator, hub);
+        await publisher.PublishSnapshotAsync(session);
+        Assert.Contains(socket.Outgoing, j => j.Contains("ext"));
+        Assert.DoesNotContain(socket.Outgoing, j => j.Contains("platform"));
+    }
+
+    [Fact]
+    public async Task PublishSnapshot_PushFlagFalse_UsesPlatform()
+    {
+        var media = new FakeMediaService
+        {
+            CurrentMediaInfo = new MediaInfo(
+                "app", "platform", "a", null,
+                TimeSpan.Zero, TimeSpan.FromMinutes(1),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null)
+        };
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "ext", PlaybackState = "Paused"
+        }, out _);
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.ExternalOnly,
+            MediaLinkPushUsesEffective = false
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+        coordinator.Recompute();
+
+        var hub = new MediaLinkSessionHub();
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+        hub.Add(session);
+        await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
+        await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
+        socket.ClearOutgoing();
+
+        using var publisher = new MediaLinkStatePublisher(coordinator, hub);
+        await publisher.PublishSnapshotAsync(session);
+        Assert.Contains(socket.Outgoing, j => j.Contains("platform"));
+        Assert.DoesNotContain(socket.Outgoing, j => j.Contains("\"title\":\"ext\"") || j.Contains("\"Title\":\"ext\""));
+        Assert.DoesNotContain(socket.Outgoing, j => j.Contains("ext", StringComparison.Ordinal));
     }
 
     private static string Auth(string token) =>

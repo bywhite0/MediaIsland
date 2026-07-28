@@ -54,9 +54,20 @@ namespace MediaIsland
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings.Lyrics,
                 provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsSearchService>>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
+            services.AddSingleton<MediaLinkInjectionStore>();
+            services.AddSingleton<MediaSourceCoordinator>(provider => new MediaSourceCoordinator(
+                provider.GetRequiredService<IMediaService>(),
+                provider.GetRequiredService<LyricsSearchService>(),
+                provider.GetRequiredService<MediaLinkInjectionStore>(),
+                () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings));
+            services.AddSingleton<IEffectiveMediaSource>(provider =>
+                provider.GetRequiredService<MediaSourceCoordinator>());
             services.AddSingleton<MediaLinkHostedService>(provider => new MediaLinkHostedService(
                 provider.GetRequiredService<IMediaService>(),
                 provider.GetRequiredService<LyricsSearchService>(),
+                provider.GetRequiredService<MediaLinkInjectionStore>(),
+                provider.GetRequiredService<MediaSourceCoordinator>(),
+                provider.GetRequiredService<MediaPlatformProviderResolver>(),
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
                 provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()));
             services.AddSingleton<IMediaLinkGateway>(provider => provider.GetRequiredService<MediaLinkHostedService>());

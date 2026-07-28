@@ -152,8 +152,6 @@ public sealed class MediaSourceCoordinator : IEffectiveMediaSource, IDisposable
     {
         MediaInfo? uiMedia;
         LyricsSearchResult? uiLyrics;
-        MediaInfo? previousUiMedia;
-        LyricsSearchResult? previousUiLyrics;
         bool mediaChanged;
         bool lyricsChanged;
 
@@ -169,6 +167,11 @@ public sealed class MediaSourceCoordinator : IEffectiveMediaSource, IDisposable
             var isExternal = IsExternalUnlocked(settings.MediaLinkMediaSourceMode, composedMedia);
             var composedLyrics = ComposeLyricsUnlocked(composedMedia);
 
+            var previousComposedMedia = _composedMedia;
+            var previousComposedLyrics = _composedLyrics;
+            var previousUiMedia = _uiMedia;
+            var previousUiLyrics = _uiLyrics;
+
             _composedMedia = composedMedia;
             _composedLyrics = composedLyrics;
             _isExternalMediaEffective = isExternal;
@@ -180,10 +183,12 @@ public sealed class MediaSourceCoordinator : IEffectiveMediaSource, IDisposable
                 ? composedLyrics
                 : _lyrics.GetCurrentResultFor(_media.CurrentMediaInfo);
 
-            previousUiMedia = _uiMedia;
-            previousUiLyrics = _uiLyrics;
-            mediaChanged = !Equals(previousUiMedia, uiMedia);
-            lyricsChanged = !Equals(previousUiLyrics, uiLyrics);
+            // Fire on compose *or* UI change so PushUsesEffective consumers still get
+            // inject/virtual-clock updates when UiUsesEffective is false.
+            mediaChanged = !Equals(previousComposedMedia, composedMedia)
+                || !Equals(previousUiMedia, uiMedia);
+            lyricsChanged = !Equals(previousComposedLyrics, composedLyrics)
+                || !Equals(previousUiLyrics, uiLyrics);
 
             _uiMedia = uiMedia;
             _uiLyrics = uiLyrics;

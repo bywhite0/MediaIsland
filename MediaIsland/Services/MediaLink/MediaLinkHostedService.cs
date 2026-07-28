@@ -1,6 +1,7 @@
 using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Media;
+using MediaIsland.Services.Media.Platform;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -10,8 +11,9 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 {
     private static readonly TimeSpan DisposeStopTimeout = TimeSpan.FromSeconds(5);
 
-    private readonly IMediaService _mediaService;
-    private readonly LyricsSearchService _lyricsSearchService;
+    private readonly MediaLinkInjectionStore _injectionStore;
+    private readonly MediaSourceCoordinator _coordinator;
+    private readonly MediaPlatformProviderResolver _platformProviderResolver;
     private readonly Func<PluginSettings> _settingsFactory;
     private readonly ILoggerFactory? _loggerFactory;
     private readonly ILogger<MediaLinkHostedService>? _logger;
@@ -26,12 +28,21 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     public MediaLinkHostedService(
         IMediaService mediaService,
         LyricsSearchService lyricsSearchService,
+        MediaLinkInjectionStore injectionStore,
+        MediaSourceCoordinator coordinator,
+        MediaPlatformProviderResolver platformProviderResolver,
         Func<PluginSettings> settingsFactory,
         ILoggerFactory? loggerFactory = null)
     {
-        _mediaService = mediaService;
-        _lyricsSearchService = lyricsSearchService;
-        _settingsFactory = settingsFactory;
+        // mediaService/lyricsSearchService retained in signature for DI call sites / future use;
+        // push path is exclusively via coordinator.
+        _ = mediaService ?? throw new ArgumentNullException(nameof(mediaService));
+        _ = lyricsSearchService ?? throw new ArgumentNullException(nameof(lyricsSearchService));
+        _injectionStore = injectionStore ?? throw new ArgumentNullException(nameof(injectionStore));
+        _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
+        _platformProviderResolver = platformProviderResolver
+            ?? throw new ArgumentNullException(nameof(platformProviderResolver));
+        _settingsFactory = settingsFactory ?? throw new ArgumentNullException(nameof(settingsFactory));
         _loggerFactory = loggerFactory;
         _logger = loggerFactory?.CreateLogger<MediaLinkHostedService>();
     }
@@ -123,8 +134,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
             _hub = new MediaLinkSessionHub();
             _publisher = new MediaLinkStatePublisher(
-                _mediaService,
-                _lyricsSearchService,
+                _coordinator,
                 _hub,
                 () => settings.MediaLinkTimelineMinIntervalMs,
                 logger: _loggerFactory?.CreateLogger<MediaLinkStatePublisher>());
@@ -134,7 +144,31 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                 _hub,
                 session => _publisher.PublishSnapshotAsync(session),
                 () => settings.MediaLinkToken,
-                _loggerFactory?.CreateLogger<MediaLinkServer>());
+                injectionStore: _injectionStore,
+                coordinator: _coordinator,
+                playbackControllerAccessor: () =>
+                {
+                    try
+                    {
+                        return _platformProviderResolver.Resolve().PlaybackController;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogDebug(ex, "MediaLink PlaybackController resolve failed");
+                        return null;
+                    }
+                },
+                onEffectiveMediaMutatedAsync: kind =>
+                {
+                    _coordinator.Recompute(kind);
+                    return Task.CompletedTask;
+                },
+                onEffectiveLyricsMutatedAsync: () =>
+                {
+                    _coordinator.Recompute(MediaInfoChangeKind.CurrentSession);
+                    return Task.CompletedTask;
+                },
+                logger: _loggerFactory?.CreateLogger<MediaLinkServer>());
 
             await _server.StartAsync(settings.MediaLinkListenAddress, settings.MediaLinkPort, cancellationToken);
             LastError = null;
