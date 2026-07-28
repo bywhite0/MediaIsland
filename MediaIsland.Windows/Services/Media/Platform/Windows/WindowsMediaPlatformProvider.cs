@@ -13,4 +13,7 @@ public sealed class WindowsMediaPlatformProvider(
     public IMediaSessionProvider SessionProvider => sessionProvider;
 
     public IMediaSourceInfoProvider SourceInfoProvider => sourceInfoProvider;
+
+    // Placeholder until Task 3 wires WindowsSmtcMediaPlaybackController.
+    public IMediaPlaybackController? PlaybackController => null;
 }
