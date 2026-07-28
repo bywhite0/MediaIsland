@@ -3,6 +3,7 @@ using System.Net.Security;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Security.Authentication;
+using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using MediaIsland.Services.MediaLink.Protocol;
@@ -12,7 +13,6 @@ namespace MediaIsland.Services.MediaLink;
 
 public sealed class MediaLinkServer : IAsyncDisposable
 {
-    private readonly MediaLinkCertificateStore _certificateStore;
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<MediaLinkSession, Task> _onSubscribedAsync;
     private readonly Func<string> _tokenFactory;
@@ -22,15 +22,14 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private Task? _acceptLoop;
     private readonly List<Task> _sessionTasks = [];
     private readonly object _gate = new();
+    private X509Certificate2? _ephemeralCertificate;
 
     public MediaLinkServer(
-        MediaLinkCertificateStore certificateStore,
         MediaLinkSessionHub hub,
         Func<MediaLinkSession, Task> onSubscribedAsync,
         Func<string> tokenFactory,
         ILogger<MediaLinkServer>? logger = null)
     {
-        _certificateStore = certificateStore;
         _hub = hub;
         _onSubscribedAsync = onSubscribedAsync;
         _tokenFactory = tokenFactory;
@@ -54,7 +53,10 @@ public sealed class MediaLinkServer : IAsyncDisposable
             throw new InvalidOperationException(LastError);
         }
 
-        var certificate = _certificateStore.EnsureCertificate();
+        // Task 5 owns plain-ws rewrite. Keep ephemeral TLS only so accept loop still compiles/runs
+        // without MediaLinkCertificateStore.
+        var certificate = CreateEphemeralCertificate();
+        _ephemeralCertificate = certificate;
         if (!IPAddress.TryParse(listenAddress, out var address))
         {
             LastError = $"无法解析监听地址：{listenAddress}";
@@ -103,6 +105,8 @@ public sealed class MediaLinkServer : IAsyncDisposable
         await _hub.DisposeAllAsync();
         _acceptCts?.Dispose();
         _acceptCts = null;
+        _ephemeralCertificate?.Dispose();
+        _ephemeralCertificate = null;
     }
 
     private async Task AcceptLoopAsync(X509Certificate2 certificate, string token, CancellationToken cancellationToken)
@@ -264,6 +268,24 @@ public sealed class MediaLinkServer : IAsyncDisposable
         var bytes = Encoding.ASCII.GetBytes(response);
         await stream.WriteAsync(bytes, cancellationToken);
         return true;
+    }
+
+    private static X509Certificate2 CreateEphemeralCertificate()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest(
+            "CN=MediaIsland-MediaLink-Ephemeral",
+            rsa,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        var notBefore = DateTimeOffset.UtcNow.AddDays(-1);
+        var notAfter = notBefore.AddYears(1);
+        using var created = request.CreateSelfSigned(notBefore, notAfter);
+        // Export/reimport so the private key stays usable with SslStream after disposing RSA.
+        var pfx = created.Export(X509ContentType.Pfx);
+#pragma warning disable SYSLIB0057
+        return new X509Certificate2(pfx, (string?)null, X509KeyStorageFlags.Exportable | X509KeyStorageFlags.EphemeralKeySet);
+#pragma warning restore SYSLIB0057
     }
 
     private static string FormatHost(IPAddress address) =>

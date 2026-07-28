@@ -16,7 +16,6 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     private readonly ILogger<MediaLinkHostedService>? _logger;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
 
-    private MediaLinkCertificateStore? _certificateStore;
     private MediaLinkSessionHub? _hub;
     private MediaLinkStatePublisher? _publisher;
     private MediaLinkServer? _server;
@@ -42,9 +41,8 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
     public string? Endpoint => _server?.Endpoint;
 
-    public string? CertFingerprint => _certificateStore is null
-        ? null
-        : SafeFingerprint();
+    // Certificate store removed; fingerprint UI residual until Task 5/settings rewrite.
+    public string? CertFingerprint => null;
 
     public string? LastError { get; private set; }
 
@@ -127,8 +125,9 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                 settings.RealtimeToken = MediaLinkAuth.GenerateToken();
             }
 
-            var realtimeDir = Path.Combine(_configFolderFactory(), "realtime");
-            _certificateStore = new MediaLinkCertificateStore(realtimeDir);
+            // configFolder retained for future MediaLink data dir; cert store path removed.
+            _ = _configFolderFactory();
+
             _hub = new MediaLinkSessionHub();
             _publisher = new MediaLinkStatePublisher(
                 _mediaService,
@@ -139,7 +138,6 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             _publisher.Start();
 
             _server = new MediaLinkServer(
-                _certificateStore,
                 _hub,
                 session => _publisher.PublishSnapshotAsync(session),
                 () => settings.RealtimeToken,
@@ -172,20 +170,6 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         _publisher?.Dispose();
         _publisher = null;
         _hub = null;
-        _certificateStore = null;
-    }
-
-    private string? SafeFingerprint()
-    {
-        try
-        {
-            _certificateStore?.EnsureCertificate();
-            return _certificateStore?.CertFingerprint;
-        }
-        catch
-        {
-            return null;
-        }
     }
 
     public void Dispose()
