@@ -22,7 +22,7 @@ public sealed class LyricsSearchService
     private readonly IReadOnlyList<ILyricsProvider> _providers;
     private readonly IReadOnlyList<ILyricsPayloadParser> _parsers;
     private readonly Func<LyricsSourceSettings> _settingsFactory;
-    private readonly SPlayerNextLyricsClient? _sPlayerNextLyricsClient;
+    private readonly ISPlayerNextLyricsClient? _sPlayerNextLyricsClient;
     private readonly ILogger<LyricsSearchService>? _logger;
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CandidateCacheEntry> _candidateCache = new(StringComparer.OrdinalIgnoreCase);
@@ -56,7 +56,7 @@ public sealed class LyricsSearchService
         IEnumerable<ILyricsPayloadParser> parsers,
         Func<LyricsSourceSettings> settingsFactory,
         ILogger<LyricsSearchService>? logger = null,
-        SPlayerNextLyricsClient? sPlayerNextLyricsClient = null)
+        ISPlayerNextLyricsClient? sPlayerNextLyricsClient = null)
     {
         _providers = providers.ToArray();
         _parsers = parsers.ToArray();

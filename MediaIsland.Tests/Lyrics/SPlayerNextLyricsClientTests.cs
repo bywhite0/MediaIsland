@@ -339,11 +339,11 @@ public class SPlayerNextLyricsSearchIntegrationTests
             LyricsSourceId.SPlayerNext);
     }
 
-    private sealed class FixedSPlayerNextLyricsClient(LyricsSearchResult? result) : SPlayerNextLyricsClient
+    private sealed class FixedSPlayerNextLyricsClient(LyricsSearchResult? result) : ISPlayerNextLyricsClient
     {
         public int CallCount { get; private set; }
 
-        public override Task<LyricsSearchResult?> TryFetchAsync(
+        public Task<LyricsSearchResult?> TryFetchAsync(
             MediaInfo media,
             LyricsSourceSettings settings,
             CancellationToken cancellationToken)

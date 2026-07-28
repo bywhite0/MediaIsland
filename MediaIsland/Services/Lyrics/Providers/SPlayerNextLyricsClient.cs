@@ -9,8 +9,24 @@ namespace MediaIsland.Services.Lyrics.Providers;
 /// <summary>
 /// 从 SPlayer-Next 外部 API 读取当前曲目已解析歌词。
 /// </summary>
-public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? logger = null)
+public interface ISPlayerNextLyricsClient
 {
+    Task<LyricsSearchResult?> TryFetchAsync(
+        MediaInfo media,
+        LyricsSourceSettings settings,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// 从 SPlayer-Next 外部 API 读取当前曲目已解析歌词。
+/// 切歌后 API 可能短暂无歌词，因此对可恢复失败做有限次重试。
+/// </summary>
+public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? logger = null)
+    : ISPlayerNextLyricsClient
+{
+    private const int MaxFetchAttempts = 5;
+    private static readonly TimeSpan FetchRetryDelay = TimeSpan.FromSeconds(1);
+
     private static readonly HttpClient HttpClient = LyricsHttp.CreateClient("splayer-next");
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -33,6 +49,40 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
             return null;
         }
 
+        for (var attempt = 1; attempt <= MaxFetchAttempts; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var result = await TryFetchOnceAsync(media, baseUrl, cancellationToken).ConfigureAwait(false);
+            if (result != null)
+            {
+                return result;
+            }
+
+            if (attempt >= MaxFetchAttempts)
+            {
+                break;
+            }
+
+            logger?.LogInformation(
+                "[歌词:SPlayerNext] 第 {Attempt}/{MaxAttempts} 次未获取到可用歌词，{DelaySeconds} 秒后重试。",
+                attempt,
+                MaxFetchAttempts,
+                FetchRetryDelay.TotalSeconds);
+            await Task.Delay(FetchRetryDelay, cancellationToken).ConfigureAwait(false);
+        }
+
+        logger?.LogInformation(
+            "[歌词:SPlayerNext] 已尝试 {MaxAttempts} 次仍无可用歌词。",
+            MaxFetchAttempts);
+        return null;
+    }
+
+    private async Task<LyricsSearchResult?> TryFetchOnceAsync(
+        MediaInfo media,
+        string baseUrl,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var lyricsUrl = $"{baseUrl}/api/lyrics";

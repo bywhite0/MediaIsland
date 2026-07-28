@@ -45,7 +45,7 @@ namespace MediaIsland
             services.AddSingleton<ILyricsProvider, QqMusicLyricsProvider>();
             services.AddSingleton<ILyricsProvider, KugouLyricsProvider>();
             services.AddSingleton<ILyricsProvider, NeteaseLyricsProvider>();
-            services.AddSingleton<SPlayerNextLyricsClient>();
+            services.AddSingleton<ISPlayerNextLyricsClient, SPlayerNextLyricsClient>();
             services.AddSingleton<ILyricsPayloadParser, ManagedLyricsPayloadParser>();
             services.AddSingleton<ILyricsPayloadParser, TtmlLyricsPayloadParser>();
             services.AddSingleton<LyricsSearchService>(provider => new LyricsSearchService(
@@ -53,7 +53,7 @@ namespace MediaIsland
                 provider.GetServices<ILyricsPayloadParser>(),
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings.Lyrics,
                 provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsSearchService>>(),
-                provider.GetRequiredService<SPlayerNextLyricsClient>()));
+                provider.GetRequiredService<ISPlayerNextLyricsClient>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
