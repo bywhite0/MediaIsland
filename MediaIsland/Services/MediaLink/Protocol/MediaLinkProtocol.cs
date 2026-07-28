@@ -15,6 +15,11 @@ public static class MediaLinkProtocol
     public const string TypePing = "ping";
     public const string TypePong = "pong";
     public const string TypeError = "error";
+    public const string TypeOk = "ok";
+    public const string TypeMediaInject = "media.inject";
+    public const string TypeLyricsInject = "lyrics.inject";
+    public const string TypeMediaClearInject = "media.clear_inject";
+    public const string TypePlaybackCommand = "playback.command";
 
     public const string EventMediaUpdated = "media.updated";
     public const string EventLyricsUpdated = "lyrics.updated";
@@ -29,6 +34,8 @@ public static class MediaLinkProtocol
     public const string ErrorInternal = "internal";
     public const string ErrorRateLimited = "rate_limited";
     public const string ErrorNotImplemented = "not_implemented";
+    public const string ErrorNotSupported = "not_supported";
+    public const string ErrorNoSession = "no_session";
 
     public static readonly HashSet<string> KnownChannels = new(StringComparer.Ordinal)
     {

@@ -203,3 +203,48 @@ public sealed class MediaLinkServerHelloPayload
     [JsonPropertyName("authRequired")]
     public bool AuthRequired { get; set; } = true;
 }
+
+public sealed class MediaLinkOkPayload
+{
+    [JsonPropertyName("for")]
+    public string For { get; set; } = string.Empty;
+}
+
+public sealed class MediaLinkMediaInjectPayload
+{
+    [JsonPropertyName("sourceApp")]
+    public string? SourceApp { get; set; }
+
+    [JsonPropertyName("title")]
+    public string? Title { get; set; }
+
+    [JsonPropertyName("artist")]
+    public string? Artist { get; set; }
+
+    [JsonPropertyName("albumTitle")]
+    public string? AlbumTitle { get; set; }
+
+    [JsonPropertyName("positionMs")]
+    public long PositionMs { get; set; }
+
+    [JsonPropertyName("durationMs")]
+    public long DurationMs { get; set; }
+
+    [JsonPropertyName("playbackState")]
+    public string? PlaybackState { get; set; }
+
+    [JsonPropertyName("playbackRate")]
+    public double? PlaybackRate { get; set; }
+}
+
+public sealed class MediaLinkClearInjectPayload
+{
+    [JsonPropertyName("channels")]
+    public List<string>? Channels { get; set; }
+}
+
+public sealed class MediaLinkPlaybackCommandPayload
+{
+    [JsonPropertyName("action")]
+    public string? Action { get; set; }
+}
