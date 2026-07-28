@@ -1,6 +1,6 @@
-namespace MediaIsland.Services.Realtime;
+namespace MediaIsland.Services.MediaLink;
 
-public interface IRealtimeGateway
+public interface IMediaLinkGateway
 {
     bool IsRunning { get; }
 

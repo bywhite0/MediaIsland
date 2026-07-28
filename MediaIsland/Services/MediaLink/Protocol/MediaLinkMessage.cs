@@ -1,12 +1,12 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace MediaIsland.Services.Realtime.Protocol;
+namespace MediaIsland.Services.MediaLink.Protocol;
 
-public sealed class RealtimeMessage
+public sealed class MediaLinkMessage
 {
     [JsonPropertyName("v")]
-    public int V { get; set; } = RealtimeProtocol.Version;
+    public int V { get; set; } = MediaLinkProtocol.Version;
 
     [JsonPropertyName("type")]
     public string Type { get; set; } = string.Empty;
@@ -27,7 +27,7 @@ public sealed class RealtimeMessage
     public JsonElement? Payload { get; set; }
 }
 
-public sealed class RealtimeMediaDto
+public sealed class MediaLinkMediaDto
 {
     [JsonPropertyName("changeKind")]
     public string ChangeKind { get; set; } = string.Empty;
@@ -60,7 +60,7 @@ public sealed class RealtimeMediaDto
     public bool HasThumbnail { get; set; }
 }
 
-public sealed class RealtimeLyricsDto
+public sealed class MediaLinkLyricsDto
 {
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
@@ -81,10 +81,10 @@ public sealed class RealtimeLyricsDto
     public string Source { get; set; } = string.Empty;
 
     [JsonPropertyName("document")]
-    public RealtimeLyricsDocumentDto? Document { get; set; }
+    public MediaLinkLyricsDocumentDto? Document { get; set; }
 }
 
-public sealed class RealtimeLyricsDocumentDto
+public sealed class MediaLinkLyricsDocumentDto
 {
     [JsonPropertyName("format")]
     public string Format { get; set; } = string.Empty;
@@ -99,13 +99,13 @@ public sealed class RealtimeLyricsDocumentDto
     public string Source { get; set; } = string.Empty;
 
     [JsonPropertyName("metadata")]
-    public RealtimeLyricsMetadataDto Metadata { get; set; } = new();
+    public MediaLinkLyricsMetadataDto Metadata { get; set; } = new();
 
     [JsonPropertyName("lines")]
-    public List<RealtimeLyricsLineDto> Lines { get; set; } = [];
+    public List<MediaLinkLyricsLineDto> Lines { get; set; } = [];
 }
 
-public sealed class RealtimeLyricsMetadataDto
+public sealed class MediaLinkLyricsMetadataDto
 {
     [JsonPropertyName("title")]
     public string? Title { get; set; }
@@ -120,7 +120,7 @@ public sealed class RealtimeLyricsMetadataDto
     public long? DurationMs { get; set; }
 }
 
-public sealed class RealtimeLyricsLineDto
+public sealed class MediaLinkLyricsLineDto
 {
     [JsonPropertyName("startMs")]
     public long StartMs { get; set; }
@@ -144,13 +144,13 @@ public sealed class RealtimeLyricsLineDto
     public bool IsDuet { get; set; }
 
     [JsonPropertyName("words")]
-    public List<RealtimeLyricsWordDto> Words { get; set; } = [];
+    public List<MediaLinkLyricsWordDto> Words { get; set; } = [];
 
     [JsonPropertyName("rubySpans")]
-    public List<RealtimeLyricsRubySpanDto> RubySpans { get; set; } = [];
+    public List<MediaLinkLyricsRubySpanDto> RubySpans { get; set; } = [];
 }
 
-public sealed class RealtimeLyricsWordDto
+public sealed class MediaLinkLyricsWordDto
 {
     [JsonPropertyName("startMs")]
     public long StartMs { get; set; }
@@ -162,7 +162,7 @@ public sealed class RealtimeLyricsWordDto
     public string Text { get; set; } = string.Empty;
 }
 
-public sealed class RealtimeLyricsRubySpanDto
+public sealed class MediaLinkLyricsRubySpanDto
 {
     [JsonPropertyName("baseStart")]
     public int BaseStart { get; set; }
@@ -174,19 +174,19 @@ public sealed class RealtimeLyricsRubySpanDto
     public string Reading { get; set; } = string.Empty;
 }
 
-public sealed class RealtimeAuthPayload
+public sealed class MediaLinkAuthPayload
 {
     [JsonPropertyName("token")]
     public string? Token { get; set; }
 }
 
-public sealed class RealtimeSubscribePayload
+public sealed class MediaLinkSubscribePayload
 {
     [JsonPropertyName("channels")]
     public List<string> Channels { get; set; } = [];
 }
 
-public sealed class RealtimeErrorPayload
+public sealed class MediaLinkErrorPayload
 {
     [JsonPropertyName("code")]
     public string Code { get; set; } = string.Empty;
@@ -195,14 +195,11 @@ public sealed class RealtimeErrorPayload
     public string? Message { get; set; }
 }
 
-public sealed class RealtimeServerHelloPayload
+public sealed class MediaLinkServerHelloPayload
 {
     [JsonPropertyName("protocolVersion")]
-    public int ProtocolVersion { get; set; } = RealtimeProtocol.Version;
+    public int ProtocolVersion { get; set; } = MediaLinkProtocol.Version;
 
     [JsonPropertyName("authRequired")]
     public bool AuthRequired { get; set; } = true;
-
-    [JsonPropertyName("certFingerprintShort")]
-    public string? CertFingerprintShort { get; set; }
 }

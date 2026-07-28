@@ -1,9 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace MediaIsland.Services.Realtime.Protocol;
+namespace MediaIsland.Services.MediaLink.Protocol;
 
-public static class RealtimeMessageSerializer
+public static class MediaLinkMessageSerializer
 {
     public static readonly JsonSerializerOptions Options = new()
     {
@@ -13,17 +13,17 @@ public static class RealtimeMessageSerializer
         WriteIndented = false
     };
 
-    public static string Serialize(RealtimeMessage message) =>
+    public static string Serialize(MediaLinkMessage message) =>
         JsonSerializer.Serialize(message, Options);
 
     public static string SerializePayload<T>(T payload) =>
         JsonSerializer.Serialize(payload, Options);
 
-    public static RealtimeMessage? Deserialize(string json) =>
-        JsonSerializer.Deserialize<RealtimeMessage>(json, Options);
+    public static MediaLinkMessage? Deserialize(string json) =>
+        JsonSerializer.Deserialize<MediaLinkMessage>(json, Options);
 
-    public static RealtimeMessage? Deserialize(ReadOnlySpan<byte> utf8Json) =>
-        JsonSerializer.Deserialize<RealtimeMessage>(utf8Json, Options);
+    public static MediaLinkMessage? Deserialize(ReadOnlySpan<byte> utf8Json) =>
+        JsonSerializer.Deserialize<MediaLinkMessage>(utf8Json, Options);
 
     public static T? DeserializePayload<T>(JsonElement? payload)
     {
@@ -46,7 +46,7 @@ public static class RealtimeMessageSerializer
         return document.RootElement.Clone();
     }
 
-    public static RealtimeMessage Create(
+    public static MediaLinkMessage Create(
         string type,
         object? payload = null,
         string? id = null,
@@ -54,7 +54,7 @@ public static class RealtimeMessageSerializer
         long? ts = null) =>
         new()
         {
-            V = RealtimeProtocol.Version,
+            V = MediaLinkProtocol.Version,
             Type = type,
             Id = id,
             Name = name,

@@ -1,20 +1,20 @@
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
-using MediaIsland.Services.Realtime.Protocol;
+using MediaIsland.Services.MediaLink.Protocol;
 
-namespace MediaIsland.Services.Realtime.Mapping;
+namespace MediaIsland.Services.MediaLink.Mapping;
 
-public static class RealtimeDtoMapper
+public static class MediaLinkDtoMapper
 {
-    public static RealtimeMediaDto? ToMediaDto(MediaInfo? media, MediaInfoChangeKind changeKind)
+    public static MediaLinkMediaDto? ToMediaDto(MediaInfo? media, MediaInfoChangeKind changeKind)
     {
         if (media is null)
         {
             return null;
         }
 
-        return new RealtimeMediaDto
+        return new MediaLinkMediaDto
         {
             ChangeKind = changeKind.ToString(),
             SourceApp = media.SourceApp,
@@ -29,14 +29,14 @@ public static class RealtimeDtoMapper
         };
     }
 
-    public static RealtimeLyricsDto? ToLyricsDto(LyricsSearchResult? result)
+    public static MediaLinkLyricsDto? ToLyricsDto(LyricsSearchResult? result)
     {
         if (result is null)
         {
             return null;
         }
 
-        return new RealtimeLyricsDto
+        return new MediaLinkLyricsDto
         {
             Id = result.Id,
             Title = result.Title,
@@ -48,14 +48,14 @@ public static class RealtimeDtoMapper
         };
     }
 
-    public static RealtimeLyricsDocumentDto ToDocumentDto(LyricsDocument document) =>
+    public static MediaLinkLyricsDocumentDto ToDocumentDto(LyricsDocument document) =>
         new()
         {
             Format = document.Format.ToString(),
             SyncMode = document.SyncMode.ToString(),
             ProviderItemId = document.ProviderItemId,
             Source = document.Source.ToString(),
-            Metadata = new RealtimeLyricsMetadataDto
+            Metadata = new MediaLinkLyricsMetadataDto
             {
                 Title = document.Metadata.Title,
                 Artist = document.Metadata.Artist,
@@ -67,7 +67,7 @@ public static class RealtimeDtoMapper
             Lines = document.Lines.Select(ToLineDto).ToList()
         };
 
-    private static RealtimeLyricsLineDto ToLineDto(LyricsLine line) =>
+    private static MediaLinkLyricsLineDto ToLineDto(LyricsLine line) =>
         new()
         {
             StartMs = ToMilliseconds(line.StartTime),
@@ -77,14 +77,14 @@ public static class RealtimeDtoMapper
             Romanization = line.Romanization,
             IsBackground = line.IsBackground,
             IsDuet = line.IsDuet,
-            Words = line.Words.Select(word => new RealtimeLyricsWordDto
+            Words = line.Words.Select(word => new MediaLinkLyricsWordDto
             {
                 StartMs = ToMilliseconds(word.StartTime),
                 EndMs = ToMilliseconds(word.EndTime),
                 Text = word.Text
             }).ToList(),
             RubySpans = (line.RubySpans ?? [])
-                .Select(ruby => new RealtimeLyricsRubySpanDto
+                .Select(ruby => new MediaLinkLyricsRubySpanDto
                 {
                     BaseStart = ruby.BaseStart,
                     BaseLength = ruby.BaseLength,

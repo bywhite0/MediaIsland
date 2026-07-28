@@ -1,19 +1,19 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 
-namespace MediaIsland.Services.Realtime;
+namespace MediaIsland.Services.MediaLink;
 
-public sealed class RealtimeCertificateStore
+public sealed class MediaLinkCertificateStore
 {
     // Application-fixed entropy for PKCS#12 export (KISS; file lives under user plugin config).
-    private const string PfxPassword = "MediaIsland.Realtime.Pfx.v1";
+    private const string PfxPassword = "MediaIsland.MediaLink.Pfx.v1";
 
     private readonly string _directory;
     private readonly string _pfxPath;
     private X509Certificate2? _certificate;
     private string? _fingerprint;
 
-    public RealtimeCertificateStore(string dataDirectory)
+    public MediaLinkCertificateStore(string dataDirectory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dataDirectory);
         _directory = dataDirectory;
@@ -69,7 +69,7 @@ public sealed class RealtimeCertificateStore
     {
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest(
-            "CN=MediaIsland-Realtime",
+            "CN=MediaIsland-MediaLink",
             rsa,
             HashAlgorithmName.SHA256,
             RSASignaturePadding.Pkcs1);

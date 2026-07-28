@@ -2,12 +2,12 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using MediaIsland.Services.Realtime.Protocol;
+using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
 
-namespace MediaIsland.Services.Realtime;
+namespace MediaIsland.Services.MediaLink;
 
-public interface IRealtimeSocket
+public interface IMediaLinkSocket
 {
     WebSocketState State { get; }
 
@@ -18,7 +18,7 @@ public interface IRealtimeSocket
     Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken);
 }
 
-public sealed class WebSocketRealtimeSocket(WebSocket webSocket) : IRealtimeSocket
+public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSocket
 {
     private readonly byte[] _buffer = new byte[64 * 1024];
 
@@ -58,26 +58,26 @@ public sealed class WebSocketRealtimeSocket(WebSocket webSocket) : IRealtimeSock
         webSocket.CloseAsync(status, description, cancellationToken);
 }
 
-public sealed class RealtimeSessionOptions
+public sealed class MediaLinkSessionOptions
 {
     public required string ExpectedToken { get; init; }
 
     public TimeSpan AuthTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
-    public Func<RealtimeSession, Task>? OnSubscribedAsync { get; init; }
+    public Func<MediaLinkSession, Task>? OnSubscribedAsync { get; init; }
 }
 
-public sealed class RealtimeSession : IAsyncDisposable
+public sealed class MediaLinkSession : IAsyncDisposable
 {
-    private readonly IRealtimeSocket _socket;
-    private readonly RealtimeSessionOptions _options;
+    private readonly IMediaLinkSocket _socket;
+    private readonly MediaLinkSessionOptions _options;
     private readonly ILogger? _logger;
     private readonly object _gate = new();
     private readonly HashSet<string> _channels = new(StringComparer.Ordinal);
     private bool _authenticated;
     private bool _closed;
 
-    public RealtimeSession(IRealtimeSocket socket, RealtimeSessionOptions options, ILogger? logger = null)
+    public MediaLinkSession(IMediaLinkSocket socket, MediaLinkSessionOptions options, ILogger? logger = null)
     {
         _socket = socket;
         _options = options;
@@ -119,7 +119,7 @@ public sealed class RealtimeSession : IAsyncDisposable
                 }
                 catch (OperationCanceledException) when (!_authenticated && !cancellationToken.IsCancellationRequested)
                 {
-                    await SendErrorAsync(null, RealtimeProtocol.ErrorUnauthorized, "auth timeout", cancellationToken);
+                    await SendErrorAsync(null, MediaLinkProtocol.ErrorUnauthorized, "auth timeout", cancellationToken);
                     await CloseAsync(WebSocketCloseStatus.PolicyViolation, "auth timeout", cancellationToken);
                     return;
                 }
@@ -134,7 +134,7 @@ public sealed class RealtimeSession : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger?.LogDebug(ex, "Realtime session ended with error.");
+            _logger?.LogDebug(ex, "MediaLink session ended with error.");
         }
         finally
         {
@@ -144,88 +144,88 @@ public sealed class RealtimeSession : IAsyncDisposable
 
     public async Task HandleMessageAsync(string text, CancellationToken cancellationToken)
     {
-        RealtimeMessage? message;
+        MediaLinkMessage? message;
         try
         {
-            message = RealtimeMessageSerializer.Deserialize(text);
+            message = MediaLinkMessageSerializer.Deserialize(text);
         }
         catch (JsonException)
         {
-            await SendErrorAsync(null, RealtimeProtocol.ErrorProtocolError, "invalid json", cancellationToken);
+            await SendErrorAsync(null, MediaLinkProtocol.ErrorProtocolError, "invalid json", cancellationToken);
             return;
         }
 
         if (message is null || string.IsNullOrWhiteSpace(message.Type))
         {
-            await SendErrorAsync(null, RealtimeProtocol.ErrorBadRequest, "missing type", cancellationToken);
+            await SendErrorAsync(null, MediaLinkProtocol.ErrorBadRequest, "missing type", cancellationToken);
             return;
         }
 
         switch (message.Type)
         {
-            case RealtimeProtocol.TypeAuth:
+            case MediaLinkProtocol.TypeAuth:
                 await HandleAuthAsync(message, cancellationToken);
                 break;
-            case RealtimeProtocol.TypeSubscribe:
+            case MediaLinkProtocol.TypeSubscribe:
                 await HandleSubscribeAsync(message, cancellationToken);
                 break;
-            case RealtimeProtocol.TypePing:
-                await SendAsync(RealtimeMessageSerializer.Create(
-                    RealtimeProtocol.TypePong,
+            case MediaLinkProtocol.TypePing:
+                await SendAsync(MediaLinkMessageSerializer.Create(
+                    MediaLinkProtocol.TypePong,
                     id: message.Id,
                     ts: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), cancellationToken);
                 break;
-            case RealtimeProtocol.TypeHello:
+            case MediaLinkProtocol.TypeHello:
                 // ignore client hello
                 break;
             case "media.inject":
             case "lyrics.inject":
             case "media.clear_inject":
             case "playback.command":
-                await SendErrorAsync(message.Id, RealtimeProtocol.ErrorNotImplemented, message.Type, cancellationToken);
+                await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorNotImplemented, message.Type, cancellationToken);
                 break;
             default:
                 if (!_authenticated)
                 {
-                    await SendErrorAsync(message.Id, RealtimeProtocol.ErrorUnauthorized, "authenticate first", cancellationToken);
+                    await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorUnauthorized, "authenticate first", cancellationToken);
                     await CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized", cancellationToken);
                     return;
                 }
 
-                await SendErrorAsync(message.Id, RealtimeProtocol.ErrorBadRequest, $"unknown type: {message.Type}", cancellationToken);
+                await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, $"unknown type: {message.Type}", cancellationToken);
                 break;
         }
     }
 
     public Task SendEventAsync(string eventName, object? payload, CancellationToken cancellationToken = default) =>
-        SendAsync(RealtimeMessageSerializer.Create(
-            RealtimeProtocol.TypeEvent,
+        SendAsync(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeEvent,
             payload,
             name: eventName,
             ts: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), cancellationToken);
 
-    public async Task SendAsync(RealtimeMessage message, CancellationToken cancellationToken = default)
+    public async Task SendAsync(MediaLinkMessage message, CancellationToken cancellationToken = default)
     {
         if (_closed || _socket.State != WebSocketState.Open)
         {
             return;
         }
 
-        var json = RealtimeMessageSerializer.Serialize(message);
+        var json = MediaLinkMessageSerializer.Serialize(message);
         await _socket.SendTextAsync(json, cancellationToken);
     }
 
-    private async Task HandleAuthAsync(RealtimeMessage message, CancellationToken cancellationToken)
+    private async Task HandleAuthAsync(MediaLinkMessage message, CancellationToken cancellationToken)
     {
-        var payload = RealtimeMessageSerializer.DeserializePayload<RealtimeAuthPayload>(message.Payload);
-        var ok = RealtimeAuth.ValidateToken(_options.ExpectedToken, payload?.Token);
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkAuthPayload>(message.Payload);
+        var ok = MediaLinkAuth.ValidateToken(_options.ExpectedToken, payload?.Token);
         if (!ok)
         {
-            await SendAsync(RealtimeMessageSerializer.Create(
-                RealtimeProtocol.TypeAuthFail,
-                new RealtimeErrorPayload
+            await SendAsync(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeAuthFail,
+                new MediaLinkErrorPayload
                 {
-                    Code = RealtimeProtocol.ErrorUnauthorized,
+                    Code = MediaLinkProtocol.ErrorUnauthorized,
                     Message = "invalid token"
                 },
                 id: message.Id), cancellationToken);
@@ -238,28 +238,28 @@ public sealed class RealtimeSession : IAsyncDisposable
             _authenticated = true;
         }
 
-        await SendAsync(RealtimeMessageSerializer.Create(RealtimeProtocol.TypeAuthOk, id: message.Id), cancellationToken);
+        await SendAsync(MediaLinkMessageSerializer.Create(MediaLinkProtocol.TypeAuthOk, id: message.Id), cancellationToken);
     }
 
-    private async Task HandleSubscribeAsync(RealtimeMessage message, CancellationToken cancellationToken)
+    private async Task HandleSubscribeAsync(MediaLinkMessage message, CancellationToken cancellationToken)
     {
         if (!IsAuthenticated)
         {
-            await SendErrorAsync(message.Id, RealtimeProtocol.ErrorUnauthorized, "authenticate first", cancellationToken);
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorUnauthorized, "authenticate first", cancellationToken);
             await CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized", cancellationToken);
             return;
         }
 
-        var payload = RealtimeMessageSerializer.DeserializePayload<RealtimeSubscribePayload>(message.Payload);
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkSubscribePayload>(message.Payload);
         var requested = (payload?.Channels ?? [])
             .Where(channel => !string.IsNullOrWhiteSpace(channel))
             .Select(channel => channel.Trim())
             .Distinct(StringComparer.Ordinal)
             .ToArray();
 
-        if (requested.Length == 0 || requested.Any(channel => !RealtimeProtocol.KnownChannels.Contains(channel)))
+        if (requested.Length == 0 || requested.Any(channel => !MediaLinkProtocol.KnownChannels.Contains(channel)))
         {
-            await SendErrorAsync(message.Id, RealtimeProtocol.ErrorBadRequest, "invalid channels", cancellationToken);
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, "invalid channels", cancellationToken);
             return;
         }
 
@@ -272,9 +272,9 @@ public sealed class RealtimeSession : IAsyncDisposable
             }
         }
 
-        await SendAsync(RealtimeMessageSerializer.Create(
-            RealtimeProtocol.TypeSubscribeOk,
-            new RealtimeSubscribePayload { Channels = requested.ToList() },
+        await SendAsync(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeSubscribeOk,
+            new MediaLinkSubscribePayload { Channels = requested.ToList() },
             id: message.Id), cancellationToken);
 
         if (_options.OnSubscribedAsync is not null)
@@ -284,9 +284,9 @@ public sealed class RealtimeSession : IAsyncDisposable
     }
 
     private Task SendErrorAsync(string? id, string code, string message, CancellationToken cancellationToken) =>
-        SendAsync(RealtimeMessageSerializer.Create(
-            RealtimeProtocol.TypeError,
-            new RealtimeErrorPayload { Code = code, Message = message },
+        SendAsync(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeError,
+            new MediaLinkErrorPayload { Code = code, Message = message },
             id: id), cancellationToken);
 
     private async Task CloseAsync(WebSocketCloseStatus status, string description, CancellationToken cancellationToken)
@@ -312,15 +312,15 @@ public sealed class RealtimeSession : IAsyncDisposable
     }
 }
 
-public sealed class RealtimeSessionHub
+public sealed class MediaLinkSessionHub
 {
-    private readonly ConcurrentDictionary<RealtimeSession, byte> _sessions = new();
+    private readonly ConcurrentDictionary<MediaLinkSession, byte> _sessions = new();
 
-    public void Add(RealtimeSession session) => _sessions[session] = 0;
+    public void Add(MediaLinkSession session) => _sessions[session] = 0;
 
-    public void Remove(RealtimeSession session) => _sessions.TryRemove(session, out _);
+    public void Remove(MediaLinkSession session) => _sessions.TryRemove(session, out _);
 
-    public IReadOnlyCollection<RealtimeSession> Sessions => _sessions.Keys.ToArray();
+    public IReadOnlyCollection<MediaLinkSession> Sessions => _sessions.Keys.ToArray();
 
     public async Task BroadcastEventAsync(string channel, string eventName, object? payload, CancellationToken cancellationToken = default)
     {

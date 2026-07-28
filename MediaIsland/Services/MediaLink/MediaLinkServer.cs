@@ -5,30 +5,30 @@ using System.Net.WebSockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
-using MediaIsland.Services.Realtime.Protocol;
+using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
 
-namespace MediaIsland.Services.Realtime;
+namespace MediaIsland.Services.MediaLink;
 
-public sealed class RealtimeServer : IAsyncDisposable
+public sealed class MediaLinkServer : IAsyncDisposable
 {
-    private readonly RealtimeCertificateStore _certificateStore;
-    private readonly RealtimeSessionHub _hub;
-    private readonly Func<RealtimeSession, Task> _onSubscribedAsync;
+    private readonly MediaLinkCertificateStore _certificateStore;
+    private readonly MediaLinkSessionHub _hub;
+    private readonly Func<MediaLinkSession, Task> _onSubscribedAsync;
     private readonly Func<string> _tokenFactory;
-    private readonly ILogger<RealtimeServer>? _logger;
+    private readonly ILogger<MediaLinkServer>? _logger;
     private TcpListener? _listener;
     private CancellationTokenSource? _acceptCts;
     private Task? _acceptLoop;
     private readonly List<Task> _sessionTasks = [];
     private readonly object _gate = new();
 
-    public RealtimeServer(
-        RealtimeCertificateStore certificateStore,
-        RealtimeSessionHub hub,
-        Func<RealtimeSession, Task> onSubscribedAsync,
+    public MediaLinkServer(
+        MediaLinkCertificateStore certificateStore,
+        MediaLinkSessionHub hub,
+        Func<MediaLinkSession, Task> onSubscribedAsync,
         Func<string> tokenFactory,
-        ILogger<RealtimeServer>? logger = null)
+        ILogger<MediaLinkServer>? logger = null)
     {
         _certificateStore = certificateStore;
         _hub = hub;
@@ -64,13 +64,13 @@ public sealed class RealtimeServer : IAsyncDisposable
         var listener = new TcpListener(address, port);
         listener.Start();
         _listener = listener;
-        Endpoint = $"wss://{FormatHost(address)}:{port}{RealtimeProtocol.Path}";
+        Endpoint = $"wss://{FormatHost(address)}:{port}{MediaLinkProtocol.Path}";
         LastError = null;
         IsRunning = true;
         _acceptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var ct = _acceptCts.Token;
         _acceptLoop = Task.Run(() => AcceptLoopAsync(certificate, token, ct), CancellationToken.None);
-        _logger?.LogInformation("Realtime WSS 已监听 {Endpoint}", Endpoint);
+        _logger?.LogInformation("MediaLink WSS 已监听 {Endpoint}", Endpoint);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -169,9 +169,9 @@ public sealed class RealtimeServer : IAsyncDisposable
                     subProtocol: null,
                     keepAliveInterval: TimeSpan.FromSeconds(30));
 
-                var session = new RealtimeSession(
-                    new WebSocketRealtimeSocket(webSocket),
-                    new RealtimeSessionOptions
+                var session = new MediaLinkSession(
+                    new WebSocketMediaLinkSocket(webSocket),
+                    new MediaLinkSessionOptions
                     {
                         ExpectedToken = token,
                         OnSubscribedAsync = _onSubscribedAsync
@@ -180,15 +180,14 @@ public sealed class RealtimeServer : IAsyncDisposable
                 _hub.Add(session);
                 try
                 {
-                    var hello = RealtimeMessageSerializer.Create(
-                        RealtimeProtocol.TypeEvent,
-                        new RealtimeServerHelloPayload
+                    var hello = MediaLinkMessageSerializer.Create(
+                        MediaLinkProtocol.TypeEvent,
+                        new MediaLinkServerHelloPayload
                         {
-                            ProtocolVersion = RealtimeProtocol.Version,
-                            AuthRequired = true,
-                            CertFingerprintShort = TruncateFingerprint(_certificateStore.CertFingerprint)
+                            ProtocolVersion = MediaLinkProtocol.Version,
+                            AuthRequired = true
                         },
-                        name: RealtimeProtocol.EventServerHello);
+                        name: MediaLinkProtocol.EventServerHello);
                     await session.SendAsync(hello, cancellationToken);
                     await session.RunAsync(cancellationToken);
                 }
@@ -201,7 +200,7 @@ public sealed class RealtimeServer : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger?.LogDebug(ex, "Realtime 连接处理失败");
+                _logger?.LogDebug(ex, "MediaLink 连接处理失败");
             }
         }
     }
@@ -218,7 +217,7 @@ public sealed class RealtimeServer : IAsyncDisposable
         var parts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (parts.Length < 2 ||
             !parts[0].Equals("GET", StringComparison.OrdinalIgnoreCase) ||
-            !parts[1].StartsWith(RealtimeProtocol.Path, StringComparison.Ordinal))
+            !parts[1].StartsWith(MediaLinkProtocol.Path, StringComparison.Ordinal))
         {
             var bad = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
             var badBytes = Encoding.ASCII.GetBytes(bad);
@@ -269,9 +268,6 @@ public sealed class RealtimeServer : IAsyncDisposable
 
     private static string FormatHost(IPAddress address) =>
         address.Equals(IPAddress.Any) ? "0.0.0.0" : address.ToString();
-
-    private static string TruncateFingerprint(string fingerprint) =>
-        fingerprint.Length <= 12 ? fingerprint : fingerprint[..12];
 
     public async ValueTask DisposeAsync() => await StopAsync();
 }

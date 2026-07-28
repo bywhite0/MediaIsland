@@ -16,7 +16,7 @@ using MediaIsland.Services.Lyrics.Providers;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
 using MediaIsland.Services.Media.SourceDisplay;
-using MediaIsland.Services.Realtime;
+using MediaIsland.Services.MediaLink;
 using MediaIsland.SettingsPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -54,14 +54,14 @@ namespace MediaIsland
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings.Lyrics,
                 provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsSearchService>>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
-            services.AddSingleton<RealtimeHostedService>(provider => new RealtimeHostedService(
+            services.AddSingleton<MediaLinkHostedService>(provider => new MediaLinkHostedService(
                 provider.GetRequiredService<IMediaService>(),
                 provider.GetRequiredService<LyricsSearchService>(),
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
                 () => PluginConfigFolder,
                 provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()));
-            services.AddSingleton<IRealtimeGateway>(provider => provider.GetRequiredService<RealtimeHostedService>());
-            services.AddHostedService(provider => provider.GetRequiredService<RealtimeHostedService>());
+            services.AddSingleton<IMediaLinkGateway>(provider => provider.GetRequiredService<MediaLinkHostedService>());
+            services.AddHostedService(provider => provider.GetRequiredService<MediaLinkHostedService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
             services.AddComponent<LyricsComponent, LyricsComponentSettings>();

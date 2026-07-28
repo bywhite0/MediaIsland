@@ -2,18 +2,18 @@ using System.Text.Json;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
-using MediaIsland.Services.Realtime.Mapping;
-using MediaIsland.Services.Realtime.Protocol;
+using MediaIsland.Services.MediaLink.Mapping;
+using MediaIsland.Services.MediaLink.Protocol;
 using Xunit;
 
-namespace MediaIsland.Tests.Realtime;
+namespace MediaIsland.Tests.MediaLink;
 
-public class RealtimeDtoMapperTests
+public class MediaLinkDtoMapperTests
 {
     [Fact]
     public void ToMediaDto_ReturnsNull_WhenMediaNull()
     {
-        Assert.Null(RealtimeDtoMapper.ToMediaDto(null, MediaInfoChangeKind.Timeline));
+        Assert.Null(MediaLinkDtoMapper.ToMediaDto(null, MediaInfoChangeKind.Timeline));
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public class RealtimeDtoMapperTests
             Thumbnail: null,
             ThumbnailSource: null);
 
-        var dto = RealtimeDtoMapper.ToMediaDto(media, MediaInfoChangeKind.MediaProperties);
+        var dto = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.MediaProperties);
         Assert.NotNull(dto);
         Assert.Equal(nameof(MediaInfoChangeKind.MediaProperties), dto.ChangeKind);
         Assert.Equal("Spotify.exe", dto.SourceApp);
@@ -43,7 +43,7 @@ public class RealtimeDtoMapperTests
         Assert.Equal(1.0, dto.PlaybackRate);
         Assert.False(dto.HasThumbnail);
 
-        var json = RealtimeMessageSerializer.SerializePayload(dto);
+        var json = MediaLinkMessageSerializer.SerializePayload(dto);
         Assert.DoesNotContain("\"thumbnail\"", json, StringComparison.Ordinal);
         Assert.DoesNotContain("\"bitmap\"", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\"hasThumbnail\":false", json, StringComparison.Ordinal);
@@ -63,7 +63,7 @@ public class RealtimeDtoMapperTests
             Thumbnail: null,
             ThumbnailSource: new MediaThumbnail((_, _) => Task.FromResult<Avalonia.Media.Imaging.Bitmap?>(null)));
 
-        var dto = RealtimeDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession);
+        var dto = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession);
         Assert.NotNull(dto);
         Assert.True(dto.HasThumbnail);
     }
@@ -71,7 +71,7 @@ public class RealtimeDtoMapperTests
     [Fact]
     public void ToLyricsDto_ReturnsNull_WhenResultNull()
     {
-        Assert.Null(RealtimeDtoMapper.ToLyricsDto(null));
+        Assert.Null(MediaLinkDtoMapper.ToLyricsDto(null));
     }
 
     [Fact]
@@ -112,20 +112,20 @@ public class RealtimeDtoMapperTests
             87,
             LyricsSourceId.QqMusic);
 
-        var dto = RealtimeDtoMapper.ToLyricsDto(result);
+        var dto = MediaLinkDtoMapper.ToLyricsDto(result);
         Assert.NotNull(dto);
 
-        var envelope = RealtimeMessageSerializer.Create(
-            RealtimeProtocol.TypeEvent,
+        var envelope = MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeEvent,
             dto,
             id: "ly-1",
-            name: RealtimeProtocol.EventLyricsUpdated,
+            name: MediaLinkProtocol.EventLyricsUpdated,
             ts: 1_710_000_000_000);
-        var json = RealtimeMessageSerializer.Serialize(envelope);
-        var restoredMessage = RealtimeMessageSerializer.Deserialize(json);
+        var json = MediaLinkMessageSerializer.Serialize(envelope);
+        var restoredMessage = MediaLinkMessageSerializer.Deserialize(json);
         Assert.NotNull(restoredMessage);
 
-        var restored = RealtimeMessageSerializer.DeserializePayload<RealtimeLyricsDto>(restoredMessage.Payload);
+        var restored = MediaLinkMessageSerializer.DeserializePayload<MediaLinkLyricsDto>(restoredMessage.Payload);
         Assert.NotNull(restored);
         Assert.Equal("item-42", restored.Id);
         Assert.Equal("Title", restored.Title);
@@ -159,22 +159,22 @@ public class RealtimeDtoMapperTests
     [Fact]
     public void NullMediaAndNullLyrics_SerializeAsOmittedPayload()
     {
-        var mediaMessage = RealtimeMessageSerializer.Create(
-            RealtimeProtocol.TypeEvent,
-            RealtimeDtoMapper.ToMediaDto(null, MediaInfoChangeKind.CurrentSession),
-            name: RealtimeProtocol.EventMediaUpdated,
+        var mediaMessage = MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeEvent,
+            MediaLinkDtoMapper.ToMediaDto(null, MediaInfoChangeKind.CurrentSession),
+            name: MediaLinkProtocol.EventMediaUpdated,
             ts: 1);
-        var lyricsMessage = RealtimeMessageSerializer.Create(
-            RealtimeProtocol.TypeEvent,
-            RealtimeDtoMapper.ToLyricsDto(null),
-            name: RealtimeProtocol.EventLyricsUpdated,
+        var lyricsMessage = MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeEvent,
+            MediaLinkDtoMapper.ToLyricsDto(null),
+            name: MediaLinkProtocol.EventLyricsUpdated,
             ts: 2);
 
-        var mediaJson = RealtimeMessageSerializer.Serialize(mediaMessage);
-        var lyricsJson = RealtimeMessageSerializer.Serialize(lyricsMessage);
+        var mediaJson = MediaLinkMessageSerializer.Serialize(mediaMessage);
+        var lyricsJson = MediaLinkMessageSerializer.Serialize(lyricsMessage);
 
-        Assert.Null(RealtimeMessageSerializer.Deserialize(mediaJson)!.Payload);
-        Assert.Null(RealtimeMessageSerializer.Deserialize(lyricsJson)!.Payload);
+        Assert.Null(MediaLinkMessageSerializer.Deserialize(mediaJson)!.Payload);
+        Assert.Null(MediaLinkMessageSerializer.Deserialize(lyricsJson)!.Payload);
         Assert.DoesNotContain("\"payload\":", mediaJson, StringComparison.Ordinal);
     }
 }

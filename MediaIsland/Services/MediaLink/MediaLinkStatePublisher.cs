@@ -1,31 +1,31 @@
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Media;
-using MediaIsland.Services.Realtime.Mapping;
-using MediaIsland.Services.Realtime.Protocol;
+using MediaIsland.Services.MediaLink.Mapping;
+using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
 
-namespace MediaIsland.Services.Realtime;
+namespace MediaIsland.Services.MediaLink;
 
-public sealed class RealtimeStatePublisher : IDisposable
+public sealed class MediaLinkStatePublisher : IDisposable
 {
     private readonly IMediaService _mediaService;
     private readonly LyricsSearchService _lyricsSearchService;
-    private readonly RealtimeSessionHub _hub;
+    private readonly MediaLinkSessionHub _hub;
     private readonly Func<int> _timelineMinIntervalMs;
     private readonly Func<DateTimeOffset> _utcNow;
-    private readonly ILogger<RealtimeStatePublisher>? _logger;
+    private readonly ILogger<MediaLinkStatePublisher>? _logger;
     private readonly object _throttleGate = new();
     private DateTimeOffset _lastTimelineBroadcast = DateTimeOffset.MinValue;
     private bool _started;
     private bool _disposed;
 
-    public RealtimeStatePublisher(
+    public MediaLinkStatePublisher(
         IMediaService mediaService,
         LyricsSearchService lyricsSearchService,
-        RealtimeSessionHub hub,
+        MediaLinkSessionHub hub,
         Func<int>? timelineMinIntervalMs = null,
         Func<DateTimeOffset>? utcNow = null,
-        ILogger<RealtimeStatePublisher>? logger = null)
+        ILogger<MediaLinkStatePublisher>? logger = null)
     {
         _mediaService = mediaService;
         _lyricsSearchService = lyricsSearchService;
@@ -60,23 +60,23 @@ public sealed class RealtimeStatePublisher : IDisposable
         _started = false;
     }
 
-    public async Task PublishSnapshotAsync(RealtimeSession session, CancellationToken cancellationToken = default)
+    public async Task PublishSnapshotAsync(MediaLinkSession session, CancellationToken cancellationToken = default)
     {
         var media = _mediaService.CurrentMediaInfo;
-        if (session.IsSubscribedTo(RealtimeProtocol.ChannelMedia))
+        if (session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia))
         {
             await session.SendEventAsync(
-                RealtimeProtocol.EventMediaUpdated,
-                RealtimeDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession),
+                MediaLinkProtocol.EventMediaUpdated,
+                MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession),
                 cancellationToken);
         }
 
-        if (session.IsSubscribedTo(RealtimeProtocol.ChannelLyrics))
+        if (session.IsSubscribedTo(MediaLinkProtocol.ChannelLyrics))
         {
             var lyrics = _lyricsSearchService.GetCurrentResultFor(media) ?? _lyricsSearchService.CurrentResult;
             await session.SendEventAsync(
-                RealtimeProtocol.EventLyricsUpdated,
-                RealtimeDtoMapper.ToLyricsDto(lyrics),
+                MediaLinkProtocol.EventLyricsUpdated,
+                MediaLinkDtoMapper.ToLyricsDto(lyrics),
                 cancellationToken);
         }
     }
@@ -96,14 +96,14 @@ public sealed class RealtimeStatePublisher : IDisposable
             }
         }
 
-        var dto = RealtimeDtoMapper.ToMediaDto(e.MediaInfo, e.ChangeKind);
-        _ = SafeBroadcastAsync(RealtimeProtocol.ChannelMedia, RealtimeProtocol.EventMediaUpdated, dto);
+        var dto = MediaLinkDtoMapper.ToMediaDto(e.MediaInfo, e.ChangeKind);
+        _ = SafeBroadcastAsync(MediaLinkProtocol.ChannelMedia, MediaLinkProtocol.EventMediaUpdated, dto);
     }
 
     private void OnLyricsChanged(object? sender, LyricsSearchResultChangedEventArgs e)
     {
-        var dto = RealtimeDtoMapper.ToLyricsDto(e.Result);
-        _ = SafeBroadcastAsync(RealtimeProtocol.ChannelLyrics, RealtimeProtocol.EventLyricsUpdated, dto);
+        var dto = MediaLinkDtoMapper.ToLyricsDto(e.Result);
+        _ = SafeBroadcastAsync(MediaLinkProtocol.ChannelLyrics, MediaLinkProtocol.EventLyricsUpdated, dto);
     }
 
     private bool ShouldBroadcastTimeline()
@@ -130,7 +130,7 @@ public sealed class RealtimeStatePublisher : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "Realtime broadcast failed for {EventName}.", eventName);
+            _logger?.LogDebug(ex, "MediaLink broadcast failed for {EventName}.", eventName);
         }
     }
 

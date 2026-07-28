@@ -21,7 +21,7 @@ using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.SourceDisplay;
-using MediaIsland.Services.Realtime;
+using MediaIsland.Services.MediaLink;
 
 namespace MediaIsland.SettingsPages
 {
@@ -41,7 +41,7 @@ namespace MediaIsland.SettingsPages
         private readonly IMediaService _mediaService;
         private readonly IMediaSourceDisplayService _mediaSourceDisplayService;
         private readonly LyricsSearchService _lyricsSearchService;
-        private readonly IRealtimeGateway? _realtimeGateway;
+        private readonly IMediaLinkGateway? _realtimeGateway;
         private string _realtimeStatusText = "未启用";
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
@@ -198,7 +198,7 @@ namespace MediaIsland.SettingsPages
             IMediaService mediaService,
             IMediaSourceDisplayService mediaSourceDisplayService,
             LyricsSearchService lyricsSearchService,
-            IRealtimeGateway? realtimeGateway = null)
+            IMediaLinkGateway? realtimeGateway = null)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
@@ -883,7 +883,7 @@ namespace MediaIsland.SettingsPages
 
         private void RegenerateRealtimeTokenOnClick(object? sender, RoutedEventArgs e)
         {
-            Settings.RealtimeToken = RealtimeAuth.GenerateToken();
+            Settings.RealtimeToken = MediaLinkAuth.GenerateToken();
             RefreshRealtimeStatus();
         }
 

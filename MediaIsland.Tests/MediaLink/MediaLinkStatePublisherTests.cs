@@ -1,12 +1,12 @@
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
-using MediaIsland.Services.Realtime;
-using MediaIsland.Services.Realtime.Protocol;
+using MediaIsland.Services.MediaLink;
+using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Hosting;
 using Xunit;
 
-namespace MediaIsland.Tests.Realtime;
+namespace MediaIsland.Tests.MediaLink;
 
 internal sealed class FakeMediaService : IMediaService
 {
@@ -24,23 +24,23 @@ internal sealed class FakeMediaService : IMediaService
         MediaInfoChanged?.Invoke(this, new MediaInfoChangedEventArgs(info, kind));
 }
 
-public class RealtimeStatePublisherTests
+public class MediaLinkStatePublisherTests
 {
     [Fact]
     public async Task Timeline_IsThrottled_WhilePlaybackIsImmediate()
     {
         var media = new FakeMediaService();
         var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
-        var hub = new RealtimeSessionHub();
-        var socket = new FakeRealtimeSocket();
-        var session = new RealtimeSession(socket, new RealtimeSessionOptions { ExpectedToken = "t" });
+        var hub = new MediaLinkSessionHub();
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
         hub.Add(session);
         await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
-        await session.HandleMessageAsync(Subscribe(RealtimeProtocol.ChannelMedia), CancellationToken.None);
+        await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
         socket.ClearOutgoing();
 
         var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        using var publisher = new RealtimeStatePublisher(
+        using var publisher = new MediaLinkStatePublisher(
             media,
             lyrics,
             hub,
@@ -73,15 +73,15 @@ public class RealtimeStatePublisherTests
     {
         var media = new FakeMediaService();
         var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
-        var hub = new RealtimeSessionHub();
-        var socket = new FakeRealtimeSocket();
-        var session = new RealtimeSession(socket, new RealtimeSessionOptions { ExpectedToken = "t" });
+        var hub = new MediaLinkSessionHub();
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
         hub.Add(session);
         await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
-        await session.HandleMessageAsync(Subscribe(RealtimeProtocol.ChannelLyrics), CancellationToken.None);
+        await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelLyrics), CancellationToken.None);
         socket.ClearOutgoing();
 
-        using var publisher = new RealtimeStatePublisher(media, lyrics, hub);
+        using var publisher = new MediaLinkStatePublisher(media, lyrics, hub);
         publisher.Start();
 
         // LyricsSearchService has no public raise; use reflection on Publish path via CurrentResultChanged
@@ -89,16 +89,16 @@ public class RealtimeStatePublisherTests
         // Better: call PublishSnapshotAsync after setting nothing - still null payload event.
         await publisher.PublishSnapshotAsync(session);
         await Task.Delay(20);
-        Assert.Contains(socket.Outgoing, json => json.Contains(RealtimeProtocol.EventLyricsUpdated, StringComparison.Ordinal));
+        Assert.Contains(socket.Outgoing, json => json.Contains(MediaLinkProtocol.EventLyricsUpdated, StringComparison.Ordinal));
     }
 
     private static string Auth(string token) =>
-        RealtimeMessageSerializer.Serialize(RealtimeMessageSerializer.Create(
-            RealtimeProtocol.TypeAuth,
-            new RealtimeAuthPayload { Token = token }));
+        MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeAuth,
+            new MediaLinkAuthPayload { Token = token }));
 
     private static string Subscribe(params string[] channels) =>
-        RealtimeMessageSerializer.Serialize(RealtimeMessageSerializer.Create(
-            RealtimeProtocol.TypeSubscribe,
-            new RealtimeSubscribePayload { Channels = channels.ToList() }));
+        MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeSubscribe,
+            new MediaLinkSubscribePayload { Channels = channels.ToList() }));
 }

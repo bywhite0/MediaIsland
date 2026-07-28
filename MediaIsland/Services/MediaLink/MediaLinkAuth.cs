@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace MediaIsland.Services.Realtime;
+namespace MediaIsland.Services.MediaLink;
 
-public static class RealtimeAuth
+public static class MediaLinkAuth
 {
     public static string GenerateToken()
     {

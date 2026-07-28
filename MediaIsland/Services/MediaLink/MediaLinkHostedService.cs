@@ -4,26 +4,26 @@ using MediaIsland.Services.Media;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-namespace MediaIsland.Services.Realtime;
+namespace MediaIsland.Services.MediaLink;
 
-public sealed class RealtimeHostedService : IHostedService, IRealtimeGateway, IDisposable
+public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, IDisposable
 {
     private readonly IMediaService _mediaService;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly Func<PluginSettings> _settingsFactory;
     private readonly Func<string> _configFolderFactory;
     private readonly ILoggerFactory? _loggerFactory;
-    private readonly ILogger<RealtimeHostedService>? _logger;
+    private readonly ILogger<MediaLinkHostedService>? _logger;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
 
-    private RealtimeCertificateStore? _certificateStore;
-    private RealtimeSessionHub? _hub;
-    private RealtimeStatePublisher? _publisher;
-    private RealtimeServer? _server;
+    private MediaLinkCertificateStore? _certificateStore;
+    private MediaLinkSessionHub? _hub;
+    private MediaLinkStatePublisher? _publisher;
+    private MediaLinkServer? _server;
     private PluginSettings? _boundSettings;
     private bool _disposed;
 
-    public RealtimeHostedService(
+    public MediaLinkHostedService(
         IMediaService mediaService,
         LyricsSearchService lyricsSearchService,
         Func<PluginSettings> settingsFactory,
@@ -35,7 +35,7 @@ public sealed class RealtimeHostedService : IHostedService, IRealtimeGateway, ID
         _settingsFactory = settingsFactory;
         _configFolderFactory = configFolderFactory;
         _loggerFactory = loggerFactory;
-        _logger = loggerFactory?.CreateLogger<RealtimeHostedService>();
+        _logger = loggerFactory?.CreateLogger<MediaLinkHostedService>();
     }
 
     public bool IsRunning => _server?.IsRunning == true;
@@ -105,7 +105,7 @@ public sealed class RealtimeHostedService : IHostedService, IRealtimeGateway, ID
         catch (Exception ex)
         {
             LastError = ex.Message;
-            _logger?.LogWarning(ex, "Realtime 配置热更新失败");
+            _logger?.LogWarning(ex, "MediaLink 配置热更新失败");
         }
     }
 
@@ -124,26 +124,26 @@ public sealed class RealtimeHostedService : IHostedService, IRealtimeGateway, ID
 
             if (string.IsNullOrWhiteSpace(settings.RealtimeToken))
             {
-                settings.RealtimeToken = RealtimeAuth.GenerateToken();
+                settings.RealtimeToken = MediaLinkAuth.GenerateToken();
             }
 
             var realtimeDir = Path.Combine(_configFolderFactory(), "realtime");
-            _certificateStore = new RealtimeCertificateStore(realtimeDir);
-            _hub = new RealtimeSessionHub();
-            _publisher = new RealtimeStatePublisher(
+            _certificateStore = new MediaLinkCertificateStore(realtimeDir);
+            _hub = new MediaLinkSessionHub();
+            _publisher = new MediaLinkStatePublisher(
                 _mediaService,
                 _lyricsSearchService,
                 _hub,
                 () => settings.RealtimeTimelineMinIntervalMs,
-                logger: _loggerFactory?.CreateLogger<RealtimeStatePublisher>());
+                logger: _loggerFactory?.CreateLogger<MediaLinkStatePublisher>());
             _publisher.Start();
 
-            _server = new RealtimeServer(
+            _server = new MediaLinkServer(
                 _certificateStore,
                 _hub,
                 session => _publisher.PublishSnapshotAsync(session),
                 () => settings.RealtimeToken,
-                _loggerFactory?.CreateLogger<RealtimeServer>());
+                _loggerFactory?.CreateLogger<MediaLinkServer>());
 
             await _server.StartAsync(settings.RealtimeListenAddress, settings.RealtimePort, cancellationToken);
             LastError = null;
@@ -151,7 +151,7 @@ public sealed class RealtimeHostedService : IHostedService, IRealtimeGateway, ID
         catch (Exception ex)
         {
             LastError = ex.Message;
-            _logger?.LogError(ex, "Realtime 服务启动失败");
+            _logger?.LogError(ex, "MediaLink 服务启动失败");
             await StopCoreAsync(CancellationToken.None);
         }
         finally

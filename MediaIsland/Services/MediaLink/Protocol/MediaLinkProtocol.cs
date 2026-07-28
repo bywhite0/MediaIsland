@@ -1,6 +1,6 @@
-namespace MediaIsland.Services.Realtime.Protocol;
+namespace MediaIsland.Services.MediaLink.Protocol;
 
-public static class RealtimeProtocol
+public static class MediaLinkProtocol
 {
     public const int Version = 1;
     public const string Path = "/v1/ws";
