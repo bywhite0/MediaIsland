@@ -17,7 +17,7 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
         PropertyNameCaseInsensitive = true
     };
 
-    public virtual async Task<LyricsSearchResult?> TryFetchAsync(
+    public async Task<LyricsSearchResult?> TryFetchAsync(
         MediaInfo media,
         LyricsSourceSettings settings,
         CancellationToken cancellationToken)
