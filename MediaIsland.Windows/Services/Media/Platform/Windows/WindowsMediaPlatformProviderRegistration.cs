@@ -8,6 +8,7 @@ public static class WindowsMediaPlatformProviderRegistration
     {
         services.AddSingleton<WindowsSmtcMediaSessionProvider>();
         services.AddSingleton<WindowsMediaSourceInfoProvider>();
+        services.AddSingleton<WindowsSmtcMediaPlaybackController>();
         services.AddSingleton<IMediaPlatformProvider, WindowsMediaPlatformProvider>();
         return services;
     }

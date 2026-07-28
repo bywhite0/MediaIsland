@@ -70,6 +70,28 @@ public sealed class WindowsSmtcMediaSessionProvider(
         return await BuildSnapshotAsync(_mediaManager.GetFocusedSession(), cancellationToken);
     }
 
+    /// <summary>
+    /// Returns the focused SMTC control session for playback commands, or null when none.
+    /// WinRT type stays inside the Windows assembly only.
+    /// </summary>
+    public GlobalSystemMediaTransportControlsSession? GetFocusedControlSession()
+    {
+        if (!_mediaManager.IsStarted)
+        {
+            return null;
+        }
+
+        try
+        {
+            return _mediaManager.GetFocusedSession()?.ControlSession;
+        }
+        catch (Exception ex)
+        {
+            logger.LogDebug(ex, "Failed to resolve focused SMTC control session.");
+            return null;
+        }
+    }
+
     private async void OnAnySessionOpened(MediaManager.MediaSession session)
     {
         try

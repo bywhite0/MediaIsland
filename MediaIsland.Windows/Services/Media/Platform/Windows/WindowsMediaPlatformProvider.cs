@@ -2,7 +2,8 @@ namespace MediaIsland.Services.Media.Platform.Windows;
 
 public sealed class WindowsMediaPlatformProvider(
     WindowsSmtcMediaSessionProvider sessionProvider,
-    WindowsMediaSourceInfoProvider sourceInfoProvider) : IMediaPlatformProvider
+    WindowsMediaSourceInfoProvider sourceInfoProvider,
+    WindowsSmtcMediaPlaybackController playbackController) : IMediaPlatformProvider
 {
     public string Id => "windows";
 
@@ -14,6 +15,5 @@ public sealed class WindowsMediaPlatformProvider(
 
     public IMediaSourceInfoProvider SourceInfoProvider => sourceInfoProvider;
 
-    // Placeholder until Task 3 wires WindowsSmtcMediaPlaybackController.
-    public IMediaPlaybackController? PlaybackController => null;
+    public IMediaPlaybackController? PlaybackController => playbackController;
 }
