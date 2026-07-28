@@ -76,9 +76,9 @@ internal static class LyricsTypography
 
         return part switch
         {
-            LyricsDisplayPart.Translation
+            LyricsDisplayPart.Translation or LyricsDisplayPart.TranslationOnly
                 => (settings.LyricsTranslationFontFamily, settings.LyricsTranslationFontWeight),
-            LyricsDisplayPart.Romanization
+            LyricsDisplayPart.Romanization or LyricsDisplayPart.RomanizationOnly
                 => (settings.LyricsRomanizationFontFamily, settings.LyricsRomanizationFontWeight),
             _ => (settings.LyricsOriginalFontFamily, settings.LyricsOriginalFontWeight)
         };
