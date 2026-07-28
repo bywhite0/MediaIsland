@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using ClassIsland.Core.Abstractions;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
+using MediaIsland.Services.MediaLink;
 
 namespace MediaIsland.Models
 {
@@ -361,6 +362,43 @@ namespace MediaIsland.Models
                 var normalized = value < 0 ? 200 : value;
                 if (_mediaLinkTimelineMinIntervalMs == normalized) return;
                 _mediaLinkTimelineMinIntervalMs = normalized;
+                OnPropertyChanged();
+            }
+        }
+
+        private MediaLinkMediaSourceMode _mediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly;
+        private bool _mediaLinkUiUsesEffective = true;
+        private bool _mediaLinkPushUsesEffective = true;
+
+        public MediaLinkMediaSourceMode MediaLinkMediaSourceMode
+        {
+            get => _mediaLinkMediaSourceMode;
+            set
+            {
+                if (_mediaLinkMediaSourceMode == value) return;
+                _mediaLinkMediaSourceMode = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool MediaLinkUiUsesEffective
+        {
+            get => _mediaLinkUiUsesEffective;
+            set
+            {
+                if (_mediaLinkUiUsesEffective == value) return;
+                _mediaLinkUiUsesEffective = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool MediaLinkPushUsesEffective
+        {
+            get => _mediaLinkPushUsesEffective;
+            set
+            {
+                if (_mediaLinkPushUsesEffective == value) return;
+                _mediaLinkPushUsesEffective = value;
                 OnPropertyChanged();
             }
         }
