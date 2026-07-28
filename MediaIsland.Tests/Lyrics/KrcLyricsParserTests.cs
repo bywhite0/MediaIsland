@@ -300,6 +300,138 @@ public class KrcLyricsParserTests
         Assert.Null(line.Romanization);
     }
 
+    [Fact]
+    public void Parse_Kana_AttachesRubySpansToMatchingKanji()
+    {
+        const string content = """
+            [kana:1ざん1こく]
+            [0,1000]<0,500,0>残<500,500,0>酷
+            """;
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+
+        Assert.Equal("残酷", line.Text);
+        Assert.Collection(
+            line.RubySpans!,
+            span =>
+            {
+                Assert.Equal(0, span.BaseStart);
+                Assert.Equal(1, span.BaseLength);
+                Assert.Equal("ざん", span.Reading);
+            },
+            span =>
+            {
+                Assert.Equal(1, span.BaseStart);
+                Assert.Equal(1, span.BaseLength);
+                Assert.Equal("こく", span.Reading);
+            });
+    }
+
+    [Fact]
+    public void Parse_Kana_StripsEmbeddedTimingFromReading()
+    {
+        const string content = """
+            [kana:1み(100,50)つ]
+            [0,1000]<0,1000,0>密
+            """;
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+        var span = Assert.Single(line.RubySpans!);
+        Assert.Equal("みつ", span.Reading);
+    }
+
+    [Fact]
+    public void Parse_Kana_SkipsAsciiAndKanaWhenAligning()
+    {
+        const string content = """
+            [kana:1む1てき]
+            [0,1000]<0,250,0>無<250,250,0>敵<500,250,0>の<750,250,0>A
+            """;
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+        Assert.Equal("無敵のA", line.Text);
+        Assert.Collection(
+            line.RubySpans!,
+            span =>
+            {
+                Assert.Equal(0, span.BaseStart);
+                Assert.Equal("む", span.Reading);
+            },
+            span =>
+            {
+                Assert.Equal(1, span.BaseStart);
+                Assert.Equal("てき", span.Reading);
+            });
+    }
+
+    [Fact]
+    public void Parse_Kana_MultiCharCover_SpansContiguousKanji()
+    {
+        const string content = """
+            [kana:2きょう]
+            [0,1000]<0,500,0>今<500,500,0>日
+            """;
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+        var span = Assert.Single(line.RubySpans!);
+        Assert.Equal(0, span.BaseStart);
+        Assert.Equal(2, span.BaseLength);
+        Assert.Equal("きょう", span.Reading);
+    }
+
+    [Fact]
+    public void Parse_WithoutKana_LeavesRubyNull_AndKeepsTranslation()
+    {
+        var content = BuildContentWithTags(
+            "[0,900]<0,900,0>残酷",
+            LanguageTag(TranslationBlock(1, ["cruel"])));
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+
+        Assert.Equal("残酷", line.Text);
+        Assert.Equal("cruel", line.Translation);
+        Assert.Null(line.RubySpans);
+    }
+
+    [Fact]
+    public void Parse_KanaAndLanguage_Coexist()
+    {
+        var language = LanguageTag(
+            TranslationBlock(1, ["cruel"]),
+            RomanizationBlock([["zan ", "koku"]]));
+        var content = $"""
+            [kana:1ざん1こく]
+            {language}
+            [0,1000]<0,500,0>残<500,500,0>酷
+            """;
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+
+        Assert.Equal("残酷", line.Text);
+        Assert.Equal("cruel", line.Translation);
+        Assert.Equal("zan koku", line.Romanization);
+        Assert.Collection(
+            line.RubySpans!,
+            span => Assert.Equal("ざん", span.Reading),
+            span => Assert.Equal("こく", span.Reading));
+    }
+
+    [Fact]
+    public void Parse_Kana_EmptyReading_DoesNotCreateSpanButConsumesKanji()
+    {
+        const string content = """
+            [kana:11ざん]
+            [0,1000]<0,300,0>高<300,300,0>橋<600,400,0>残
+            """;
+
+        var line = Assert.Single(KrcLyricsParser.Parse(content));
+        Assert.Equal("高橋残", line.Text);
+        var span = Assert.Single(line.RubySpans!);
+        Assert.Equal(1, span.BaseStart);
+        Assert.Equal(1, span.BaseLength);
+        Assert.Equal("ざん", span.Reading);
+    }
+
     private static string BuildContentWithTags(string lyrics, string languageTag) =>
         $"[id:$00000000]\n[ar:Artist]\n{languageTag}\n{lyrics}";
 

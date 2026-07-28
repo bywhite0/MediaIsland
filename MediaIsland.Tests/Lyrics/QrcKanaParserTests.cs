@@ -125,7 +125,7 @@ public class QrcKanaParserTests
     [Fact]
     public void ParseTokens_AcceptsZeroCoverWithoutConsuming()
     {
-        var tokens = QrcKanaParser.ParseTokens("01あ");
+        var tokens = LyricsKanaRubyParser.ParseTokens("01あ");
         Assert.Collection(
             tokens,
             token =>

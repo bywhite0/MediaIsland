@@ -70,10 +70,10 @@
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xF374;}"
-                                       Header="显示 QQ 音乐歌词假名"
-                                       Description="在原文上方显示 QQ 音乐 QRC 自带的字级假名注音。仅原文有效展示时生效；翻译/音译模式不显示。默认关闭。">
+                                       Header="显示歌词假名"
+                                       Description="在原文上方显示歌词源自带的字级假名注音（QQ 音乐 QRC、酷狗 KRC 等）。仅原文有效展示时生效；翻译/音译模式不显示。默认关闭。">
                 <controls:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.IsShowQqMusicKana, Mode=TwoWay}" />
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowLyricsKana, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8CB;}"

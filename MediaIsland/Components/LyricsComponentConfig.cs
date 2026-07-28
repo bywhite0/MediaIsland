@@ -15,7 +15,7 @@ public class LyricsComponentConfig : ObservableRecipient
     private int _renderFrameRate = 30;
     private double _lineSpacing;
     private LyricsDisplayPart _displayPart = LyricsDisplayPart.Original;
-    private bool _isShowQqMusicKana;
+    private bool _isShowLyricsKana;
 
     /// <summary>
     /// 多行歌词的附加行距（像素，可为负）。部分日文字体行高偏大，
@@ -124,16 +124,16 @@ public class LyricsComponentConfig : ObservableRecipient
     }
 
     /// <summary>
-    /// 在原文上方显示 QQ 音乐 QRC 自带的字级假名（<c>[kana:]</c>）。
+    /// 在原文上方显示歌词源自带的字级假名（QRC/KRC 的 <c>[kana:]</c>）。
     /// 仅当实际展示原文时生效；与音译 DisplayPart 无关，默认关闭。
     /// </summary>
-    public bool IsShowQqMusicKana
+    public bool IsShowLyricsKana
     {
-        get => _isShowQqMusicKana;
+        get => _isShowLyricsKana;
         set
         {
-            if (_isShowQqMusicKana == value) return;
-            _isShowQqMusicKana = value;
+            if (_isShowLyricsKana == value) return;
+            _isShowLyricsKana = value;
             OnPropertyChanged();
         }
     }

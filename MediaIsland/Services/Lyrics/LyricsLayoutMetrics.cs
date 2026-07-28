@@ -19,7 +19,7 @@ internal static class LyricsLayoutMetrics
     // 字号到行高的近似系数。预算与实际占用共用该系数，只有行距是绝对像素。
     internal const double LineHeightFactor = 1.3;
 
-    // 开启 QQ 音乐假名时额外预留的行高系数，覆盖字上注音带。
+    // 开启歌词假名时额外预留的行高系数，覆盖字上注音带。
     internal const double RubyLineHeightExtraFactor = 0.35;
 
     private const double FitEpsilon = 0.01;

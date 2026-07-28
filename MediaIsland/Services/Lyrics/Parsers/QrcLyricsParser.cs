@@ -26,7 +26,7 @@ public static class QrcLyricsParser
                      ["\r\n", "\n", "\r", "\\r\\n", "\\n", "\\r"],
                      StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
-            var kana = QrcKanaParser.ExtractPayload(rawLine);
+            var kana = LyricsKanaRubyParser.ExtractPayload(rawLine);
             if (kana != null)
             {
                 // Real QQ tracks ship a single whole-song stream; keep the first non-empty payload.
@@ -55,7 +55,7 @@ public static class QrcLyricsParser
                 words));
         }
 
-        return QrcKanaParser.Attach(lines, kanaPayload);
+        return LyricsKanaRubyParser.Attach(lines, kanaPayload);
     }
 
     private static bool TryParseLineHeader(

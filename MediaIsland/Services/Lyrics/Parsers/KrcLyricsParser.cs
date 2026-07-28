@@ -11,7 +11,8 @@ namespace MediaIsland.Services.Lyrics.Parsers;
 /// <remarks>
 /// A timed line looks like <c>[lineStart,lineDuration]&lt;offset,duration,0&gt;word...</c>, where each
 /// word offset is relative to the line start. Metadata lines such as <c>[ar:...]</c> carry no timing
-/// and are skipped, except <c>[language:...]</c> which carries per-line translation and romanization.
+/// and are skipped, except <c>[language:...]</c> (translation/romanization) and
+/// <c>[kana:...]</c> (whole-track ruby readings shared with QRC).
 /// </remarks>
 public static class KrcLyricsParser
 {
@@ -38,11 +39,24 @@ public static class KrcLyricsParser
         // Translations are indexed by timed line, so keep that index even for lines that yield no words.
         var timedLineIndexes = new List<int>();
         var timedLineCount = 0;
+        string? kanaPayload = null;
 
         foreach (var rawLine in content.Split(
                      ['\r', '\n'],
                      StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
+            var kana = LyricsKanaRubyParser.ExtractPayload(rawLine);
+            if (kana != null)
+            {
+                // Whole-track stream; keep the first non-empty payload (same as QRC).
+                if (string.IsNullOrEmpty(kanaPayload) && kana.Length > 0)
+                {
+                    kanaPayload = kana;
+                }
+
+                continue;
+            }
+
             if (!TryParseLineHeader(rawLine, out var lineStart, out var wordsStart))
             {
                 continue;
@@ -64,7 +78,7 @@ public static class KrcLyricsParser
         }
 
         AttachSecondaryText(lines, timedLineIndexes, content);
-        return lines;
+        return LyricsKanaRubyParser.Attach(lines, kanaPayload);
     }
 
     private static bool TryParseLineHeader(string rawLine, out int lineStart, out int wordsStart)

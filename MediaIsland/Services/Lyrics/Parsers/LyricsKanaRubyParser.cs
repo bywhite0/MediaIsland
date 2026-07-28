@@ -5,7 +5,7 @@ using MediaIsland.Services.Lyrics.Models;
 namespace MediaIsland.Services.Lyrics.Parsers;
 
 /// <summary>
-/// Parses QQ Music QRC <c>[kana:...]</c> metadata into per-line ruby spans.
+/// Parses whole-track <c>[kana:...]</c> metadata (QRC/KRC) into per-line ruby spans.
 /// </summary>
 /// <remarks>
 /// The payload is a single stream for the whole lyric track: each token is a one-digit
@@ -13,7 +13,7 @@ namespace MediaIsland.Services.Lyrics.Parsers;
 /// order; kana and ASCII in the lyric text are skipped. Optional <c>(start,duration)</c>
 /// fragments inside a reading are stripped and ignored for display.
 /// </remarks>
-internal static class QrcKanaParser
+internal static class LyricsKanaRubyParser
 {
     public static string? ExtractPayload(string line)
     {

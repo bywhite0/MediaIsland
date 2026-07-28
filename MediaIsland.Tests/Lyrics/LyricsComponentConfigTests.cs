@@ -112,18 +112,18 @@ public class LyricsComponentConfigTests
     }
 
     [Fact]
-    public void IsShowQqMusicKana_DefaultsToFalseAndPersists()
+    public void IsShowLyricsKana_DefaultsToFalseAndPersists()
     {
         var settings = new LyricsComponentConfig();
-        Assert.False(settings.IsShowQqMusicKana);
+        Assert.False(settings.IsShowLyricsKana);
 
-        settings.IsShowQqMusicKana = true;
+        settings.IsShowLyricsKana = true;
         var json = JsonSerializer.Serialize(settings);
-        Assert.Contains("\"IsShowQqMusicKana\":true", json);
+        Assert.Contains("\"IsShowLyricsKana\":true", json);
 
         var restored = JsonSerializer.Deserialize<LyricsComponentConfig>(json);
         Assert.NotNull(restored);
-        Assert.True(restored!.IsShowQqMusicKana);
+        Assert.True(restored!.IsShowLyricsKana);
     }
 
     [Theory]
