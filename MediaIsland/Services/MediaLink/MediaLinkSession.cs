@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using MediaIsland.Services.Media;
+using MediaIsland.Services.Media.Platform;
 using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
 
@@ -106,6 +108,18 @@ public sealed class MediaLinkSessionOptions
     public TimeSpan AuthTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
     public Func<MediaLinkSession, Task>? OnSubscribedAsync { get; init; }
+
+    // Phase 2
+    public MediaLinkInjectionStore? InjectionStore { get; init; }
+
+    public MediaSourceCoordinator? Coordinator { get; init; }
+
+    public Func<IMediaPlaybackController?>? PlaybackControllerAccessor { get; init; }
+
+    /// <summary>成功 mutator 后可选：通知 publisher 推送（Task 7 接线）。</summary>
+    public Func<MediaInfoChangeKind, Task>? OnEffectiveMediaMutatedAsync { get; init; }
+
+    public Func<Task>? OnEffectiveLyricsMutatedAsync { get; init; }
 }
 
 public sealed class MediaLinkSession : IAsyncDisposable
@@ -228,11 +242,17 @@ public sealed class MediaLinkSession : IAsyncDisposable
             case MediaLinkProtocol.TypeHello:
                 // ignore client hello
                 break;
-            case "media.inject":
-            case "lyrics.inject":
-            case "media.clear_inject":
-            case "playback.command":
-                await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorNotImplemented, message.Type, cancellationToken);
+            case MediaLinkProtocol.TypeMediaInject:
+                await HandleMediaInjectAsync(message, cancellationToken);
+                break;
+            case MediaLinkProtocol.TypeLyricsInject:
+                await HandleLyricsInjectAsync(message, cancellationToken);
+                break;
+            case MediaLinkProtocol.TypeMediaClearInject:
+                await HandleMediaClearInjectAsync(message, cancellationToken);
+                break;
+            case MediaLinkProtocol.TypePlaybackCommand:
+                await HandlePlaybackCommandAsync(message, cancellationToken);
                 break;
             default:
                 await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, $"unknown type: {message.Type}", cancellationToken);
@@ -338,6 +358,299 @@ public sealed class MediaLinkSession : IAsyncDisposable
             await _options.OnSubscribedAsync(this);
         }
     }
+
+    private async Task HandleMediaInjectAsync(MediaLinkMessage message, CancellationToken cancellationToken)
+    {
+        var store = _options.InjectionStore;
+        if (store is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, "not configured", cancellationToken);
+            return;
+        }
+
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkMediaInjectPayload>(message.Payload);
+        if (payload is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, "missing payload", cancellationToken);
+            return;
+        }
+
+        if (!store.TrySetMedia(payload, out var error))
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, error ?? "invalid media inject", cancellationToken);
+            return;
+        }
+
+        _options.Coordinator?.Recompute(MediaInfoChangeKind.MediaProperties);
+        await SendOkAsync(message, cancellationToken);
+        if (_options.OnEffectiveMediaMutatedAsync is not null)
+        {
+            await _options.OnEffectiveMediaMutatedAsync(MediaInfoChangeKind.MediaProperties);
+        }
+    }
+
+    private async Task HandleLyricsInjectAsync(MediaLinkMessage message, CancellationToken cancellationToken)
+    {
+        var store = _options.InjectionStore;
+        if (store is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, "not configured", cancellationToken);
+            return;
+        }
+
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkLyricsDto>(message.Payload);
+        if (payload is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, "missing payload", cancellationToken);
+            return;
+        }
+
+        if (!store.TrySetLyrics(payload, out var error))
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, error ?? "invalid lyrics inject", cancellationToken);
+            return;
+        }
+
+        _options.Coordinator?.Recompute(MediaInfoChangeKind.CurrentSession);
+        await SendOkAsync(message, cancellationToken);
+        if (_options.OnEffectiveLyricsMutatedAsync is not null)
+        {
+            await _options.OnEffectiveLyricsMutatedAsync();
+        }
+    }
+
+    private async Task HandleMediaClearInjectAsync(MediaLinkMessage message, CancellationToken cancellationToken)
+    {
+        var store = _options.InjectionStore;
+        if (store is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, "not configured", cancellationToken);
+            return;
+        }
+
+        // payload 可省略；省略时 clear 两边。
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkClearInjectPayload>(message.Payload)
+                      ?? new MediaLinkClearInjectPayload();
+
+        if (!store.TryClear(payload.Channels, out var error))
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, error ?? "invalid clear_inject", cancellationToken);
+            return;
+        }
+
+        _options.Coordinator?.Recompute(MediaInfoChangeKind.CurrentSession);
+        await SendOkAsync(message, cancellationToken);
+
+        var channels = payload.Channels;
+        var clearedMedia = channels is null || channels.Count == 0 ||
+                           channels.Any(c => string.Equals(c, MediaLinkProtocol.ChannelMedia, StringComparison.Ordinal));
+        var clearedLyrics = channels is null || channels.Count == 0 ||
+                            channels.Any(c => string.Equals(c, MediaLinkProtocol.ChannelLyrics, StringComparison.Ordinal));
+
+        if (clearedMedia && _options.OnEffectiveMediaMutatedAsync is not null)
+        {
+            await _options.OnEffectiveMediaMutatedAsync(MediaInfoChangeKind.CurrentSession);
+        }
+
+        if (clearedLyrics && _options.OnEffectiveLyricsMutatedAsync is not null)
+        {
+            await _options.OnEffectiveLyricsMutatedAsync();
+        }
+    }
+
+    private async Task HandlePlaybackCommandAsync(MediaLinkMessage message, CancellationToken cancellationToken)
+    {
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkPlaybackCommandPayload>(message.Payload);
+        if (payload is null || string.IsNullOrWhiteSpace(payload.Action))
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, "missing action", cancellationToken);
+            return;
+        }
+
+        if (!TryParsePlaybackAction(payload.Action, out var command))
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, $"unknown action: {payload.Action}", cancellationToken);
+            return;
+        }
+
+        var coordinator = _options.Coordinator;
+        var store = _options.InjectionStore;
+
+        // 有 coordinator 时以 compose 结果为准；否则仅在有 inject 时走虚拟路径。
+        if (coordinator is not null)
+        {
+            var composed = coordinator.ComposeMedia();
+            if (composed is null)
+            {
+                await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorNoSession, "no session", cancellationToken);
+                return;
+            }
+
+            if (coordinator.IsExternalMediaEffective)
+            {
+                await HandleExternalPlaybackAsync(message, command, store, cancellationToken);
+                return;
+            }
+
+            await HandlePlatformPlaybackAsync(message, command, cancellationToken);
+            return;
+        }
+
+        if (store is not null && store.HasExternalMedia)
+        {
+            await HandleExternalPlaybackAsync(message, command, store, cancellationToken);
+            return;
+        }
+
+        // 无 coordinator 且无 external：若 accessor 有 controller 则尝试平台；否则 no_session。
+        if (_options.PlaybackControllerAccessor is not null)
+        {
+            await HandlePlatformPlaybackAsync(message, command, cancellationToken);
+            return;
+        }
+
+        await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorNoSession, "no session", cancellationToken);
+    }
+
+    private async Task HandleExternalPlaybackAsync(
+        MediaLinkMessage message,
+        MediaPlaybackCommand command,
+        MediaLinkInjectionStore? store,
+        CancellationToken cancellationToken)
+    {
+        if (store is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, "not configured", cancellationToken);
+            return;
+        }
+
+        if (command is MediaPlaybackCommand.Next or MediaPlaybackCommand.Previous)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorNotSupported, "external next/previous not supported", cancellationToken);
+            return;
+        }
+
+        string? error;
+        var ok = command switch
+        {
+            MediaPlaybackCommand.Play => store.TryVirtualPlay(out error),
+            MediaPlaybackCommand.Pause => store.TryVirtualPause(out error),
+            _ => Fail(out error)
+        };
+
+        if (!ok)
+        {
+            // 无 media 时用 no_session；其它失败 bad_request。
+            var code = string.Equals(error, "no external media", StringComparison.Ordinal)
+                ? MediaLinkProtocol.ErrorNoSession
+                : MediaLinkProtocol.ErrorBadRequest;
+            await SendErrorAsync(message.Id, code, error ?? "playback failed", cancellationToken);
+            return;
+        }
+
+        _options.Coordinator?.Recompute(MediaInfoChangeKind.Playback);
+        await SendOkAsync(message, cancellationToken);
+        if (_options.OnEffectiveMediaMutatedAsync is not null)
+        {
+            await _options.OnEffectiveMediaMutatedAsync(MediaInfoChangeKind.Playback);
+        }
+
+        static bool Fail(out string? err)
+        {
+            err = "unsupported command";
+            return false;
+        }
+    }
+
+    private async Task HandlePlatformPlaybackAsync(
+        MediaLinkMessage message,
+        MediaPlaybackCommand command,
+        CancellationToken cancellationToken)
+    {
+        var controller = _options.PlaybackControllerAccessor?.Invoke();
+        if (controller is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorNotSupported, "no playback controller", cancellationToken);
+            return;
+        }
+
+        MediaPlaybackCommandResult result;
+        try
+        {
+            result = await controller.ExecuteAsync(command, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "MediaLink platform playback command failed.");
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, ex.Message, cancellationToken);
+            return;
+        }
+
+        switch (result.Status)
+        {
+            case MediaPlaybackCommandStatus.Succeeded:
+                await SendOkAsync(message, cancellationToken);
+                break;
+            case MediaPlaybackCommandStatus.NotSupported:
+                await SendErrorAsync(
+                    message.Id,
+                    MediaLinkProtocol.ErrorNotSupported,
+                    result.Message ?? "not supported",
+                    cancellationToken);
+                break;
+            case MediaPlaybackCommandStatus.NoSession:
+                await SendErrorAsync(
+                    message.Id,
+                    MediaLinkProtocol.ErrorNoSession,
+                    result.Message ?? "no session",
+                    cancellationToken);
+                break;
+            case MediaPlaybackCommandStatus.Failed:
+            default:
+                await SendErrorAsync(
+                    message.Id,
+                    MediaLinkProtocol.ErrorInternal,
+                    result.Message ?? "playback failed",
+                    cancellationToken);
+                break;
+        }
+    }
+
+    private static bool TryParsePlaybackAction(string action, out MediaPlaybackCommand command)
+    {
+        if (action.Equals("play", StringComparison.OrdinalIgnoreCase))
+        {
+            command = MediaPlaybackCommand.Play;
+            return true;
+        }
+
+        if (action.Equals("pause", StringComparison.OrdinalIgnoreCase))
+        {
+            command = MediaPlaybackCommand.Pause;
+            return true;
+        }
+
+        if (action.Equals("next", StringComparison.OrdinalIgnoreCase))
+        {
+            command = MediaPlaybackCommand.Next;
+            return true;
+        }
+
+        if (action.Equals("previous", StringComparison.OrdinalIgnoreCase))
+        {
+            command = MediaPlaybackCommand.Previous;
+            return true;
+        }
+
+        command = default;
+        return false;
+    }
+
+    private Task SendOkAsync(MediaLinkMessage message, CancellationToken cancellationToken) =>
+        SendAsync(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeOk,
+            new MediaLinkOkPayload { For = message.Type },
+            id: message.Id), cancellationToken);
 
     private Task SendErrorAsync(string? id, string code, string message, CancellationToken cancellationToken) =>
         SendAsync(MediaLinkMessageSerializer.Create(
