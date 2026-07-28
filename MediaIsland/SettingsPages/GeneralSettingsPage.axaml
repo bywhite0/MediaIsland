@@ -443,12 +443,12 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-                        <ci:IconText Glyph="&#xE968;" Text="实时 WebSocket" Margin="0 16 0 8" />
+                        <ci:IconText Glyph="&#xE968;" Text="MediaLink WebSocket" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
-                                       Header="启用实时推送服务"
-                                       Description="以 WSS（TLS 1.3）推送当前媒体与歌词。可绑定局域网；必须配置 Token。客户端需信任或固定自签证书指纹。">
+                                       Header="启用 MediaLink 推送服务"
+                                       Description="以 ws 推送当前媒体与歌词。可绑定局域网；必须配置 Token。">
                 <controls:SettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.RealtimeIsEnabled, Mode=TwoWay}" />
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkIsEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1F7;}"
@@ -458,10 +458,10 @@
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="140"
                                  Watermark="0.0.0.0"
-                                 Text="{Binding Settings.RealtimeListenAddress, Mode=TwoWay}" />
+                                 Text="{Binding Settings.MediaLinkListenAddress, Mode=TwoWay}" />
                         <TextBox Width="80"
                                  Watermark="17654"
-                                 Text="{Binding Settings.RealtimePort, Mode=TwoWay}" />
+                                 Text="{Binding Settings.MediaLinkPort, Mode=TwoWay}" />
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
@@ -472,22 +472,22 @@
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="220"
                                  IsReadOnly="True"
-                                 Text="{Binding Settings.RealtimeToken}" />
+                                 Text="{Binding Settings.MediaLinkToken}" />
                         <Button Content="复制" Click="CopyRealtimeTokenOnClick" />
                         <Button Content="重新生成" Click="RegenerateRealtimeTokenOnClick" />
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0A2;}"
-                                       Header="证书指纹 / 状态"
-                                       Description="SHA-256 指纹用于客户端固定 pinning。路径固定为 /v1/ws。">
+                                       Header="服务状态"
+                                       Description="路径固定为 /v1/ws。">
                 <controls:SettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBlock VerticalAlignment="Center"
                                    Text="{Binding RealtimeStatusText}"
                                    TextTrimming="CharacterEllipsis"
                                    MaxWidth="360" />
-                        <Button Content="复制指纹" Click="CopyRealtimeFingerprintOnClick" />
+                        <Button Content="复制指纹" Click="CopyRealtimeFingerprintOnClick" IsVisible="False" />
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>

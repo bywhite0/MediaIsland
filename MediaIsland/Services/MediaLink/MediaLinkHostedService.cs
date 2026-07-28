@@ -11,7 +11,6 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     private readonly IMediaService _mediaService;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly Func<PluginSettings> _settingsFactory;
-    private readonly Func<string> _configFolderFactory;
     private readonly ILoggerFactory? _loggerFactory;
     private readonly ILogger<MediaLinkHostedService>? _logger;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
@@ -26,13 +25,11 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         IMediaService mediaService,
         LyricsSearchService lyricsSearchService,
         Func<PluginSettings> settingsFactory,
-        Func<string> configFolderFactory,
         ILoggerFactory? loggerFactory = null)
     {
         _mediaService = mediaService;
         _lyricsSearchService = lyricsSearchService;
         _settingsFactory = settingsFactory;
-        _configFolderFactory = configFolderFactory;
         _loggerFactory = loggerFactory;
         _logger = loggerFactory?.CreateLogger<MediaLinkHostedService>();
     }
@@ -40,9 +37,6 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     public bool IsRunning => _server?.IsRunning == true;
 
     public string? Endpoint => _server?.Endpoint;
-
-    // UI residual until settings rewrite.
-    public string? CertFingerprint => null;
 
     public string? LastError { get; private set; }
 
@@ -84,11 +78,11 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
     private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(PluginSettings.RealtimeIsEnabled)
-            or nameof(PluginSettings.RealtimeListenAddress)
-            or nameof(PluginSettings.RealtimePort)
-            or nameof(PluginSettings.RealtimeToken)
-            or nameof(PluginSettings.RealtimeTimelineMinIntervalMs))
+        if (e.PropertyName is nameof(PluginSettings.MediaLinkIsEnabled)
+            or nameof(PluginSettings.MediaLinkListenAddress)
+            or nameof(PluginSettings.MediaLinkPort)
+            or nameof(PluginSettings.MediaLinkToken)
+            or nameof(PluginSettings.MediaLinkTimelineMinIntervalMs))
         {
             _ = ReloadAsync();
         }
@@ -114,36 +108,33 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         {
             await StopCoreAsync(cancellationToken);
 
-            if (!settings.RealtimeIsEnabled)
+            if (!settings.MediaLinkIsEnabled)
             {
                 LastError = null;
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(settings.RealtimeToken))
+            if (string.IsNullOrWhiteSpace(settings.MediaLinkToken))
             {
-                settings.RealtimeToken = MediaLinkAuth.GenerateToken();
+                settings.MediaLinkToken = MediaLinkAuth.GenerateToken();
             }
-
-            // configFolder retained for future MediaLink data dir; cert store path removed.
-            _ = _configFolderFactory();
 
             _hub = new MediaLinkSessionHub();
             _publisher = new MediaLinkStatePublisher(
                 _mediaService,
                 _lyricsSearchService,
                 _hub,
-                () => settings.RealtimeTimelineMinIntervalMs,
+                () => settings.MediaLinkTimelineMinIntervalMs,
                 logger: _loggerFactory?.CreateLogger<MediaLinkStatePublisher>());
             _publisher.Start();
 
             _server = new MediaLinkServer(
                 _hub,
                 session => _publisher.PublishSnapshotAsync(session),
-                () => settings.RealtimeToken,
+                () => settings.MediaLinkToken,
                 _loggerFactory?.CreateLogger<MediaLinkServer>());
 
-            await _server.StartAsync(settings.RealtimeListenAddress, settings.RealtimePort, cancellationToken);
+            await _server.StartAsync(settings.MediaLinkListenAddress, settings.MediaLinkPort, cancellationToken);
             LastError = null;
         }
         catch (Exception ex)

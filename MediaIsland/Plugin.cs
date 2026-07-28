@@ -58,7 +58,6 @@ namespace MediaIsland
                 provider.GetRequiredService<IMediaService>(),
                 provider.GetRequiredService<LyricsSearchService>(),
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
-                () => PluginConfigFolder,
                 provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()));
             services.AddSingleton<IMediaLinkGateway>(provider => provider.GetRequiredService<MediaLinkHostedService>());
             services.AddHostedService(provider => provider.GetRequiredService<MediaLinkHostedService>());

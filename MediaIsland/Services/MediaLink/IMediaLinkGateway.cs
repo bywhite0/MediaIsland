@@ -6,7 +6,5 @@ public interface IMediaLinkGateway
 
     string? Endpoint { get; }
 
-    string? CertFingerprint { get; }
-
     string? LastError { get; }
 }

@@ -300,67 +300,67 @@ namespace MediaIsland.Models
             }
         }
 
-        private bool _realtimeIsEnabled;
-        private string _realtimeListenAddress = "0.0.0.0";
-        private int _realtimePort = 17654;
-        private string _realtimeToken = string.Empty;
-        private int _realtimeTimelineMinIntervalMs = 200;
+        private bool _mediaLinkIsEnabled;
+        private string _mediaLinkListenAddress = "0.0.0.0";
+        private int _mediaLinkPort = 17654;
+        private string _mediaLinkToken = string.Empty;
+        private int _mediaLinkTimelineMinIntervalMs = 200;
 
-        public bool RealtimeIsEnabled
+        public bool MediaLinkIsEnabled
         {
-            get => _realtimeIsEnabled;
+            get => _mediaLinkIsEnabled;
             set
             {
-                if (_realtimeIsEnabled == value) return;
-                _realtimeIsEnabled = value;
+                if (_mediaLinkIsEnabled == value) return;
+                _mediaLinkIsEnabled = value;
                 OnPropertyChanged();
             }
         }
 
-        public string RealtimeListenAddress
+        public string MediaLinkListenAddress
         {
-            get => _realtimeListenAddress;
+            get => _mediaLinkListenAddress;
             set
             {
                 var normalized = string.IsNullOrWhiteSpace(value) ? "0.0.0.0" : value.Trim();
-                if (_realtimeListenAddress == normalized) return;
-                _realtimeListenAddress = normalized;
+                if (_mediaLinkListenAddress == normalized) return;
+                _mediaLinkListenAddress = normalized;
                 OnPropertyChanged();
             }
         }
 
-        public int RealtimePort
+        public int MediaLinkPort
         {
-            get => _realtimePort;
+            get => _mediaLinkPort;
             set
             {
                 var normalized = value is < 1 or > 65535 ? 17654 : value;
-                if (_realtimePort == normalized) return;
-                _realtimePort = normalized;
+                if (_mediaLinkPort == normalized) return;
+                _mediaLinkPort = normalized;
                 OnPropertyChanged();
             }
         }
 
-        public string RealtimeToken
+        public string MediaLinkToken
         {
-            get => _realtimeToken;
+            get => _mediaLinkToken;
             set
             {
                 var normalized = value ?? string.Empty;
-                if (_realtimeToken == normalized) return;
-                _realtimeToken = normalized;
+                if (_mediaLinkToken == normalized) return;
+                _mediaLinkToken = normalized;
                 OnPropertyChanged();
             }
         }
 
-        public int RealtimeTimelineMinIntervalMs
+        public int MediaLinkTimelineMinIntervalMs
         {
-            get => _realtimeTimelineMinIntervalMs;
+            get => _mediaLinkTimelineMinIntervalMs;
             set
             {
                 var normalized = value < 0 ? 200 : value;
-                if (_realtimeTimelineMinIntervalMs == normalized) return;
-                _realtimeTimelineMinIntervalMs = normalized;
+                if (_mediaLinkTimelineMinIntervalMs == normalized) return;
+                _mediaLinkTimelineMinIntervalMs = normalized;
                 OnPropertyChanged();
             }
         }

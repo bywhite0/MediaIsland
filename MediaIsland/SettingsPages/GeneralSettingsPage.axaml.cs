@@ -854,20 +854,16 @@ namespace MediaIsland.SettingsPages
         {
             if (_realtimeGateway is null)
             {
-                RealtimeStatusText = "实时服务不可用";
+                RealtimeStatusText = "MediaLink 服务不可用";
                 return;
             }
 
             var endpoint = _realtimeGateway.Endpoint ?? "-";
-            var fingerprint = _realtimeGateway.CertFingerprint;
-            var shortFp = string.IsNullOrEmpty(fingerprint)
-                ? "-"
-                : (fingerprint.Length <= 16 ? fingerprint : fingerprint[..16] + "…");
             var running = _realtimeGateway.IsRunning ? "运行中" : "已停止";
             var error = string.IsNullOrWhiteSpace(_realtimeGateway.LastError)
                 ? string.Empty
                 : $"；错误：{_realtimeGateway.LastError}";
-            RealtimeStatusText = $"{running} · {endpoint} · 指纹 {shortFp}{error}";
+            RealtimeStatusText = $"{running} · {endpoint}{error}";
         }
 
         private async void CopyRealtimeTokenOnClick(object? sender, RoutedEventArgs e)
@@ -878,24 +874,18 @@ namespace MediaIsland.SettingsPages
                 return;
             }
 
-            await top.Clipboard.SetTextAsync(Settings.RealtimeToken ?? string.Empty);
+            await top.Clipboard.SetTextAsync(Settings.MediaLinkToken ?? string.Empty);
         }
 
         private void RegenerateRealtimeTokenOnClick(object? sender, RoutedEventArgs e)
         {
-            Settings.RealtimeToken = MediaLinkAuth.GenerateToken();
+            Settings.MediaLinkToken = MediaLinkAuth.GenerateToken();
             RefreshRealtimeStatus();
         }
 
-        private async void CopyRealtimeFingerprintOnClick(object? sender, RoutedEventArgs e)
+        private void CopyRealtimeFingerprintOnClick(object? sender, RoutedEventArgs e)
         {
-            var top = TopLevel.GetTopLevel(this);
-            if (top?.Clipboard is null)
-            {
-                return;
-            }
-
-            await top.Clipboard.SetTextAsync(_realtimeGateway?.CertFingerprint ?? string.Empty);
+            // Certificate fingerprint removed with plain ws; Task 8 will drop this control.
         }
 
         private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
