@@ -18,16 +18,28 @@ public interface IMediaLinkSocket
     Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken);
 }
 
-public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSocket
+public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSocket, IDisposable
 {
+    /// <summary>单条文本消息组装上限（2 MiB）。</summary>
+    public const int MaxMessageBytes = 2 * 1024 * 1024;
+
     private readonly byte[] _buffer = new byte[64 * 1024];
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
 
     public WebSocketState State => webSocket.State;
 
     public async Task SendTextAsync(string text, CancellationToken cancellationToken)
     {
         var bytes = Encoding.UTF8.GetBytes(text);
-        await webSocket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await webSocket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
     }
 
     public async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
@@ -46,6 +58,23 @@ public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSo
                 continue;
             }
 
+            if (message.Length + result.Count > MaxMessageBytes)
+            {
+                try
+                {
+                    await webSocket.CloseAsync(
+                        WebSocketCloseStatus.MessageTooBig,
+                        "message too big",
+                        cancellationToken);
+                }
+                catch
+                {
+                    // ignore close races
+                }
+
+                return null;
+            }
+
             message.Write(_buffer, 0, result.Count);
             if (result.EndOfMessage)
             {
@@ -54,8 +83,20 @@ public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSo
         }
     }
 
-    public Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken) =>
-        webSocket.CloseAsync(status, description, cancellationToken);
+    public async Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
+    {
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await webSocket.CloseAsync(status, description, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    public void Dispose() => _sendLock.Dispose();
 }
 
 public sealed class MediaLinkSessionOptions
@@ -73,6 +114,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private readonly MediaLinkSessionOptions _options;
     private readonly ILogger? _logger;
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly HashSet<string> _channels = new(StringComparer.Ordinal);
     private bool _authenticated;
     private bool _closed;
@@ -161,6 +203,14 @@ public sealed class MediaLinkSession : IAsyncDisposable
             return;
         }
 
+        // 未认证时仅允许 auth；其它类型（含 ping / Phase2）一律 unauthorized 并关闭。
+        if (!_authenticated && message.Type != MediaLinkProtocol.TypeAuth)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorUnauthorized, "authenticate first", cancellationToken);
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized", cancellationToken);
+            return;
+        }
+
         switch (message.Type)
         {
             case MediaLinkProtocol.TypeAuth:
@@ -185,13 +235,6 @@ public sealed class MediaLinkSession : IAsyncDisposable
                 await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorNotImplemented, message.Type, cancellationToken);
                 break;
             default:
-                if (!_authenticated)
-                {
-                    await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorUnauthorized, "authenticate first", cancellationToken);
-                    await CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized", cancellationToken);
-                    return;
-                }
-
                 await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, $"unknown type: {message.Type}", cancellationToken);
                 break;
         }
@@ -212,7 +255,20 @@ public sealed class MediaLinkSession : IAsyncDisposable
         }
 
         var json = MediaLinkMessageSerializer.Serialize(message);
-        await _socket.SendTextAsync(json, cancellationToken);
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_closed || _socket.State != WebSocketState.Open)
+            {
+                return;
+            }
+
+            await _socket.SendTextAsync(json, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
     }
 
     private async Task HandleAuthAsync(MediaLinkMessage message, CancellationToken cancellationToken)
@@ -308,6 +364,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         _closed = true;
+        // 不 Dispose _sendLock：停止过程中仍可能有 in-flight Send。
         return ValueTask.CompletedTask;
     }
 }

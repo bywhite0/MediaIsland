@@ -9,6 +9,12 @@ namespace MediaIsland.Services.MediaLink;
 
 public sealed class MediaLinkServer : IAsyncDisposable
 {
+    /// <summary>最大并发会话数；满则拒绝新 TCP 连接。</summary>
+    public const int MaxConcurrentSessions = 32;
+
+    /// <summary>HTTP 升级请求头最大字节数（防止畸形请求占内存）。</summary>
+    internal const int MaxHttpHeaderBytes = 16 * 1024;
+
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<MediaLinkSession, Task> _onSubscribedAsync;
     private readonly Func<string> _tokenFactory;
@@ -18,6 +24,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private Task? _acceptLoop;
     private readonly List<Task> _sessionTasks = [];
     private readonly object _gate = new();
+    private int _activeSessions;
 
     public MediaLinkServer(
         MediaLinkSessionHub hub,
@@ -96,6 +103,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         await _hub.DisposeAllAsync();
         _acceptCts?.Dispose();
         _acceptCts = null;
+        Volatile.Write(ref _activeSessions, 0);
     }
 
     private async Task AcceptLoopAsync(string token, CancellationToken cancellationToken)
@@ -121,6 +129,15 @@ public sealed class MediaLinkServer : IAsyncDisposable
                 continue;
             }
 
+            if (Volatile.Read(ref _activeSessions) >= MaxConcurrentSessions)
+            {
+                _logger?.LogWarning(
+                    "MediaLink 会话数已达上限 {Max}，拒绝新连接",
+                    MaxConcurrentSessions);
+                try { client.Close(); } catch { /* ignore */ }
+                continue;
+            }
+
             var task = Task.Run(() => HandleClientAsync(client, token, cancellationToken), CancellationToken.None);
             lock (_gate)
             {
@@ -137,6 +154,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
     {
         using (client)
         {
+            Interlocked.Increment(ref _activeSessions);
             try
             {
                 await using var network = client.GetStream();
@@ -151,8 +169,9 @@ public sealed class MediaLinkServer : IAsyncDisposable
                     subProtocol: null,
                     keepAliveInterval: TimeSpan.FromSeconds(30));
 
+                using var linkSocket = new WebSocketMediaLinkSocket(webSocket);
                 var session = new MediaLinkSession(
-                    new WebSocketMediaLinkSocket(webSocket),
+                    linkSocket,
                     new MediaLinkSessionOptions
                     {
                         ExpectedToken = token,
@@ -184,34 +203,101 @@ public sealed class MediaLinkServer : IAsyncDisposable
             {
                 _logger?.LogDebug(ex, "MediaLink 连接处理失败");
             }
+            finally
+            {
+                Interlocked.Decrement(ref _activeSessions);
+            }
         }
     }
 
-    private static async Task<bool> TryUpgradeAsync(Stream stream, CancellationToken cancellationToken)
+    /// <summary>
+    /// 纯字节解析 HTTP 升级请求，严格停在 <c>\r\n\r\n</c> 之后，不吞掉后续 WebSocket 帧。
+    /// </summary>
+    internal static async Task<bool> TryUpgradeAsync(Stream stream, CancellationToken cancellationToken)
     {
-        using var reader = new StreamReader(stream, Encoding.ASCII, detectEncodingFromByteOrderMarks: false, bufferSize: 1024, leaveOpen: true);
-        var requestLine = await reader.ReadLineAsync(cancellationToken);
-        if (string.IsNullOrWhiteSpace(requestLine))
+        if (!TryParseHttpRequest(
+                await ReadHttpHeadersAsync(stream, cancellationToken),
+                out var path,
+                out var webSocketKey))
         {
             return false;
         }
 
-        var parts = requestLine.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length < 2 ||
-            !parts[0].Equals("GET", StringComparison.OrdinalIgnoreCase) ||
-            !parts[1].StartsWith(MediaLinkProtocol.Path, StringComparison.Ordinal))
+        if (!path.StartsWith(MediaLinkProtocol.Path, StringComparison.Ordinal))
         {
             var bad = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            var badBytes = Encoding.ASCII.GetBytes(bad);
-            await stream.WriteAsync(badBytes, cancellationToken);
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(bad), cancellationToken);
             return false;
         }
 
-        string? webSocketKey = null;
-        while (true)
+        if (string.IsNullOrWhiteSpace(webSocketKey))
         {
-            var line = await reader.ReadLineAsync(cancellationToken);
-            if (line is null || line.Length == 0)
+            return false;
+        }
+
+        var accept = Convert.ToBase64String(
+            System.Security.Cryptography.SHA1.HashData(
+                Encoding.ASCII.GetBytes(webSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+        var response =
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            $"Sec-WebSocket-Accept: {accept}\r\n\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(response), cancellationToken);
+        return true;
+    }
+
+    /// <summary>
+    /// 逐字节读到 header 结束符；返回 header 文本（不含 terminator 后的任何字节）。
+    /// </summary>
+    internal static async Task<string> ReadHttpHeadersAsync(Stream stream, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[MaxHttpHeaderBytes];
+        var length = 0;
+        while (length < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(length, 1), cancellationToken);
+            if (read == 0)
+            {
+                break;
+            }
+
+            length++;
+            if (length >= 4 &&
+                buffer[length - 4] == (byte)'\r' &&
+                buffer[length - 3] == (byte)'\n' &&
+                buffer[length - 2] == (byte)'\r' &&
+                buffer[length - 1] == (byte)'\n')
+            {
+                return Encoding.ASCII.GetString(buffer, 0, length);
+            }
+        }
+
+        throw new InvalidOperationException("HTTP headers too large or incomplete.");
+    }
+
+    internal static bool TryParseHttpRequest(string headerText, out string path, out string? webSocketKey)
+    {
+        path = string.Empty;
+        webSocketKey = null;
+
+        var lines = headerText.Split("\r\n", StringSplitOptions.None);
+        if (lines.Length == 0 || string.IsNullOrWhiteSpace(lines[0]))
+        {
+            return false;
+        }
+
+        var parts = lines[0].Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2 || !parts[0].Equals("GET", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        path = parts[1];
+        for (var i = 1; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (string.IsNullOrEmpty(line))
             {
                 break;
             }
@@ -230,21 +316,6 @@ public sealed class MediaLinkServer : IAsyncDisposable
             }
         }
 
-        if (string.IsNullOrWhiteSpace(webSocketKey))
-        {
-            return false;
-        }
-
-        var accept = Convert.ToBase64String(
-            System.Security.Cryptography.SHA1.HashData(
-                Encoding.ASCII.GetBytes(webSocketKey + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
-        var response =
-            "HTTP/1.1 101 Switching Protocols\r\n" +
-            "Upgrade: websocket\r\n" +
-            "Connection: Upgrade\r\n" +
-            $"Sec-WebSocket-Accept: {accept}\r\n\r\n";
-        var bytes = Encoding.ASCII.GetBytes(response);
-        await stream.WriteAsync(bytes, cancellationToken);
         return true;
     }
 

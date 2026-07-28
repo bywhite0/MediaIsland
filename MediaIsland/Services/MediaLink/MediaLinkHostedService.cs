@@ -8,6 +8,8 @@ namespace MediaIsland.Services.MediaLink;
 
 public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, IDisposable
 {
+    private static readonly TimeSpan DisposeStopTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IMediaService _mediaService;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly Func<PluginSettings> _settingsFactory;
@@ -170,13 +172,43 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             return;
         }
 
+        _disposed = true;
+
         if (_boundSettings is not null)
         {
             _boundSettings.PropertyChanged -= OnSettingsChanged;
+            _boundSettings = null;
         }
 
-        _ = StopAsync(CancellationToken.None);
+        // 同步等待停止，避免 fire-and-forget 与 _lifecycleLock.Dispose 竞态。
+        try
+        {
+            if (!_lifecycleLock.Wait(DisposeStopTimeout))
+            {
+                _logger?.LogWarning("MediaLink Dispose 等待生命周期锁超时");
+            }
+            else
+            {
+                try
+                {
+                    StopCoreAsync(CancellationToken.None)
+                        .Wait(DisposeStopTimeout);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogDebug(ex, "MediaLink Dispose 停止服务时出错");
+                }
+                finally
+                {
+                    try { _lifecycleLock.Release(); } catch { /* already disposed/owned */ }
+                }
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // ignore
+        }
+
         _lifecycleLock.Dispose();
-        _disposed = true;
     }
 }

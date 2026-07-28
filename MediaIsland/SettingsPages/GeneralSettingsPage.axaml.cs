@@ -43,6 +43,7 @@ namespace MediaIsland.SettingsPages
         private readonly LyricsSearchService _lyricsSearchService;
         private readonly IMediaLinkGateway? _mediaLinkGateway;
         private string _mediaLinkStatusText = "未启用";
+        private DispatcherTimer? _mediaLinkStatusTimer;
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -212,12 +213,15 @@ namespace MediaIsland.SettingsPages
             DetachedFromVisualTree += (_, _) =>
             {
                 _isDetached = true;
+                StopMediaLinkStatusPolling();
+                Settings.PropertyChanged -= OnPluginSettingsChangedForMediaLink;
                 _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
                 _lyricsSearchService.CurrentResultChanged -= LyricsSearchService_OnCurrentResultChanged;
                 CancelLyricsCandidateSearch();
                 CancelLyricsCandidateApply();
             };
             Settings.needRestart += RequestRestart;
+            Settings.PropertyChanged += OnPluginSettingsChangedForMediaLink;
             _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
             _lyricsSearchService.CurrentResultChanged += LyricsSearchService_OnCurrentResultChanged;
             UpdateCurrentLyricsSource(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo));
@@ -227,6 +231,7 @@ namespace MediaIsland.SettingsPages
             _ = RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
             RefreshMediaSourceDisplayInfos();
             RefreshMediaLinkStatus();
+            StartMediaLinkStatusPolling();
             var screenshotApp = new MediaSource
             {
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
@@ -864,6 +869,60 @@ namespace MediaIsland.SettingsPages
                 ? string.Empty
                 : $"；错误：{_mediaLinkGateway.LastError}";
             MediaLinkStatusText = $"{running} · {endpoint}{error}";
+        }
+
+        private void StartMediaLinkStatusPolling()
+        {
+            if (_mediaLinkGateway is null || _mediaLinkStatusTimer is not null)
+            {
+                return;
+            }
+
+            _mediaLinkStatusTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromSeconds(1)
+            };
+            _mediaLinkStatusTimer.Tick += (_, _) =>
+            {
+                if (_isDetached)
+                {
+                    return;
+                }
+
+                RefreshMediaLinkStatus();
+            };
+            _mediaLinkStatusTimer.Start();
+        }
+
+        private void StopMediaLinkStatusPolling()
+        {
+            if (_mediaLinkStatusTimer is null)
+            {
+                return;
+            }
+
+            _mediaLinkStatusTimer.Stop();
+            _mediaLinkStatusTimer = null;
+        }
+
+        private void OnPluginSettingsChangedForMediaLink(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is nameof(PluginSettings.MediaLinkIsEnabled)
+                or nameof(PluginSettings.MediaLinkListenAddress)
+                or nameof(PluginSettings.MediaLinkPort)
+                or nameof(PluginSettings.MediaLinkToken)
+                or nameof(PluginSettings.MediaLinkTimelineMinIntervalMs))
+            {
+                // 热更新异步完成，短延迟后再读 gateway 状态。
+                Dispatcher.UIThread.Post(async () =>
+                {
+                    await Task.Delay(300);
+                    if (!_isDetached)
+                    {
+                        RefreshMediaLinkStatus();
+                    }
+                });
+            }
         }
 
         private async void CopyMediaLinkTokenOnClick(object? sender, RoutedEventArgs e)
