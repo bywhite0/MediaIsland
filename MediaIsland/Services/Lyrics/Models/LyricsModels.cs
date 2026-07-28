@@ -23,7 +23,8 @@ public enum LyricsSourceId
     Netease,
     QqMusic,
     Kugou,
-    AmllTtml
+    AmllTtml,
+    External
 }
 
 public sealed record LyricsMetadata(
