@@ -33,6 +33,7 @@ public class MediaSourceFilterTests
     {
         Assert.False(MediaSourceFilter.IsLyricsSearchEnabled("top.imsyy.splayer-next", []));
         Assert.True(MediaSourceFilter.IsLyricsSearchEnabled("Spotify.exe", []));
+        Assert.True(SPlayerNextMediaSource.Matches("top.imsyy.splayer-next"));
     }
 
     [Fact]

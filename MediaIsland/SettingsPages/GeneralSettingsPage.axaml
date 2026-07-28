@@ -196,7 +196,7 @@
             <ci:IconText Glyph="&#xF07B;" Text="歌词" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE2E0;}"
                                        Header="歌词来源"
-                                       Description="按列表顺序搜索歌词。可开关来源、逐字歌词偏好，并配置 AMLL TTML API 地址。">
+                                       Description="按列表顺序搜索歌词。可开关来源、逐字歌词偏好，并配置 AMLL / SPlayer-Next API 地址。">
                 <controls:SettingsExpander.Footer>
                     <TextBlock Text="{Binding CurrentLyricsSourceDisplay}"
                                FontSize="12" />
@@ -264,6 +264,19 @@
                                 Click="TestAmllConnectionOnClick" />
                     </Grid>
                     <TextBlock Text="{Binding AmllConnectionStatus}"
+                               TextWrapping="Wrap" />
+                    <TextBlock Text="SPlayer-Next 外部 API 地址"
+                               Margin="0,8,0,0" />
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBox Grid.Column="0"
+                                 Watermark="http://127.0.0.1:14558"
+                                 Text="{Binding SPlayerNextApiBaseUrl, Mode=TwoWay}" />
+                        <Button Grid.Column="1"
+                                Margin="8,0,0,0"
+                                Content="测试连接"
+                                Click="TestSPlayerNextConnectionOnClick" />
+                    </Grid>
+                    <TextBlock Text="{Binding SPlayerNextConnectionStatus}"
                                TextWrapping="Wrap" />
                     <Grid Margin="0,8,0,0" ColumnDefinitions="*,Auto">
                         <TextBlock Text="当前歌词候选"

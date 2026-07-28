@@ -362,7 +362,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return false;
         }
 
-        if (!MediaSourceFilter.IsLyricsSearchEnabled(info.SourceApp, _pluginSettings?.MediaSourceList))
+        // SPlayer-Next 默认关闭通用搜索，但仍允许走其外部 API 直出路径。
+        if (!MediaSourceFilter.IsLyricsSearchEnabled(info.SourceApp, _pluginSettings?.MediaSourceList) &&
+            !SPlayerNextMediaSource.Matches(info.SourceApp))
         {
             SkipLyricsSearch(info, "当前媒体来源已禁用歌词搜索", "已禁用歌词搜索");
             return false;
@@ -477,7 +479,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     info.SourceApp);
                 SetStatus($"正在查找歌词: {info.Title ?? "未知标题"}");
 
-                var result = await _lyricsSearchService.SearchAsync(info, token);
+                var allowProviderSearch = MediaSourceFilter.IsLyricsSearchEnabled(
+                    info.SourceApp,
+                    _pluginSettings?.MediaSourceList);
+                var result = await _lyricsSearchService.SearchAsync(info, token, allowProviderSearch);
                 token.ThrowIfCancellationRequested();
                 if (version != _searchVersion || token.IsCancellationRequested)
                 {
