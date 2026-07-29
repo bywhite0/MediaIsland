@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
+using MediaIsland.Helpers;
 using MediaIsland.Services.Lyrics.Models;
+using MediaIsland.Services.Lyrics.Providers;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
 
@@ -20,6 +22,7 @@ public sealed class LyricsSearchService
     private readonly IReadOnlyList<ILyricsProvider> _providers;
     private readonly IReadOnlyList<ILyricsPayloadParser> _parsers;
     private readonly Func<LyricsSourceSettings> _settingsFactory;
+    private readonly ISPlayerNextLyricsClient? _sPlayerNextLyricsClient;
     private readonly ILogger<LyricsSearchService>? _logger;
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CandidateCacheEntry> _candidateCache = new(StringComparer.OrdinalIgnoreCase);
@@ -52,15 +55,20 @@ public sealed class LyricsSearchService
         IEnumerable<ILyricsProvider> providers,
         IEnumerable<ILyricsPayloadParser> parsers,
         Func<LyricsSourceSettings> settingsFactory,
-        ILogger<LyricsSearchService>? logger = null)
+        ILogger<LyricsSearchService>? logger = null,
+        ISPlayerNextLyricsClient? sPlayerNextLyricsClient = null)
     {
         _providers = providers.ToArray();
         _parsers = parsers.ToArray();
         _settingsFactory = settingsFactory;
         _logger = logger;
+        _sPlayerNextLyricsClient = sPlayerNextLyricsClient;
     }
 
-    public async Task<LyricsSearchResult?> SearchAsync(MediaInfo info, CancellationToken cancellationToken = default)
+    public async Task<LyricsSearchResult?> SearchAsync(
+        MediaInfo info,
+        CancellationToken cancellationToken = default,
+        bool allowProviderSearch = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -74,7 +82,7 @@ public sealed class LyricsSearchService
         var settings = LyricsSourceSettings.Normalize(_settingsFactory().Clone());
         EnsureCacheFingerprint(settings);
 
-        var cacheKey = BuildCacheKey(info, settings);
+        var cacheKey = BuildCacheKey(info, settings, allowProviderSearch);
         if (_cache.TryGetValue(cacheKey, out var cached))
         {
             if (cached.ExpiresAt > DateTimeOffset.UtcNow)
@@ -87,7 +95,7 @@ public sealed class LyricsSearchService
             _cache.TryRemove(cacheKey, out _);
         }
 
-        var searchTask = GetOrStartSearchAsync(info, settings, cacheKey);
+        var searchTask = GetOrStartSearchAsync(info, settings, cacheKey, allowProviderSearch);
         try
         {
             return await searchTask.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -101,7 +109,8 @@ public sealed class LyricsSearchService
     private Task<LyricsSearchResult?> GetOrStartSearchAsync(
         MediaInfo info,
         LyricsSourceSettings settings,
-        string cacheKey)
+        string cacheKey,
+        bool allowProviderSearch)
     {
         lock (_searchSync)
         {
@@ -120,7 +129,13 @@ public sealed class LyricsSearchService
             PublishCurrentResult(null, searchVersion);
 
             var cts = new CancellationTokenSource();
-            var searchTask = ExecuteSearchAsync(info, settings, cacheKey, searchVersion, cts.Token);
+            var searchTask = ExecuteSearchAsync(
+                info,
+                settings,
+                cacheKey,
+                searchVersion,
+                allowProviderSearch,
+                cts.Token);
             _inflightSearch = new InflightSearch(cacheKey, searchTask, cts);
             _ = searchTask.ContinueWith(
                 task =>
@@ -147,10 +162,45 @@ public sealed class LyricsSearchService
         LyricsSourceSettings settings,
         string cacheKey,
         long searchVersion,
+        bool allowProviderSearch,
         CancellationToken cancellationToken)
     {
         try
         {
+            // 播放源为 SPlayer-Next 且外部 API 有歌词时，跳过全部在线搜索。
+            if (_sPlayerNextLyricsClient != null && SPlayerNextMediaSource.Matches(info.SourceApp))
+            {
+                var direct = await _sPlayerNextLyricsClient
+                    .TryFetchAsync(info, settings, cancellationToken)
+                    .ConfigureAwait(false);
+                if (direct != null)
+                {
+                    Cache(cacheKey, direct);
+                    PublishCurrentResult(direct, searchVersion);
+                    return direct;
+                }
+
+                if (!allowProviderSearch)
+                {
+                    _logger?.LogInformation(
+                        "[歌词] SPlayer-Next 外部 API 无可用歌词，且该播放源未启用歌词搜索：{Title} - {Artist}",
+                        info.Title,
+                        info.Artist);
+                    return null;
+                }
+
+                _logger?.LogInformation(
+                    "[歌词] SPlayer-Next 外部 API 未返回可用歌词，回退到在线搜索：{Title} - {Artist}",
+                    info.Title,
+                    info.Artist);
+            }
+
+            if (!allowProviderSearch)
+            {
+                _logger?.LogInformation("[歌词] 已禁用歌词搜索，跳过在线来源。");
+                return null;
+            }
+
             var orderedProviders = settings.Sources
                 .Where(source => source.IsEnabled)
                 .Select(source => _providers.FirstOrDefault(provider => provider.Id == source.Id))
@@ -600,7 +650,8 @@ public sealed class LyricsSearchService
         var fingerprint = string.Join(
             "|",
             settings.Sources.Select(source => $"{source.Id}:{source.IsEnabled}:{source.UseWordSyncedLyrics}"))
-            + "|" + settings.AmllApiBaseUrl;
+            + "|" + settings.AmllApiBaseUrl
+            + "|" + settings.SPlayerNextApiBaseUrl;
         if (!string.Equals(fingerprint, _settingsFingerprint, StringComparison.Ordinal))
         {
             _cache.Clear();
@@ -609,7 +660,10 @@ public sealed class LyricsSearchService
         }
     }
 
-    private static string BuildCacheKey(MediaInfo info, LyricsSourceSettings settings)
+    private static string BuildCacheKey(
+        MediaInfo info,
+        LyricsSourceSettings settings,
+        bool allowProviderSearch = true)
     {
         var durationBucket = GetDurationBucket(info);
         var sourceFlags = string.Join(
@@ -622,7 +676,10 @@ public sealed class LyricsSearchService
             LyricsTextNormalizer.NormalizeComparableText(info.AlbumTitle),
             durationBucket,
             sourceFlags,
-            settings.AmllApiBaseUrl);
+            settings.AmllApiBaseUrl,
+            settings.SPlayerNextApiBaseUrl,
+            info.SourceApp ?? string.Empty,
+            allowProviderSearch ? "1" : "0");
     }
 
     private static string BuildCandidateCacheKey(
@@ -637,7 +694,8 @@ public sealed class LyricsSearchService
             LyricsTextNormalizer.NormalizeComparableText(info.AlbumTitle),
             GetDurationBucket(info),
             providerId,
-            settings.AmllApiBaseUrl);
+            settings.AmllApiBaseUrl,
+            settings.SPlayerNextApiBaseUrl);
     }
 
     private static string GetDurationBucket(MediaInfo info)

@@ -406,7 +406,6 @@ namespace MediaIsland.Models
     }
     public class MediaSource : ObservableObject
     {
-        private const string LyricsSearchDisabledByDefaultSource = "top.imsyy.splayer-next";
         private string _source = string.Empty;
         private bool _isEnabled = true;
         private bool? _isLyricsSearchEnabled;
@@ -452,10 +451,8 @@ namespace MediaIsland.Models
 
         public static bool IsLyricsSearchEnabledByDefault(string sourceApp)
         {
-            return !string.Equals(
-                sourceApp,
-                LyricsSearchDisabledByDefaultSource,
-                StringComparison.OrdinalIgnoreCase);
+            // SPlayer-Next 默认关闭通用歌词搜索：优先走其外部 API 直出歌词。
+            return !Helpers.SPlayerNextMediaSource.Matches(sourceApp);
         }
 
         public string? IconPath

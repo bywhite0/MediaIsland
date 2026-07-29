@@ -24,6 +24,7 @@ public enum LyricsSourceId
     QqMusic,
     Kugou,
     AmllTtml,
+    SPlayerNext
     External
 }
 
@@ -98,9 +99,16 @@ public sealed class LyricsSourceEntry
 
 public sealed class LyricsSourceSettings
 {
+    public const string DefaultSPlayerNextApiBaseUrl = "http://127.0.0.1:14558";
+
     public List<LyricsSourceEntry> Sources { get; set; } = CreateDefaultSources();
 
     public string AmllApiBaseUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// SPlayer-Next 外部 API 根地址（不含 /api），留空时使用默认本机端口。
+    /// </summary>
+    public string SPlayerNextApiBaseUrl { get; set; } = DefaultSPlayerNextApiBaseUrl;
 
     public static List<LyricsSourceEntry> CreateDefaultSources() =>
     [
@@ -115,6 +123,7 @@ public sealed class LyricsSourceSettings
         return new LyricsSourceSettings
         {
             AmllApiBaseUrl = AmllApiBaseUrl,
+            SPlayerNextApiBaseUrl = SPlayerNextApiBaseUrl,
             Sources = (Sources ?? []).OfType<LyricsSourceEntry>().Select(source => new LyricsSourceEntry
             {
                 Id = source.Id,
@@ -134,7 +143,10 @@ public sealed class LyricsSourceSettings
 
         foreach (var source in (settings.Sources ?? []).OfType<LyricsSourceEntry>())
         {
-            if (!Enum.IsDefined(typeof(LyricsSourceId), source.Id) || !seen.Add(source.Id))
+            // SPlayer-Next 不作为可排序搜索源，由播放源检测自动接入。
+            if (source.Id == LyricsSourceId.SPlayerNext ||
+                !Enum.IsDefined(typeof(LyricsSourceId), source.Id) ||
+                !seen.Add(source.Id))
             {
                 continue;
             }
@@ -164,6 +176,7 @@ public sealed class LyricsSourceSettings
 
         settings.Sources = normalized;
         settings.AmllApiBaseUrl = NormalizeAmllBaseUrl(settings.AmllApiBaseUrl);
+        settings.SPlayerNextApiBaseUrl = NormalizeSPlayerNextBaseUrl(settings.SPlayerNextApiBaseUrl);
         return settings;
     }
 
@@ -179,6 +192,30 @@ public sealed class LyricsSourceSettings
             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
         {
             return string.Empty;
+        }
+
+        return trimmed;
+    }
+
+    public static string NormalizeSPlayerNextBaseUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return DefaultSPlayerNextApiBaseUrl;
+        }
+
+        var trimmed = value.Trim().TrimEnd('/');
+        if (!Uri.TryCreate(trimmed, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            return DefaultSPlayerNextApiBaseUrl;
+        }
+
+        // 用户可能填入 .../api，统一收敛到根地址。
+        if (uri.AbsolutePath.Equals("/api", StringComparison.OrdinalIgnoreCase) ||
+            uri.AbsolutePath.Equals("/api/", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = $"{uri.Scheme}://{uri.Authority}";
         }
 
         return trimmed;

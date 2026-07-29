@@ -24,7 +24,9 @@ public class LyricsSourceSettingsTests
         Assert.Equal(4, normalized.Sources.Count);
         Assert.Equal(LyricsSourceId.Netease, normalized.Sources[0].Id);
         Assert.Contains(normalized.Sources, source => source.Id == LyricsSourceId.QqMusic);
+        Assert.DoesNotContain(normalized.Sources, source => source.Id == LyricsSourceId.SPlayerNext);
         Assert.Equal("https://example.com/api", normalized.AmllApiBaseUrl);
+        Assert.Equal(LyricsSourceSettings.DefaultSPlayerNextApiBaseUrl, normalized.SPlayerNextApiBaseUrl);
     }
 
     [Fact]
@@ -33,6 +35,17 @@ public class LyricsSourceSettingsTests
         Assert.Equal(string.Empty, LyricsSourceSettings.NormalizeAmllBaseUrl("not-a-url"));
         Assert.Equal(string.Empty, LyricsSourceSettings.NormalizeAmllBaseUrl("ftp://x"));
         Assert.Equal("https://host", LyricsSourceSettings.NormalizeAmllBaseUrl("https://host/"));
+    }
+
+    [Fact]
+    public void NormalizeSPlayerNextBaseUrl_DefaultsAndStripsApiPath()
+    {
+        Assert.Equal(
+            LyricsSourceSettings.DefaultSPlayerNextApiBaseUrl,
+            LyricsSourceSettings.NormalizeSPlayerNextBaseUrl(""));
+        Assert.Equal(
+            "http://127.0.0.1:14558",
+            LyricsSourceSettings.NormalizeSPlayerNextBaseUrl("http://127.0.0.1:14558/api"));
     }
 
     [Fact]

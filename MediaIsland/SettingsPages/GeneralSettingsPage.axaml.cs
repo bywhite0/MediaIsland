@@ -59,6 +59,8 @@ namespace MediaIsland.SettingsPages
         private Bitmap? _currentMediaSourceIcon;
         private string _amllApiBaseUrl = string.Empty;
         private string _amllConnectionStatus = "留空表示不使用 AMLL 来源。";
+        private string _sPlayerNextApiBaseUrl = LyricsSourceSettings.DefaultSPlayerNextApiBaseUrl;
+        private string _sPlayerNextConnectionStatus = "默认 http://127.0.0.1:14558；播放源为 SPlayer-Next 时优先使用其外部 API 歌词。";
         private string _currentLyricsSourceDisplay = "当前使用：暂无";
         private string _currentLyricsCandidatesStatus = "播放媒体后将在此处显示已启用歌词源的搜索候选。";
         private CancellationTokenSource? _lyricsCandidatesCancellation;
@@ -176,6 +178,26 @@ namespace MediaIsland.SettingsPages
         {
             get => _amllConnectionStatus;
             private set => SetProperty(ref _amllConnectionStatus, value);
+        }
+
+        public string SPlayerNextApiBaseUrl
+        {
+            get => _sPlayerNextApiBaseUrl;
+            set
+            {
+                if (!SetProperty(ref _sPlayerNextApiBaseUrl, value))
+                {
+                    return;
+                }
+
+                PersistLyricsSettings();
+            }
+        }
+
+        public string SPlayerNextConnectionStatus
+        {
+            get => _sPlayerNextConnectionStatus;
+            private set => SetProperty(ref _sPlayerNextConnectionStatus, value);
         }
 
         public string CurrentLyricsSourceDisplay
@@ -352,9 +374,18 @@ namespace MediaIsland.SettingsPages
                 return;
             }
 
-            if (!MediaSourceFilter.IsLyricsSearchEnabled(info.SourceApp, Settings.MediaSourceList))
+            if (!MediaSourceFilter.IsLyricsSearchEnabled(info.SourceApp, Settings.MediaSourceList) &&
+                !SPlayerNextMediaSource.Matches(info.SourceApp))
             {
                 await UpdateCurrentMediaUiAsync(() => ClearLyricsCandidates("当前媒体来源已禁用歌词搜索，不搜索歌词候选。"));
+                return;
+            }
+
+            if (SPlayerNextMediaSource.Matches(info.SourceApp) &&
+                !MediaSourceFilter.IsLyricsSearchEnabled(info.SourceApp, Settings.MediaSourceList))
+            {
+                await UpdateCurrentMediaUiAsync(() =>
+                    ClearLyricsCandidates("当前为 SPlayer-Next：优先使用其外部 API 歌词；通用歌词搜索默认关闭。"));
                 return;
             }
 
@@ -430,7 +461,8 @@ namespace MediaIsland.SettingsPages
                 return;
             }
 
-            if (!MediaSourceFilter.IsLyricsSearchEnabled(mediaInfo.SourceApp, Settings.MediaSourceList))
+            if (!MediaSourceFilter.IsLyricsSearchEnabled(mediaInfo.SourceApp, Settings.MediaSourceList) &&
+                !SPlayerNextMediaSource.Matches(mediaInfo.SourceApp))
             {
                 CurrentLyricsCandidatesStatus = "当前媒体来源已禁用歌词搜索，不能应用歌词候选。";
                 return;
@@ -1026,6 +1058,8 @@ namespace MediaIsland.SettingsPages
 
             _amllApiBaseUrl = Settings.Lyrics.AmllApiBaseUrl;
             OnPropertyChanged(nameof(AmllApiBaseUrl));
+            _sPlayerNextApiBaseUrl = Settings.Lyrics.SPlayerNextApiBaseUrl;
+            OnPropertyChanged(nameof(SPlayerNextApiBaseUrl));
             _suppressLyricsSave = false;
         }
 
@@ -1039,6 +1073,7 @@ namespace MediaIsland.SettingsPages
             Settings.Lyrics = new LyricsSourceSettings
             {
                 AmllApiBaseUrl = LyricsSourceSettings.NormalizeAmllBaseUrl(AmllApiBaseUrl),
+                SPlayerNextApiBaseUrl = LyricsSourceSettings.NormalizeSPlayerNextBaseUrl(SPlayerNextApiBaseUrl),
                 Sources = LyricsSourceItems.Select(item => new LyricsSourceEntry
                 {
                     Id = item.Id,
@@ -1110,6 +1145,31 @@ namespace MediaIsland.SettingsPages
             }
         }
 
+        private async void TestSPlayerNextConnectionOnClick(object? sender, RoutedEventArgs e)
+        {
+            var baseUrl = LyricsSourceSettings.NormalizeSPlayerNextBaseUrl(SPlayerNextApiBaseUrl);
+            SPlayerNextConnectionStatus = "正在测试连接...";
+            try
+            {
+                using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
+                using var response = await client.GetAsync($"{baseUrl}/api/info");
+                if (!response.IsSuccessStatusCode)
+                {
+                    SPlayerNextConnectionStatus = $"连接失败：HTTP {(int)response.StatusCode}";
+                    return;
+                }
+
+                var body = await response.Content.ReadAsStringAsync();
+                SPlayerNextConnectionStatus = string.IsNullOrWhiteSpace(body)
+                    ? $"连接成功：HTTP {(int)response.StatusCode}"
+                    : $"连接成功：{body.Trim()}";
+            }
+            catch (Exception ex)
+            {
+                SPlayerNextConnectionStatus = $"连接失败：{ex.Message}";
+            }
+        }
+
         private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         {
             NotifyPropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -1144,6 +1204,7 @@ namespace MediaIsland.SettingsPages
             LyricsSourceId.QqMusic => "QQ 音乐",
             LyricsSourceId.Kugou => "酷狗音乐",
             LyricsSourceId.Netease => "网易云音乐",
+            LyricsSourceId.SPlayerNext => "SPlayer-Next",
             _ => id.ToString()
         };
 
@@ -1153,6 +1214,7 @@ namespace MediaIsland.SettingsPages
             LyricsSourceId.QqMusic => "逐字 QRC / LRC",
             LyricsSourceId.Kugou => "逐字 KRC",
             LyricsSourceId.Netease => "LRC",
+            LyricsSourceId.SPlayerNext => "外部 API 直出",
             _ => string.Empty
         };
 

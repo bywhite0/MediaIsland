@@ -46,13 +46,15 @@ namespace MediaIsland
             services.AddSingleton<ILyricsProvider, QqMusicLyricsProvider>();
             services.AddSingleton<ILyricsProvider, KugouLyricsProvider>();
             services.AddSingleton<ILyricsProvider, NeteaseLyricsProvider>();
+            services.AddSingleton<ISPlayerNextLyricsClient, SPlayerNextLyricsClient>();
             services.AddSingleton<ILyricsPayloadParser, ManagedLyricsPayloadParser>();
             services.AddSingleton<ILyricsPayloadParser, TtmlLyricsPayloadParser>();
             services.AddSingleton<LyricsSearchService>(provider => new LyricsSearchService(
                 provider.GetServices<ILyricsProvider>(),
                 provider.GetServices<ILyricsPayloadParser>(),
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings.Lyrics,
-                provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsSearchService>>()));
+                provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsSearchService>>(),
+                provider.GetRequiredService<ISPlayerNextLyricsClient>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddSingleton<MediaLinkInjectionStore>();
             services.AddSingleton<MediaSourceCoordinator>(provider => new MediaSourceCoordinator(
