@@ -24,7 +24,7 @@ public enum LyricsSourceId
     QqMusic,
     Kugou,
     AmllTtml,
-    SPlayerNext
+    SPlayerNext,
     External
 }
 
