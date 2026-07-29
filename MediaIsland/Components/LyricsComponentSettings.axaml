@@ -59,19 +59,21 @@
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEC10;}"
                                        Header="显示内容"
-                                       Description="选择展示原文、翻译（如有）或音译（如有）。缺失时回退到原文；非原文时不使用逐字高亮。">
+                                       Description="选择展示原文、翻译或音译。可指定缺失时显示原文或不显示；非原文时不使用逐字高亮。">
                 <controls:SettingsExpander.Footer>
-                    <ComboBox MinWidth="130"
+                    <ComboBox MinWidth="180"
                               SelectedIndex="{Binding Settings.DisplayPartIndex, Mode=TwoWay}">
                         <ComboBoxItem>原文</ComboBoxItem>
-                        <ComboBoxItem>翻译（如有）</ComboBoxItem>
-                        <ComboBoxItem>音译（如有）</ComboBoxItem>
+                        <ComboBoxItem>翻译（无则显示原文）</ComboBoxItem>
+                        <ComboBoxItem>音译（无则显示原文）</ComboBoxItem>
+                        <ComboBoxItem>翻译（无则不显示）</ComboBoxItem>
+                        <ComboBoxItem>音译（无则不显示）</ComboBoxItem>
                     </ComboBox>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xF374;}"
                                        Header="显示歌词假名"
-                                       Description="在原文上方显示歌词源自带的字级假名注音（QQ 音乐 QRC、酷狗 KRC 等）。仅原文有效展示时生效；翻译/音译模式不显示。默认关闭。">
+                                       Description="在原文上方显示歌词源自带的字级假名注音（QQ 音乐 QRC、酷狗 KRC 等）。仅实际展示原文时生效；翻译/音译模式不显示。默认关闭。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowLyricsKana, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>

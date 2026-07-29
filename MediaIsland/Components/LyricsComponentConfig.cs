@@ -104,7 +104,8 @@ public class LyricsComponentConfig : ObservableRecipient
     }
 
     /// <summary>
-    /// 控制歌词组件展示原文、翻译或音译。翻译/音译缺失时回退到原文。
+    /// 控制歌词组件展示原文、翻译或音译。
+    /// Translation/Romanization 缺失时显示原文；TranslationOnly/RomanizationOnly 缺失时不显示。
     /// </summary>
     public LyricsDisplayPart DisplayPart
     {

@@ -131,6 +131,8 @@ public class LyricsComponentConfigTests
     [InlineData(0, LyricsDisplayPart.Original)]
     [InlineData(1, LyricsDisplayPart.Translation)]
     [InlineData(2, LyricsDisplayPart.Romanization)]
+    [InlineData(3, LyricsDisplayPart.TranslationOnly)]
+    [InlineData(4, LyricsDisplayPart.RomanizationOnly)]
     [InlineData(99, LyricsDisplayPart.Original)]
     public void DisplayPartIndex_MapsToSupportedValues(int index, LyricsDisplayPart expected)
     {

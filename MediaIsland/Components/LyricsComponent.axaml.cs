@@ -246,24 +246,34 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     /// <summary>
     /// 把选中的活跃行压进灵动岛的纵向预算：先整体等比缩小，缩到可读性下限仍装不下时丢弃末尾的背景人声行。
+    /// 「无则不显示」模式下解析为空的行会先剔除，避免留下空白 TextBlock。
     /// </summary>
     private IReadOnlyList<LineLayoutItem> ResolveLineLayout(IReadOnlyList<LyricsLineSelection> activeLines)
     {
+        var displayPart = Settings.DisplayPart;
+        var visibleLines = activeLines
+            .Where(item => !string.IsNullOrWhiteSpace(LyricsDisplayText.Resolve(item.Line, displayPart)))
+            .ToArray();
+        if (visibleLines.Length == 0)
+        {
+            return [];
+        }
+
         var plan = LyricsLayoutMetrics.ResolveFitPlan(
-            activeLines.Select(item => item.Line.IsBackground).ToArray(),
+            visibleLines.Select(item => item.Line.IsBackground).ToArray(),
             LyricsText.FontSize,
             Settings.LineSpacing,
             Settings.IsShowLyricsKana &&
-            activeLines.Any(item =>
+            visibleLines.Any(item =>
                 item.Line.RubySpans is { Count: > 0 } &&
-                LyricsDisplayText.UsesOriginalText(item.Line, Settings.DisplayPart)));
+                LyricsDisplayText.UsesOriginalText(item.Line, displayPart)));
 
-        var items = new List<LineLayoutItem>(activeLines.Count);
-        for (var i = 0; i < activeLines.Count; i++)
+        var items = new List<LineLayoutItem>(visibleLines.Length);
+        for (var i = 0; i < visibleLines.Length; i++)
         {
             if (plan.KeepLine[i])
             {
-                items.Add(new LineLayoutItem(activeLines[i], plan.FontSizes[i]));
+                items.Add(new LineLayoutItem(visibleLines[i], plan.FontSizes[i]));
             }
         }
 
@@ -1037,9 +1047,19 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
     {
         _interludeDots = null;
         _isShowingInterlude = false;
-        _isShowingActiveLines = true;
         _displayedStatusText = string.Empty;
         _displayedStatusOpacity = -1;
+
+        var layoutItems = ResolveLineLayout(activeLines);
+        if (layoutItems.Count == 0)
+        {
+            // 「无则不显示」等模式下当前活跃行全部无内容：清空视觉，但保留活跃索引，
+            // 避免下一帧再次判定 linesChanged 而每帧重建。
+            ClearActiveLineVisuals(resetActiveLineIndices: false);
+            return;
+        }
+
+        _isShowingActiveLines = true;
 
         // 共享行交接：把上一布局渐变到下一布局，而不是整帧替换。
         if (!animateFullTransition &&
@@ -1062,7 +1082,6 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         targetLayer.Children.Clear();
 
         var hasDuet = GetDocumentHasDuet();
-        var layoutItems = ResolveLineLayout(activeLines);
         var isMultiLine = layoutItems.Count > 1;
         targetLayer.Spacing = isMultiLine ? 0 : 1;
 
@@ -1143,8 +1162,14 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 item.Value.TargetOpacity,
                 GetLineFontSize(item.Value)));
 
-        var hasDuet = GetDocumentHasDuet();
         var layoutItems = ResolveLineLayout(activeLines);
+        if (layoutItems.Count == 0)
+        {
+            ClearActiveLineVisuals(resetActiveLineIndices: false);
+            return;
+        }
+
+        var hasDuet = GetDocumentHasDuet();
         var isMultiLine = layoutItems.Count > 1;
         var plan = PrecomputeLinePlan(layoutItems, hasDuet, isMultiLine);
         var nextIndices = plan.Select(item => item.LineIndex).ToHashSet();
@@ -1722,7 +1747,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         });
     }
 
-    private void ClearActiveLineVisuals()
+    private void ClearActiveLineVisuals(bool resetActiveLineIndices = true)
     {
         CompleteTransition();
         _front.Children.Clear();
@@ -1735,9 +1760,12 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _isShowingActiveLines = false;
         _displayedStatusText = string.Empty;
         _displayedStatusOpacity = -1;
-        lock (_syncLock)
+        if (resetActiveLineIndices)
         {
-            _activeLineIndices = [];
+            lock (_syncLock)
+            {
+                _activeLineIndices = [];
+            }
         }
     }
 
