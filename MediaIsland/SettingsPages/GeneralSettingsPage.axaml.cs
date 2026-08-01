@@ -286,7 +286,7 @@ namespace MediaIsland.SettingsPages
             _ = RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
             StartMediaServiceAsync();
             AddCurrentMediaSourceIfAvailable();
-            _ = RefreshCurrentMediaInfoAsync(_effectiveMediaSource?.EffectiveMediaInfo ?? _mediaService.CurrentMediaInfo);
+            _ = RefreshCurrentMediaInfoAsync(CurrentUiMediaInfo);
             RefreshMediaSourceDisplayInfos();
             RefreshMediaLinkStatus();
             StartMediaLinkStatusPolling();
@@ -308,7 +308,7 @@ namespace MediaIsland.SettingsPages
             {
                 await _mediaService.EnsureStartedAsync();
                 AddCurrentMediaSourceIfAvailable();
-                await RefreshCurrentMediaInfoAsync(_mediaService.CurrentMediaInfo);
+                await RefreshCurrentMediaInfoAsync(CurrentUiMediaInfo);
                 await RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
             }
             catch
@@ -322,6 +322,9 @@ namespace MediaIsland.SettingsPages
         {
             MediaService_OnMediaInfoChanged(sender, e);
         }
+
+        private MediaInfo? CurrentUiMediaInfo =>
+            _effectiveMediaSource.GetCurrentUiMediaInfo(_mediaService);
 
         private void MediaService_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
         {

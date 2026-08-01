@@ -45,7 +45,7 @@ namespace MediaIsland.Components
         }
 
         private MediaInfo? CurrentUiMediaInfo =>
-            _effectiveSource?.EffectiveMediaInfo ?? _mediaService.CurrentMediaInfo;
+            _effectiveSource.GetCurrentUiMediaInfo(_mediaService);
 
         private void SimplyNowPlayingComponent_OnLoaded(object sender, RoutedEventArgs e)
         {

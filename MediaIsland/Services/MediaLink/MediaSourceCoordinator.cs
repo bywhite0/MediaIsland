@@ -19,6 +19,8 @@ public sealed class MediaSourceCoordinator : IEffectiveMediaSource, IDisposable
     private bool _isExternalMediaEffective;
     private MediaInfo? _uiMedia;
     private LyricsSearchResult? _uiLyrics;
+    private MediaInfo? _pushMedia;
+    private LyricsSearchResult? _pushLyrics;
     private bool _disposed;
 
     public MediaSourceCoordinator(
@@ -171,6 +173,8 @@ public sealed class MediaSourceCoordinator : IEffectiveMediaSource, IDisposable
             var previousComposedLyrics = _composedLyrics;
             var previousUiMedia = _uiMedia;
             var previousUiLyrics = _uiLyrics;
+            var previousPushMedia = _pushMedia;
+            var previousPushLyrics = _pushLyrics;
 
             _composedMedia = composedMedia;
             _composedLyrics = composedLyrics;
@@ -182,16 +186,25 @@ public sealed class MediaSourceCoordinator : IEffectiveMediaSource, IDisposable
             uiLyrics = settings.MediaLinkUiUsesEffective
                 ? composedLyrics
                 : _lyrics.GetCurrentResultFor(_media.CurrentMediaInfo);
+            var pushMedia = settings.MediaLinkPushUsesEffective
+                ? composedMedia
+                : _media.CurrentMediaInfo;
+            var pushLyrics = settings.MediaLinkPushUsesEffective
+                ? composedLyrics
+                : _lyrics.GetCurrentResultFor(_media.CurrentMediaInfo);
 
-            // Fire on compose *or* UI change so PushUsesEffective consumers still get
-            // inject/virtual-clock updates when UiUsesEffective is false.
+            // The shared events drive both UI and push consumers, so track all views.
             mediaChanged = !Equals(previousComposedMedia, composedMedia)
-                || !Equals(previousUiMedia, uiMedia);
+                || !Equals(previousUiMedia, uiMedia)
+                || !Equals(previousPushMedia, pushMedia);
             lyricsChanged = !Equals(previousComposedLyrics, composedLyrics)
-                || !Equals(previousUiLyrics, uiLyrics);
+                || !Equals(previousUiLyrics, uiLyrics)
+                || !Equals(previousPushLyrics, pushLyrics);
 
             _uiMedia = uiMedia;
             _uiLyrics = uiLyrics;
+            _pushMedia = pushMedia;
+            _pushLyrics = pushLyrics;
         }
 
         if (mediaChanged)

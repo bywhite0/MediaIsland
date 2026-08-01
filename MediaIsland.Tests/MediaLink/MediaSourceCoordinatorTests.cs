@@ -159,6 +159,107 @@ public class MediaSourceCoordinatorTests
         Assert.Equal("ext", c.GetMediaForPush()!.Title);
     }
 
+    [Fact]
+    public void PushRawView_TracksPlatformMediaAndLyrics_WhenUiStaysExternal()
+    {
+        var platformMedia = Sample("platform");
+        var media = new FakeMediaService { CurrentMediaInfo = platformMedia };
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        SeedPlatformLyrics(
+            lyrics,
+            platformMedia,
+            CreateLyrics("platform-lyrics-1", "platform", "a"));
+
+        var store = new MediaLinkInjectionStore();
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "ext",
+            Artist = "ext-artist",
+            PlaybackState = "Playing"
+        }, out _));
+        Assert.True(store.TrySetLyrics(new MediaLinkLyricsDto
+        {
+            Title = "ext",
+            Artist = "ext-artist",
+            Source = "External",
+            Document = new MediaLinkLyricsDocumentDto { Lines = [] }
+        }, out _));
+
+        var settings = Settings(MediaLinkMediaSourceMode.ExternalOnly, ui: true, push: false);
+        using var c = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+        var mediaEvents = new List<MediaInfoChangedEventArgs>();
+        var lyricsEvents = new List<LyricsSearchResultChangedEventArgs>();
+        c.EffectiveMediaChanged += (_, e) => mediaEvents.Add(e);
+        c.EffectiveLyricsChanged += (_, e) => lyricsEvents.Add(e);
+
+        media.Raise(
+            platformMedia with { PlaybackInfo = new MediaPlaybackInfo(MediaPlaybackState.Paused) },
+            MediaInfoChangeKind.Playback);
+
+        var mediaEvent = Assert.Single(mediaEvents);
+        Assert.Equal(MediaInfoChangeKind.Playback, mediaEvent.ChangeKind);
+        Assert.Equal("ext", c.EffectiveMediaInfo!.Title);
+        Assert.Equal(MediaPlaybackState.Paused, c.GetMediaForPush()!.PlaybackInfo.PlaybackState);
+        Assert.Empty(lyricsEvents);
+
+        PublishPlatformLyrics(
+            lyrics,
+            platformMedia,
+            CreateLyrics("platform-lyrics-2", "platform", "a"));
+
+        Assert.Single(lyricsEvents);
+        Assert.Equal("ext", c.EffectiveLyrics!.Title);
+        Assert.Equal("platform-lyrics-2", c.GetLyricsForPush()!.Id);
+    }
+
+    [Fact]
+    public void PushUsesEffectiveChange_RaisesEventsForTheNewPushSnapshots()
+    {
+        var platformMedia = Sample("platform");
+        var media = new FakeMediaService { CurrentMediaInfo = platformMedia };
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        SeedPlatformLyrics(
+            lyrics,
+            platformMedia,
+            CreateLyrics("platform-lyrics", "platform", "a"));
+
+        var store = new MediaLinkInjectionStore();
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "ext",
+            Artist = "ext-artist",
+            PlaybackState = "Playing"
+        }, out _));
+        Assert.True(store.TrySetLyrics(new MediaLinkLyricsDto
+        {
+            Title = "ext",
+            Artist = "ext-artist",
+            Source = "External",
+            Document = new MediaLinkLyricsDocumentDto { Lines = [] }
+        }, out _));
+
+        var settings = Settings(MediaLinkMediaSourceMode.ExternalOnly, ui: true, push: false);
+        using var c = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+        var mediaEvents = 0;
+        var lyricsEvents = 0;
+        c.EffectiveMediaChanged += (_, _) => mediaEvents++;
+        c.EffectiveLyricsChanged += (_, _) => lyricsEvents++;
+
+        settings.MediaLinkPushUsesEffective = true;
+
+        Assert.Equal(1, mediaEvents);
+        Assert.Equal(1, lyricsEvents);
+        Assert.Equal("ext", c.GetMediaForPush()!.Title);
+        Assert.Equal(LyricsSourceId.External, c.GetLyricsForPush()!.Source);
+
+        settings.MediaLinkPushUsesEffective = false;
+
+        Assert.Equal(2, mediaEvents);
+        Assert.Equal(2, lyricsEvents);
+        Assert.Equal("platform", c.GetMediaForPush()!.Title);
+        Assert.Equal("platform-lyrics", c.GetLyricsForPush()!.Id);
+    }
+
     private static MediaInfo Sample(string title) => new(
         "app", title, "a", null,
         TimeSpan.Zero, TimeSpan.FromMinutes(3),
@@ -184,5 +285,18 @@ public class MediaSourceCoordinatorTests
         type.GetField("_currentResult", flags)!.SetValue(service, result);
         type.GetField("_currentMediaTitle", flags)!.SetValue(service, media.Title);
         type.GetField("_currentMediaArtist", flags)!.SetValue(service, media.Artist);
+    }
+
+    private static void PublishPlatformLyrics(
+        LyricsSearchService service,
+        MediaInfo media,
+        LyricsSearchResult result)
+    {
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var type = typeof(LyricsSearchService);
+        type.GetField("_currentMediaTitle", flags)!.SetValue(service, media.Title);
+        type.GetField("_currentMediaArtist", flags)!.SetValue(service, media.Artist);
+        var searchVersion = type.GetField("_searchVersion", flags)!.GetValue(service)!;
+        type.GetMethod("PublishCurrentResult", flags)!.Invoke(service, [result, searchVersion]);
     }
 }
