@@ -48,11 +48,18 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         _logger = loggerFactory?.CreateLogger<MediaLinkHostedService>();
     }
 
-    public bool IsRunning => _server?.IsRunning == true;
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    public bool IsRunning
+    {
+        get => _server?.IsRunning == true;
+    }
 
     public string? Endpoint => _server?.Endpoint;
 
     public string? LastError { get; private set; }
+
+    public int ActiveSessionCount => _hub?.Sessions.Count ?? 0;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -202,10 +209,12 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
             await _server.StartAsync(settings.MediaLinkListenAddress, settings.MediaLinkPort, cancellationToken);
             LastError = null;
+            NotifyGatewayChanged();
         }
         catch (Exception ex)
         {
             LastError = ex.Message;
+            NotifyGatewayChanged();
             _logger?.LogError(ex, "MediaLink 服务启动失败");
             await StopCoreAsync(CancellationToken.None);
         }
@@ -213,6 +222,14 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         {
             _lifecycleLock.Release();
         }
+    }
+
+    private void NotifyGatewayChanged()
+    {
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsRunning)));
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(Endpoint)));
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(LastError)));
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ActiveSessionCount)));
     }
 
     private async Task StopCoreAsync(CancellationToken cancellationToken)
