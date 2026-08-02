@@ -192,6 +192,167 @@ public class MediaLinkStatePublisherTests
         Assert.DoesNotContain(socket.Outgoing, j => j.Contains("ext", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Seq_IsMonotonicallyIncreasing_AcrossEvents()
+    {
+        var media = new FakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+
+        var hub = new MediaLinkSessionHub();
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+        hub.Add(session);
+        session.StartWriter(CancellationToken.None);
+        await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
+        await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
+        socket.ClearOutgoing();
+
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        using var publisher = new MediaLinkStatePublisher(
+            coordinator, hub,
+            timelineMinIntervalMs: () => 0,
+            utcNow: () => now);
+        publisher.Start();
+
+        var sample = new MediaInfo(
+            "app", "t", "a", null,
+            TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(10),
+            new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
+
+        media.Raise(sample, MediaInfoChangeKind.Playback);
+        media.Raise(sample with { Position = TimeSpan.FromSeconds(2) }, MediaInfoChangeKind.Timeline);
+        await Task.Delay(100);
+
+        Assert.True(socket.Outgoing.Count >= 2);
+        var seqs = socket.Outgoing
+            .Select(json => System.Text.Json.JsonDocument.Parse(json))
+            .Where(doc => doc.RootElement.TryGetProperty("seq", out _))
+            .Select(doc => doc.RootElement.GetProperty("seq").GetInt64())
+            .ToArray();
+        for (var i = 1; i < seqs.Length; i++)
+        {
+            Assert.True(seqs[i] > seqs[i - 1], $"seq not increasing: {seqs[i - 1]} -> {seqs[i]}");
+        }
+    }
+
+    [Fact]
+    public async Task TrailingEdge_SendsLatestTimeline_AfterWindowEnds()
+    {
+        var media = new FakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+
+        var hub = new MediaLinkSessionHub();
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+        hub.Add(session);
+        session.StartWriter(CancellationToken.None);
+        await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
+        await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
+        socket.ClearOutgoing();
+
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var minInterval = 200;
+        using var publisher = new MediaLinkStatePublisher(
+            coordinator, hub,
+            timelineMinIntervalMs: () => minInterval,
+            utcNow: () => now);
+        publisher.Start();
+
+        var sample = new MediaInfo(
+            "app", "t", "a", null,
+            TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(10),
+            new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
+
+        // First: leading edge → immediate
+        media.Raise(sample, MediaInfoChangeKind.Timeline);
+        await Task.Delay(50);
+        Assert.Single(socket.Outgoing);
+        socket.ClearOutgoing();
+
+        // Within window: stored, not sent
+        now = now.AddMilliseconds(50);
+        media.Raise(sample with { Position = TimeSpan.FromSeconds(5) }, MediaInfoChangeKind.Timeline);
+        now = now.AddMilliseconds(50);
+        media.Raise(sample with { Position = TimeSpan.FromSeconds(8) }, MediaInfoChangeKind.Timeline);
+        await Task.Delay(50);
+        Assert.Empty(socket.Outgoing);
+
+        // Wait for trailing edge to fire (200ms window - 100ms elapsed = 100ms left + margin)
+        await Task.Delay(200);
+        Assert.Single(socket.Outgoing);
+        Assert.Contains(socket.Outgoing, json => json.Contains("8000", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task NonTimeline_ResetThrottleWindow()
+    {
+        var media = new FakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+
+        var hub = new MediaLinkSessionHub();
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+        hub.Add(session);
+        session.StartWriter(CancellationToken.None);
+        await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
+        await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
+        socket.ClearOutgoing();
+
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        using var publisher = new MediaLinkStatePublisher(
+            coordinator, hub,
+            timelineMinIntervalMs: () => 500,
+            utcNow: () => now);
+        publisher.Start();
+
+        var sample = new MediaInfo(
+            "app", "t", "a", null,
+            TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(10),
+            new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
+
+        // Start throttle window
+        media.Raise(sample, MediaInfoChangeKind.Timeline);
+        await Task.Delay(50);
+        Assert.Single(socket.Outgoing);
+        socket.ClearOutgoing();
+
+        // Non-timeline within window: should send immediately and reset
+        now = now.AddMilliseconds(100);
+        media.Raise(
+            sample with { PlaybackInfo = new MediaPlaybackInfo(MediaPlaybackState.Paused) },
+            MediaInfoChangeKind.Playback);
+        await Task.Delay(100);
+        Assert.Single(socket.Outgoing);
+        Assert.Contains(socket.Outgoing, json => json.Contains("Paused", StringComparison.Ordinal));
+        socket.ClearOutgoing();
+
+        // Next timeline should be leading edge again (window was reset)
+        now = now.AddMilliseconds(100);
+        media.Raise(sample with { Position = TimeSpan.FromSeconds(2) }, MediaInfoChangeKind.Timeline);
+        await Task.Delay(100);
+        Assert.Single(socket.Outgoing);
+    }
     private static string Auth(string token) =>
         MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeAuth,

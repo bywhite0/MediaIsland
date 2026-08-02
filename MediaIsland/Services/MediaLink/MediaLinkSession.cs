@@ -824,6 +824,62 @@ public sealed class MediaLinkSessionHub
         }
     }
 
+    /// <summary>广播 media.updated，携带 seq，media.updated 可丢弃。</summary>
+    public async Task BroadcastMediaUpdatedAsync(MediaLinkMediaDto? dto, long seq, CancellationToken cancellationToken = default)
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        foreach (var session in _sessions.Keys)
+        {
+            if (!session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia))
+            {
+                continue;
+            }
+
+            try
+            {
+                await session.EnqueueAsync(
+                    MediaLinkMessageSerializer.Create(
+                        MediaLinkProtocol.TypeEvent, dto,
+                        name: MediaLinkProtocol.EventMediaUpdated,
+                        ts: nowMs, seq: seq),
+                    droppable: true,
+                    cancellationToken);
+            }
+            catch
+            {
+                // drop broken sessions on next cleanup
+            }
+        }
+    }
+
+    /// <summary>广播 lyrics.updated，携带 seq，歌词不可丢弃。</summary>
+    public async Task BroadcastLyricsUpdatedAsync(MediaLinkLyricsDto? dto, long seq, CancellationToken cancellationToken = default)
+    {
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        foreach (var session in _sessions.Keys)
+        {
+            if (!session.IsSubscribedTo(MediaLinkProtocol.ChannelLyrics))
+            {
+                continue;
+            }
+
+            try
+            {
+                await session.EnqueueAsync(
+                    MediaLinkMessageSerializer.Create(
+                        MediaLinkProtocol.TypeEvent, dto,
+                        name: MediaLinkProtocol.EventLyricsUpdated,
+                        ts: nowMs, seq: seq),
+                    droppable: false,
+                    cancellationToken);
+            }
+            catch
+            {
+                // drop broken sessions on next cleanup
+            }
+        }
+    }
+
     public async Task DisposeAllAsync()
     {
         foreach (var session in _sessions.Keys)

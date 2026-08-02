@@ -14,7 +14,11 @@ public sealed class MediaLinkStatePublisher : IDisposable
     private readonly Func<DateTimeOffset> _utcNow;
     private readonly ILogger<MediaLinkStatePublisher>? _logger;
     private readonly object _throttleGate = new();
-    private DateTimeOffset _lastTimelineBroadcast = DateTimeOffset.MinValue;
+    private long _seq;
+    private DateTimeOffset _windowStart = DateTimeOffset.MinValue;
+    private MediaLinkMediaDto? _pendingTimeline;
+    private CancellationTokenSource? _trailingCts;
+    private Task? _trailingTask;
     private bool _started;
     private bool _disposed;
 
@@ -54,83 +58,183 @@ public sealed class MediaLinkStatePublisher : IDisposable
 
         _coordinator.EffectiveMediaChanged -= OnEffectiveMediaChanged;
         _coordinator.EffectiveLyricsChanged -= OnEffectiveLyricsChanged;
+        CancelTrailing();
         _started = false;
     }
 
     public async Task PublishSnapshotAsync(MediaLinkSession session, CancellationToken cancellationToken = default)
     {
         var media = _coordinator.GetMediaForPush();
+        var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         if (session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia))
         {
-            await session.SendEventAsync(
-                MediaLinkProtocol.EventMediaUpdated,
-                MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession),
+            var dto = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession);
+            if (dto is not null)
+            {
+                dto.PositionCapturedAtMs = nowMs;
+                dto.ServerTimeMs = nowMs;
+            }
+            await session.EnqueueAsync(
+                MediaLinkMessageSerializer.Create(
+                    MediaLinkProtocol.TypeEvent, dto,
+                    name: MediaLinkProtocol.EventMediaUpdated,
+                    ts: nowMs, seq: NextSeq()),
+                droppable: true,
                 cancellationToken);
         }
 
         if (session.IsSubscribedTo(MediaLinkProtocol.ChannelLyrics))
         {
             var lyrics = _coordinator.GetLyricsForPush();
-            await session.SendEventAsync(
-                MediaLinkProtocol.EventLyricsUpdated,
-                MediaLinkDtoMapper.ToLyricsDto(lyrics),
+            await session.EnqueueAsync(
+                MediaLinkMessageSerializer.Create(
+                    MediaLinkProtocol.TypeEvent,
+                    MediaLinkDtoMapper.ToLyricsDto(lyrics),
+                    name: MediaLinkProtocol.EventLyricsUpdated,
+                    ts: nowMs, seq: NextSeq()),
+                droppable: false,
                 cancellationToken);
         }
     }
 
+    private long NextSeq() => Interlocked.Increment(ref _seq);
+
     private void OnEffectiveMediaChanged(object? sender, MediaInfoChangedEventArgs e)
     {
-        if (e.ChangeKind == MediaInfoChangeKind.Timeline && !ShouldBroadcastTimeline())
+        if (e.ChangeKind == MediaInfoChangeKind.Timeline)
         {
+            HandleTimelineThrottled();
             return;
         }
 
-        if (e.ChangeKind != MediaInfoChangeKind.Timeline)
+        // Non-timeline: send immediately, reset throttle window.
+        CancelTrailing();
+        lock (_throttleGate)
         {
-            lock (_throttleGate)
+            _windowStart = DateTimeOffset.MinValue;
+            _pendingTimeline = null;
+        }
+
+        var media = _coordinator.GetMediaForPush();
+        var dto = MediaLinkDtoMapper.ToMediaDto(media, e.ChangeKind);
+        if (dto is not null)
+        {
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            dto.PositionCapturedAtMs = nowMs;
+            dto.ServerTimeMs = nowMs;
+        }
+        _ = SafeBroadcastMediaAsync(dto);
+    }
+
+    private void HandleTimelineThrottled()
+    {
+        var now = _utcNow();
+        var minInterval = Math.Max(0, _timelineMinIntervalMs());
+        MediaLinkMediaDto? toSendNow = null;
+
+        lock (_throttleGate)
+        {
+            var elapsed = (now - _windowStart).TotalMilliseconds;
+            if (elapsed >= minInterval)
             {
-                _lastTimelineBroadcast = DateTimeOffset.MinValue;
+                // Leading edge: send immediately, start window.
+                _windowStart = now;
+                _pendingTimeline = null;
+                var media = _coordinator.GetMediaForPush();
+                toSendNow = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.Timeline);
+                if (toSendNow is not null)
+                {
+                    var nowMs = now.ToUnixTimeMilliseconds();
+                    toSendNow.PositionCapturedAtMs = nowMs;
+                    toSendNow.ServerTimeMs = nowMs;
+                }
+                ScheduleTrailing(minInterval);
+            }
+            else
+            {
+                // In window: store latest, trailing edge will send it.
+                var media = _coordinator.GetMediaForPush();
+                _pendingTimeline = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.Timeline);
+                if (_pendingTimeline is not null)
+                {
+                    var nowMs = now.ToUnixTimeMilliseconds();
+                    _pendingTimeline.PositionCapturedAtMs = nowMs;
+                }
             }
         }
 
-        // Always re-read push view so PushUsesEffective is honored at send time.
-        var media = _coordinator.GetMediaForPush();
-        var dto = MediaLinkDtoMapper.ToMediaDto(media, e.ChangeKind);
-        _ = SafeBroadcastAsync(MediaLinkProtocol.ChannelMedia, MediaLinkProtocol.EventMediaUpdated, dto);
+        if (toSendNow is not null)
+        {
+            _ = SafeBroadcastMediaAsync(toSendNow);
+        }
+    }
+
+    private void ScheduleTrailing(int delayMs)
+    {
+        CancelTrailing();
+        var cts = new CancellationTokenSource();
+        _trailingCts = cts;
+        _trailingTask = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(delayMs, cts.Token);
+                MediaLinkMediaDto? pending;
+                lock (_throttleGate)
+                {
+                    pending = _pendingTimeline;
+                    _pendingTimeline = null;
+                    _windowStart = DateTimeOffset.MinValue;
+                }
+                if (pending is not null && !cts.Token.IsCancellationRequested)
+                {
+                    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    pending.ServerTimeMs = nowMs;
+                    await SafeBroadcastMediaAsync(pending);
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
+    }
+
+    private void CancelTrailing()
+    {
+        _trailingCts?.Cancel();
+        _trailingCts?.Dispose();
+        _trailingCts = null;
+        _trailingTask = null;
     }
 
     private void OnEffectiveLyricsChanged(object? sender, LyricsSearchResultChangedEventArgs e)
     {
         var lyrics = _coordinator.GetLyricsForPush();
         var dto = MediaLinkDtoMapper.ToLyricsDto(lyrics);
-        _ = SafeBroadcastAsync(MediaLinkProtocol.ChannelLyrics, MediaLinkProtocol.EventLyricsUpdated, dto);
+        _ = SafeBroadcastLyricsAsync(dto);
     }
 
-    private bool ShouldBroadcastTimeline()
-    {
-        var now = _utcNow();
-        var minInterval = Math.Max(0, _timelineMinIntervalMs());
-        lock (_throttleGate)
-        {
-            if ((now - _lastTimelineBroadcast).TotalMilliseconds < minInterval)
-            {
-                return false;
-            }
-
-            _lastTimelineBroadcast = now;
-            return true;
-        }
-    }
-
-    private async Task SafeBroadcastAsync(string channel, string eventName, object? payload)
+    private async Task SafeBroadcastMediaAsync(MediaLinkMediaDto? dto)
     {
         try
         {
-            await _hub.BroadcastEventAsync(channel, eventName, payload);
+            var seq = NextSeq();
+            await _hub.BroadcastMediaUpdatedAsync(dto, seq);
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "MediaLink broadcast failed for {EventName}.", eventName);
+            _logger?.LogDebug(ex, "MediaLink media broadcast failed.");
+        }
+    }
+
+    private async Task SafeBroadcastLyricsAsync(MediaLinkLyricsDto? dto)
+    {
+        try
+        {
+            var seq = NextSeq();
+            await _hub.BroadcastLyricsUpdatedAsync(dto, seq);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "MediaLink lyrics broadcast failed.");
         }
     }
 
