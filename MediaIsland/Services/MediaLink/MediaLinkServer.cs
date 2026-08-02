@@ -93,7 +93,8 @@ public sealed class MediaLinkServer : IAsyncDisposable
         var listener = new TcpListener(address, port);
         listener.Start();
         _listener = listener;
-        Endpoint = $"ws://{FormatHost(address)}:{port}{MediaLinkProtocol.Path}";
+        var actualPort = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Endpoint = $"ws://{FormatHost(address)}:{actualPort}{MediaLinkProtocol.Path}";
         LastError = null;
         IsRunning = true;
         _acceptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
