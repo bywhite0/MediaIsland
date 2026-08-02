@@ -18,14 +18,14 @@ public static class MediaLinkDtoMapper
 
         return new MediaLinkMediaDto
         {
-            ChangeKind = changeKind.ToString(),
+            ChangeKind = MapChangeKind(changeKind),
             SourceApp = media.SourceApp,
             Title = media.Title,
             Artist = media.Artist,
             AlbumTitle = media.AlbumTitle,
             PositionMs = ToMilliseconds(media.Position),
             DurationMs = ToMilliseconds(media.Duration),
-            PlaybackState = media.PlaybackInfo.PlaybackState.ToString(),
+            PlaybackState = MapPlaybackState(media.PlaybackInfo.PlaybackState),
             PlaybackRate = media.PlaybackInfo.PlaybackRate,
             HasThumbnail = media.Thumbnail is not null || media.ThumbnailSource is not null,
             TrackToken = ComputeTrackToken(media.SourceApp, media.Title, media.Artist)
@@ -259,6 +259,28 @@ public static class MediaLinkDtoMapper
         return null;
     }
 
+    /// <summary>安全映射播放状态：未知值输出 "Unknown"，不抛异常。</summary>
+    internal static string MapPlaybackState(MediaPlaybackState state) => state switch
+    {
+        MediaPlaybackState.Unknown => nameof(MediaPlaybackState.Unknown),
+        MediaPlaybackState.Closed => nameof(MediaPlaybackState.Closed),
+        MediaPlaybackState.Opened => nameof(MediaPlaybackState.Opened),
+        MediaPlaybackState.Changing => nameof(MediaPlaybackState.Changing),
+        MediaPlaybackState.Stopped => nameof(MediaPlaybackState.Stopped),
+        MediaPlaybackState.Playing => nameof(MediaPlaybackState.Playing),
+        MediaPlaybackState.Paused => nameof(MediaPlaybackState.Paused),
+        _ => "Unknown"
+    };
+
+    /// <summary>安全映射变更类型：未知值输出 "Unknown"，不抛异常。</summary>
+    internal static string MapChangeKind(MediaInfoChangeKind kind) => kind switch
+    {
+        MediaInfoChangeKind.CurrentSession => nameof(MediaInfoChangeKind.CurrentSession),
+        MediaInfoChangeKind.MediaProperties => nameof(MediaInfoChangeKind.MediaProperties),
+        MediaInfoChangeKind.Playback => nameof(MediaInfoChangeKind.Playback),
+        MediaInfoChangeKind.Timeline => nameof(MediaInfoChangeKind.Timeline),
+        _ => "Unknown"
+    };
     private static long ToMilliseconds(TimeSpan value) =>
         (long)Math.Round(value.TotalMilliseconds, MidpointRounding.AwayFromZero);
 }

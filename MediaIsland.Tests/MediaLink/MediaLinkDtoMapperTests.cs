@@ -271,6 +271,40 @@ public class MediaLinkDtoMapperTests
         Assert.NotEmpty(tok);
     }
 
+    [Fact]
+    public void MapPlaybackState_KnownValues_MatchEnumNames()
+    {
+        Assert.Equal("Unknown", MediaLinkDtoMapper.MapPlaybackState(MediaPlaybackState.Unknown));
+        Assert.Equal("Playing", MediaLinkDtoMapper.MapPlaybackState(MediaPlaybackState.Playing));
+        Assert.Equal("Paused", MediaLinkDtoMapper.MapPlaybackState(MediaPlaybackState.Paused));
+        Assert.Equal("Stopped", MediaLinkDtoMapper.MapPlaybackState(MediaPlaybackState.Stopped));
+        Assert.Equal("Closed", MediaLinkDtoMapper.MapPlaybackState(MediaPlaybackState.Closed));
+        Assert.Equal("Opened", MediaLinkDtoMapper.MapPlaybackState(MediaPlaybackState.Opened));
+        Assert.Equal("Changing", MediaLinkDtoMapper.MapPlaybackState(MediaPlaybackState.Changing));
+    }
+
+    [Fact]
+    public void MapPlaybackState_UnknownEnumValue_ReturnsUnknown()
+    {
+        var bad = (MediaPlaybackState)999;
+        Assert.Equal("Unknown", MediaLinkDtoMapper.MapPlaybackState(bad));
+    }
+
+    [Fact]
+    public void MapChangeKind_KnownValues_MatchEnumNames()
+    {
+        Assert.Equal("CurrentSession", MediaLinkDtoMapper.MapChangeKind(MediaInfoChangeKind.CurrentSession));
+        Assert.Equal("MediaProperties", MediaLinkDtoMapper.MapChangeKind(MediaInfoChangeKind.MediaProperties));
+        Assert.Equal("Playback", MediaLinkDtoMapper.MapChangeKind(MediaInfoChangeKind.Playback));
+        Assert.Equal("Timeline", MediaLinkDtoMapper.MapChangeKind(MediaInfoChangeKind.Timeline));
+    }
+
+    [Fact]
+    public void MapChangeKind_UnknownEnumValue_ReturnsUnknown()
+    {
+        var bad = (MediaInfoChangeKind)999;
+        Assert.Equal("Unknown", MediaLinkDtoMapper.MapChangeKind(bad));
+    }
     private static MediaInfo CreateMediaInfo(string sourceApp, string? title, string? artist) =>
         new(sourceApp, title, artist, null, TimeSpan.Zero, TimeSpan.Zero,
             new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
