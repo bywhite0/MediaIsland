@@ -144,6 +144,21 @@ public class MediaLinkServerUpgradeTests
         Assert.Contains("400", result);
     }
 
+    [Fact]
+    public void AuthFailureRateLimit_BlocksAfter5Failures()
+    {
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "token");
+
+        for (var i = 0; i < MediaLinkServer.AuthFailureLimit; i++)
+        {
+            Assert.False(server.IsAuthRateLimited("192.168.1.1"));
+            server.RecordAuthFailure("192.168.1.1");
+        }
+
+        Assert.True(server.IsAuthRateLimited("192.168.1.1"));
+        Assert.False(server.IsAuthRateLimited("192.168.1.2"));
+    }
     private static Dictionary<string, string> MakeHeaders() => new(StringComparer.OrdinalIgnoreCase)
     {
         ["Host"] = "127.0.0.1",

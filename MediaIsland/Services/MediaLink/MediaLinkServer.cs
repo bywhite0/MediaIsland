@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -13,6 +14,12 @@ public sealed class MediaLinkServer : IAsyncDisposable
 {
     /// <summary>最大并发会话数；满则拒绝新 TCP 连接。</summary>
     public const int MaxConcurrentSessions = 32;
+
+    /// <summary>单 IP 认证失败次数上限。</summary>
+    internal const int AuthFailureLimit = 5;
+
+    /// <summary>认证失败滑动窗口（秒）。</summary>
+    internal const int AuthFailureWindowSeconds = 60;
 
     /// <summary>HTTP 升级请求头最大字节数（防止畸形请求占内存）。</summary>
     internal const int MaxHttpHeaderBytes = 16 * 1024;
@@ -30,6 +37,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private CancellationTokenSource? _acceptCts;
     private Task? _acceptLoop;
     private readonly List<Task> _sessionTasks = [];
+    private readonly ConcurrentDictionary<string, AuthFailureWindow> _authFailures = new();
     private string _listenAddress = "127.0.0.1";
     private HashSet<string>? _allowedOrigins;
     private readonly object _gate = new();
@@ -491,6 +499,33 @@ public sealed class MediaLinkServer : IAsyncDisposable
         headers.TryGetValue("Sec-WebSocket-Key", out webSocketKey);
         return true;
     }
+
+    internal void RecordAuthFailure(string ip)
+    {
+        var now = DateTimeOffset.UtcNow;
+        _authFailures.AddOrUpdate(ip,
+            _ => new AuthFailureWindow(1, now),
+            (_, existing) =>
+            {
+                if ((now - existing.WindowStart).TotalSeconds > AuthFailureWindowSeconds)
+                    return new AuthFailureWindow(1, now);
+                return new AuthFailureWindow(existing.Count + 1, existing.WindowStart);
+            });
+    }
+
+    internal bool IsAuthRateLimited(string ip)
+    {
+        if (!_authFailures.TryGetValue(ip, out var window))
+            return false;
+        if ((DateTimeOffset.UtcNow - window.WindowStart).TotalSeconds > AuthFailureWindowSeconds)
+        {
+            _authFailures.TryRemove(ip, out _);
+            return false;
+        }
+        return window.Count >= AuthFailureLimit;
+    }
+
+    private sealed record AuthFailureWindow(int Count, DateTimeOffset WindowStart);
 
     private static string FormatHost(IPAddress address) =>
         address.Equals(IPAddress.Any) ? "0.0.0.0" : address.ToString();

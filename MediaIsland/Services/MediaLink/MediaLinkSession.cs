@@ -108,6 +108,8 @@ public sealed class MediaLinkSessionOptions
 
     public TimeSpan AuthTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
+    public Action? OnAuthFailed { get; init; }
+
     public Func<MediaLinkSession, Task>? OnSubscribedAsync { get; init; }
 
     // Phase 2
