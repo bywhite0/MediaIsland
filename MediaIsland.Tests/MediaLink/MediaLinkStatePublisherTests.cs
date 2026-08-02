@@ -46,6 +46,7 @@ public class MediaLinkStatePublisherTests
         var socket = new FakeMediaLinkSocket();
         var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
         hub.Add(session);
+        session.StartWriter(CancellationToken.None);
         await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
         await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
         socket.ClearOutgoing();
@@ -67,7 +68,7 @@ public class MediaLinkStatePublisherTests
         media.Raise(sample, MediaInfoChangeKind.Timeline);
         media.Raise(sample with { Position = TimeSpan.FromSeconds(2) }, MediaInfoChangeKind.Timeline);
         media.Raise(sample with { Position = TimeSpan.FromSeconds(3) }, MediaInfoChangeKind.Timeline);
-        await Task.Delay(50);
+        await Task.Delay(100);
 
         Assert.Single(socket.Outgoing);
 
@@ -97,6 +98,7 @@ public class MediaLinkStatePublisherTests
         var socket = new FakeMediaLinkSocket();
         var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
         hub.Add(session);
+        session.StartWriter(CancellationToken.None);
         await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
         await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelLyrics), CancellationToken.None);
         socket.ClearOutgoing();
@@ -105,7 +107,7 @@ public class MediaLinkStatePublisherTests
         publisher.Start();
 
         await publisher.PublishSnapshotAsync(session);
-        await Task.Delay(20);
+        await Task.Delay(100);
         Assert.Contains(socket.Outgoing, json => json.Contains(MediaLinkProtocol.EventLyricsUpdated, StringComparison.Ordinal));
     }
 
@@ -137,12 +139,14 @@ public class MediaLinkStatePublisherTests
         var socket = new FakeMediaLinkSocket();
         var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
         hub.Add(session);
+        session.StartWriter(CancellationToken.None);
         await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
         await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
         socket.ClearOutgoing();
 
         using var publisher = new MediaLinkStatePublisher(coordinator, hub);
         await publisher.PublishSnapshotAsync(session);
+        await Task.Delay(100);
         Assert.Contains(socket.Outgoing, j => j.Contains("ext"));
         Assert.DoesNotContain(socket.Outgoing, j => j.Contains("platform"));
     }
@@ -175,12 +179,14 @@ public class MediaLinkStatePublisherTests
         var socket = new FakeMediaLinkSocket();
         var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
         hub.Add(session);
+        session.StartWriter(CancellationToken.None);
         await session.HandleMessageAsync(Auth("t"), CancellationToken.None);
         await session.HandleMessageAsync(Subscribe(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
         socket.ClearOutgoing();
 
         using var publisher = new MediaLinkStatePublisher(coordinator, hub);
         await publisher.PublishSnapshotAsync(session);
+        await Task.Delay(100);
         Assert.Contains(socket.Outgoing, j => j.Contains("platform"));
         Assert.DoesNotContain(socket.Outgoing, j => j.Contains("\"title\":\"ext\"") || j.Contains("\"Title\":\"ext\""));
         Assert.DoesNotContain(socket.Outgoing, j => j.Contains("ext", StringComparison.Ordinal));

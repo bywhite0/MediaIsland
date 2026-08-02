@@ -203,6 +203,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
                 _hub.Add(session);
                 try
                 {
+                    session.StartWriter(cancellationToken);
                     var hello = MediaLinkMessageSerializer.Create(
                         MediaLinkProtocol.TypeEvent,
                         new MediaLinkServerHelloPayload

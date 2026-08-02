@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading.Channels;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -132,6 +133,8 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private readonly HashSet<string> _channels = new(StringComparer.Ordinal);
     private bool _authenticated;
     private bool _closed;
+    private readonly Channel<string> _outbound = Channel.CreateBounded<string>(64);
+    private Task? _writerTask;
 
     public MediaLinkSession(IMediaLinkSocket socket, MediaLinkSessionOptions options, ILogger? logger = null)
     {
@@ -195,7 +198,71 @@ public sealed class MediaLinkSession : IAsyncDisposable
         finally
         {
             _closed = true;
+            _outbound.Writer.TryComplete();
         }
+    }
+
+    /// <summary>
+    /// 启动出站队列写者任务。在 RunAsync 之前或并发调用。
+    /// </summary>
+    public void StartWriter(CancellationToken cancellationToken)
+    {
+        if (_writerTask is not null) return;
+        _writerTask = Task.Run(() => WriteLoopAsync(cancellationToken), CancellationToken.None);
+    }
+
+    private async Task WriteLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await foreach (var json in _outbound.Reader.ReadAllAsync(cancellationToken))
+            {
+                if (_closed || _socket.State != WebSocketState.Open) break;
+                try
+                {
+                    using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    sendCts.CancelAfter(TimeSpan.FromSeconds(5));
+                    await _socket.SendTextAsync(json, sendCts.Token);
+                }
+                catch
+                {
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ChannelClosedException) { }
+        finally
+        {
+            _closed = true;
+        }
+    }
+
+    public async Task EnqueueAsync(MediaLinkMessage message, bool droppable = false, CancellationToken cancellationToken = default)
+    {
+        if (_closed) return;
+        var json = MediaLinkMessageSerializer.Serialize(message);
+        if (_outbound.Writer.TryWrite(json)) return;
+        if (droppable)
+        {
+            // DropOldest 语义：尝试读一条丢弃后再写
+            _outbound.Reader.TryRead(out _);
+            _outbound.Writer.TryWrite(json);
+            return;
+        }
+        await CloseRateLimitedAsync(cancellationToken);
+    }
+
+    private async Task CloseRateLimitedAsync(CancellationToken cancellationToken)
+    {
+        _closed = true;
+        _outbound.Writer.TryComplete();
+        try
+        {
+            if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+                await _socket.CloseAsync((WebSocketCloseStatus)1011, "rate_limited", cancellationToken);
+        }
+        catch { }
     }
 
     public async Task HandleMessageAsync(string text, CancellationToken cancellationToken)
@@ -264,11 +331,14 @@ public sealed class MediaLinkSession : IAsyncDisposable
     }
 
     public Task SendEventAsync(string eventName, object? payload, CancellationToken cancellationToken = default) =>
-        SendAsync(MediaLinkMessageSerializer.Create(
-            MediaLinkProtocol.TypeEvent,
-            payload,
-            name: eventName,
-            ts: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), cancellationToken);
+        EnqueueAsync(
+            MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeEvent,
+                payload,
+                name: eventName,
+                ts: DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+            droppable: eventName == MediaLinkProtocol.EventMediaUpdated,
+            cancellationToken);
 
     public async Task SendAsync(MediaLinkMessage message, CancellationToken cancellationToken = default)
     {

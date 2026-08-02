@@ -156,6 +156,8 @@ public class MediaLinkSessionTests
         var lyricsSession = new MediaLinkSession(lyricsSocket, new MediaLinkSessionOptions { ExpectedToken = "t" });
         hub.Add(mediaSession);
         hub.Add(lyricsSession);
+        mediaSession.StartWriter(CancellationToken.None);
+        lyricsSession.StartWriter(CancellationToken.None);
 
         await mediaSession.HandleMessageAsync(AuthJson(), CancellationToken.None);
         await mediaSession.HandleMessageAsync(SubscribeJson(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
@@ -169,6 +171,7 @@ public class MediaLinkSessionTests
             MediaLinkProtocol.ChannelMedia,
             MediaLinkProtocol.EventMediaUpdated,
             new MediaLinkMediaDto { Title = "only-media" });
+        await Task.Delay(100);
 
         Assert.NotEmpty(mediaSocket.Outgoing);
         Assert.Empty(lyricsSocket.Outgoing);
@@ -211,6 +214,7 @@ public class MediaLinkSessionTests
         var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
         var hub = new MediaLinkSessionHub();
         hub.Add(session);
+        session.StartWriter(CancellationToken.None);
 
         await session.HandleMessageAsync(AuthJson(), CancellationToken.None);
         await session.HandleMessageAsync(SubscribeJson(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
@@ -224,6 +228,7 @@ public class MediaLinkSessionTests
             CancellationToken.None);
 
         Assert.False(session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia));
+        await Task.Delay(50);
         Assert.Contains(socket.Outgoing, json => json.Contains(MediaLinkProtocol.TypeUnsubscribeOk, StringComparison.Ordinal));
 
         socket.ClearOutgoing();
