@@ -302,9 +302,10 @@ namespace MediaIsland.Models
         }
 
         private bool _mediaLinkIsEnabled;
-        private string _mediaLinkListenAddress = "0.0.0.0";
+        private string _mediaLinkListenAddress = "127.0.0.1";
         private int _mediaLinkPort = 17654;
         private string _mediaLinkToken = string.Empty;
+        private string _mediaLinkAllowedOrigins = string.Empty;
         private int _mediaLinkTimelineMinIntervalMs = 200;
 
         public bool MediaLinkIsEnabled
@@ -323,7 +324,7 @@ namespace MediaIsland.Models
             get => _mediaLinkListenAddress;
             set
             {
-                var normalized = string.IsNullOrWhiteSpace(value) ? "0.0.0.0" : value.Trim();
+                var normalized = string.IsNullOrWhiteSpace(value) ? "127.0.0.1" : value.Trim();
                 if (_mediaLinkListenAddress == normalized) return;
                 _mediaLinkListenAddress = normalized;
                 OnPropertyChanged();
@@ -354,6 +355,20 @@ namespace MediaIsland.Models
             }
         }
 
+        /// <summary>
+        /// 允许的 Origin 白名单，逗号分隔。空表示拒绝所有带 Origin 的连接。
+        /// </summary>
+        public string MediaLinkAllowedOrigins
+        {
+            get => _mediaLinkAllowedOrigins;
+            set
+            {
+                var normalized = value ?? string.Empty;
+                if (_mediaLinkAllowedOrigins == normalized) return;
+                _mediaLinkAllowedOrigins = normalized;
+                OnPropertyChanged();
+            }
+        }
         public int MediaLinkTimelineMinIntervalMs
         {
             get => _mediaLinkTimelineMinIntervalMs;

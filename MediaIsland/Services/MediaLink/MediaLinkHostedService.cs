@@ -23,6 +23,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     private MediaLinkStatePublisher? _publisher;
     private MediaLinkServer? _server;
     private PluginSettings? _boundSettings;
+    private CancellationTokenSource? _debounceCts;
     private bool _disposed;
 
     public MediaLinkHostedService(
@@ -91,14 +92,43 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
     private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        // Listener-rebuild fields: debounce 500ms
         if (e.PropertyName is nameof(PluginSettings.MediaLinkIsEnabled)
             or nameof(PluginSettings.MediaLinkListenAddress)
             or nameof(PluginSettings.MediaLinkPort)
-            or nameof(PluginSettings.MediaLinkToken)
-            or nameof(PluginSettings.MediaLinkTimelineMinIntervalMs))
+            or nameof(PluginSettings.MediaLinkToken))
         {
-            _ = ReloadAsync();
+            DebouncedReload();
+            return;
         }
+
+        // Hot-reload fields: no rebuild needed
+        if (e.PropertyName is nameof(PluginSettings.MediaLinkTimelineMinIntervalMs)
+            or nameof(PluginSettings.MediaLinkAllowedOrigins))
+        {
+            // Timeline interval and allowed origins are read dynamically, no action needed.
+            return;
+        }
+    }
+
+    private void DebouncedReload()
+    {
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _debounceCts = cts;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(500, cts.Token);
+                if (!cts.Token.IsCancellationRequested)
+                {
+                    await ReloadAsync();
+                }
+            }
+            catch (OperationCanceledException) { }
+        });
     }
 
     private async Task ReloadAsync()
@@ -208,6 +238,8 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
         _disposed = true;
 
+        _debounceCts?.Cancel();
+        _debounceCts?.Dispose();
         if (_boundSettings is not null)
         {
             _boundSettings.PropertyChanged -= OnSettingsChanged;
