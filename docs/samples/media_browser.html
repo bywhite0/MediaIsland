@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>MediaLink 歌词条</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  #title { font-size: 2em; font-weight: bold; }
+  #artist { font-size: 1.2em; color: #aaa; margin: 0.3em 0; }
+  #progress { width: 60%; height: 4px; background: #333; border-radius: 2px; margin: 1em 0; }
+  #bar { height: 100%; background: #4fc3f7; border-radius: 2px; width: 0; transition: width 0.3s linear; }
+  #time { font-size: 0.9em; color: #888; }
+  #status { margin-top: 1em; font-size: 0.8em; color: #666; }
+  #connect { margin-bottom: 1em; }
+  input { padding: 0.4em; width: 300px; }
+  button { padding: 0.4em 0.8em; margin-left: 0.5em; }
+</style>
+</head>
+<body>
+<div id="connect">
+  <input id="token" placeholder="输入 Token" />
+  <button onclick="connect()">连接</button>
+</div>
+<div id="title">未连接</div>
+<div id="artist"></div>
+<div id="progress"><div id="bar"></div></div>
+<div id="time"></div>
+<div id="status"></div>
+<script>
+let ws, trackToken, positionMs, capturedAt, serverTime, playbackRate;
+function connect() {
+  const token = document.getElementById('token').value || 'YOUR_TOKEN';
+  ws = new WebSocket(`ws://127.0.0.1:17654/v1/ws`);
+  ws.onopen = () => { document.getElementById('status').textContent = '已连接，等待认证...'; };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'event' && msg.name === 'server.hello') {
+      ws.send(JSON.stringify({ type: 'auth', id: 'a1', v: 1, ts: 0, payload: { token } }));
+    } else if (msg.type === 'auth_ok') {
+      ws.send(JSON.stringify({ type: 'subscribe', id: 's1', v: 1, ts: 0, payload: { channels: ['media', 'lyrics'] } }));
+    } else if (msg.type === 'subscribe_ok') {
+      document.getElementById('status').textContent = '已订阅';
+    } else if (msg.name === 'media.updated') {
+      const p = msg.payload;
+      document.getElementById('title').textContent = p.title || '未知曲目';
+      document.getElementById('artist').textContent = p.artist || '';
+      positionMs = p.positionMs; capturedAt = p.positionCapturedAtMs; serverTime = p.serverTimeMs;
+      playbackRate = p.playbackRate || 1; trackToken = p.trackToken;
+    }
+  };
+  ws.onclose = () => { document.getElementById('status').textContent = '已断开'; };
+  requestAnimationFrame(tick);
+}
+function tick() {
+  if (positionMs != null && serverTime) {
+    const elapsed = Date.now() - serverTime;
+    const pos = Math.max(0, positionMs + elapsed * playbackRate);
+    const pct = Math.min(100, (pos / 180000) * 100);
+    document.getElementById('bar').style.width = pct + '%';
+    const s = Math.floor(pos / 1000);
+    document.getElementById('time').textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+  }
+  requestAnimationFrame(tick);
+}
+</script>
+</body>
+</html>
