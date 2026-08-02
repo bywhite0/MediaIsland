@@ -150,6 +150,12 @@ public sealed class MediaLinkSession : IAsyncDisposable
         get { lock (_gate) return _authenticated; }
     }
 
+    /// <summary>会话是否已关闭（认证失败、队列溢出或连接断开）。</summary>
+    public bool IsClosed
+    {
+        get { lock (_gate) return _closed; }
+    }
+
     public IReadOnlyCollection<string> Channels
     {
         get { lock (_gate) return _channels.ToArray(); }

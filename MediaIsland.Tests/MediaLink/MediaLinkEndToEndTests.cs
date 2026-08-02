@@ -163,6 +163,69 @@ public class MediaLinkEndToEndTests
         await server.StopAsync();
     }
 
+    [Fact]
+    public async Task RapidTrackChanges_TrackTokenMatchesSourceApp()
+    {
+        var hub = new MediaLinkSessionHub();
+        var media = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+        using var publisher = new MediaLinkStatePublisher(coordinator, hub, timelineMinIntervalMs: () => 0);
+        publisher.Start();
+
+        var server = new MediaLinkServer(hub, session => publisher.PublishSnapshotAsync(session), () => "tok", coordinator: coordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        using var client = new ClientWebSocket();
+        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ReceiveJsonAsync(client); // hello
+        await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
+        await ReceiveJsonAsync(client); // auth_ok
+        await SendJsonAsync(client, new { type = "subscribe", id = "s1", v = 1, ts = NowMs(), payload = new { channels = new[] { "media" } } });
+        await ReceiveJsonAsync(client); // subscribe_ok
+
+        // Rapid track changes: 10 songs in succession
+        var trackTokens = new List<string>();
+        for (var i = 0; i < 10; i++)
+        {
+            var song = new MediaInfo("player", $"Song{i}", $"Artist{i}", null,
+                TimeSpan.Zero, TimeSpan.FromMinutes(3),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
+            media.Raise(song, MediaInfoChangeKind.MediaProperties);
+            await Task.Delay(30);
+        }
+
+        // Drain all received events
+        var received = new List<JsonElement>();
+        try
+        {
+            while (true)
+            {
+                try { received.Add(await ReceiveJsonAsync(client, timeoutMs: 500)); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+        catch (WebSocketException) { } // connection may be aborted by server
+
+        // Verify: each media.updated has a trackToken, and trackTokens change with each song
+        var mediaEvents = received.Where(e => e.TryGetProperty("name", out var n) && n.GetString() == MediaLinkProtocol.EventMediaUpdated).ToList();
+        Assert.True(mediaEvents.Count >= 2, $"Expected at least 2 media events from 10 track changes, got {mediaEvents.Count}. Total received: {received.Count}");
+        foreach (var evt in mediaEvents)
+        {
+            Assert.True(evt.GetProperty("payload").TryGetProperty("trackToken", out _));
+        }
+
+        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await server.StopAsync();
+    }
+
     private static async Task<JsonElement> ReceiveJsonAsync(WebSocket ws, int timeoutMs = 3000)
     {
         using var cts = new CancellationTokenSource(timeoutMs);

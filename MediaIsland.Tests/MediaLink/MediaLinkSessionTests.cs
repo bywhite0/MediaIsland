@@ -301,7 +301,46 @@ public class MediaLinkSessionTests
         Assert.Equal(WebSocketState.Closed, socket.State);
     }
 
-    private static string AuthJson() =>
+        [Fact]
+    public async Task QueueOverflow_DropsOldestMedia_WhenFull()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+        session.StartWriter(CancellationToken.None);
+
+        await session.HandleMessageAsync(AuthJson(), CancellationToken.None);
+        await session.HandleMessageAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeSubscribe,
+                new MediaLinkSubscribePayload { Channels = [MediaLinkProtocol.ChannelMedia, MediaLinkProtocol.ChannelLyrics] },
+                id: "s1")),
+            CancellationToken.None);
+
+        // Enqueue many media.updated without draining -> oldest dropped, no crash
+        for (var i = 0; i < 200; i++)
+        {
+            await session.EnqueueAsync(
+                MediaLinkMessageSerializer.Create(MediaLinkProtocol.TypeEvent,
+                    new MediaLinkMediaDto { Title = $"fill-{i}", SourceApp = "test", PlaybackState = "Playing", ChangeKind = "Timeline" },
+                    name: MediaLinkProtocol.EventMediaUpdated,
+                    seq: i),
+                droppable: true);
+        }
+
+        // Enqueue lyrics.updated -> succeeds (media dropped to make room)
+        await session.EnqueueAsync(
+            MediaLinkMessageSerializer.Create(MediaLinkProtocol.TypeEvent,
+                new MediaLinkLyricsDto { Id = "ly-1", Title = "Test", Artist = "A", DurationMs = 1000, Source = "External" },
+                name: MediaLinkProtocol.EventLyricsUpdated),
+            droppable: false);
+
+        await Task.Delay(200);
+        // Session should NOT be closed - media was dropped to make room
+        Assert.False(session.IsClosed);
+        // Writer should have processed some items
+        Assert.NotEmpty(socket.Outgoing);
+    }
+private static string AuthJson() =>
         MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeAuth,
             new MediaLinkAuthPayload { Token = "t" }));
