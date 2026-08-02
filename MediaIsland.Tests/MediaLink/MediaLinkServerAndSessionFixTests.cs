@@ -13,6 +13,10 @@ public class MediaLinkServerUpgradeTests
     {
         var request =
             "GET /v1/ws HTTP/1.1\r\n" +
+            "Host: 127.0.0.1\r\n" +
+            "Connection: Upgrade\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Sec-WebSocket-Version: 13\r\n" +
             "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
             "\r\n";
         var trailing = new byte[] { 0x81, 0x05, (byte)'h', (byte)'e', (byte)'l', (byte)'l', (byte)'o' };
@@ -21,7 +25,7 @@ public class MediaLinkServerUpgradeTests
         var duplex = new DuplexMemoryStream(
             Encoding.ASCII.GetBytes(request).Concat(trailing).ToArray());
 
-        var upgraded = await MediaLinkServer.TryUpgradeAsync(duplex, CancellationToken.None);
+        var upgraded = await MediaLinkServer.TryUpgradeAsync(duplex, "127.0.0.1", null, CancellationToken.None);
         Assert.True(upgraded);
 
         var leftover = duplex.ReadRemainingInput();
@@ -48,6 +52,106 @@ public class MediaLinkServerUpgradeTests
         Assert.Equal(after, remaining);
     }
 
+    [Fact]
+    public void ValidateUpgradeRequest_WrongPath_Returns404()
+    {
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/wx", "GET", MakeHeaders(), "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("404", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_PathWithQuery_ReturnsNull()
+    {
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws?foo=1", "GET", MakeHeaders(), "127.0.0.1", null, out _);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_MissingUpgrade_Returns400()
+    {
+        var headers = MakeHeaders();
+        headers.Remove("Upgrade");
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("400", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_WrongVersion_Returns426()
+    {
+        var headers = MakeHeaders();
+        headers["Sec-WebSocket-Version"] = "8";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("426", result);
+        Assert.Contains("Sec-WebSocket-Version: 13", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_BadKey_Returns400()
+    {
+        var headers = MakeHeaders();
+        headers["Sec-WebSocket-Key"] = "not-base64!!!";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("400", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_HostEvil_Returns403()
+    {
+        var headers = MakeHeaders();
+        headers["Host"] = "evil.com";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("403", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_OriginNotAllowed_Returns403()
+    {
+        var headers = MakeHeaders();
+        headers["Origin"] = "https://evil.com";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", new HashSet<string>(), out _);
+        Assert.NotNull(result);
+        Assert.Contains("403", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_OriginNullWithNullAllowed_ReturnsNull()
+    {
+        var headers = MakeHeaders();
+        headers["Origin"] = "null";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", new HashSet<string> { "null" }, out _);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_NonGet_Returns400()
+    {
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "POST", MakeHeaders(), "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("400", result);
+    }
+
+    private static Dictionary<string, string> MakeHeaders() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["Host"] = "127.0.0.1",
+        ["Connection"] = "Upgrade",
+        ["Upgrade"] = "websocket",
+        ["Sec-WebSocket-Version"] = "13",
+        ["Sec-WebSocket-Key"] = "dGhlIHNhbXBsZSBub25jZQ=="
+    };
     private sealed class DuplexMemoryStream : Stream
     {
         private readonly MemoryStream _input;

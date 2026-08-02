@@ -30,6 +30,8 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private CancellationTokenSource? _acceptCts;
     private Task? _acceptLoop;
     private readonly List<Task> _sessionTasks = [];
+    private string _listenAddress = "127.0.0.1";
+    private HashSet<string>? _allowedOrigins;
     private readonly object _gate = new();
     private int _activeSessions;
 
@@ -78,6 +80,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
             throw new InvalidOperationException(LastError);
         }
 
+        _listenAddress = listenAddress;
         var listener = new TcpListener(address, port);
         listener.Start();
         _listener = listener;
@@ -175,7 +178,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
             try
             {
                 await using var network = client.GetStream();
-                if (!await TryUpgradeAsync(network, cancellationToken))
+                if (!await TryUpgradeAsync(network, _listenAddress, _allowedOrigins, cancellationToken))
                 {
                     return;
                 }
@@ -236,24 +239,37 @@ public sealed class MediaLinkServer : IAsyncDisposable
     /// <summary>
     /// 纯字节解析 HTTP 升级请求，严格停在 <c>\r\n\r\n</c> 之后，不吞掉后续 WebSocket 帧。
     /// </summary>
-    internal static async Task<bool> TryUpgradeAsync(Stream stream, CancellationToken cancellationToken)
+    internal static async Task<bool> TryUpgradeAsync(
+        Stream stream,
+        string listenAddress = "127.0.0.1",
+        HashSet<string>? allowedOrigins = null,
+        CancellationToken cancellationToken = default)
     {
-        if (!TryParseHttpRequest(
-                await ReadHttpHeadersAsync(stream, cancellationToken),
-                out var path,
-                out var webSocketKey))
+        string headerText;
+        try
+        {
+            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            readCts.CancelAfter(TimeSpan.FromSeconds(5));
+            headerText = await ReadHttpHeadersAsync(stream, readCts.Token);
+        }
+        catch (OperationCanceledException)
         {
             return false;
         }
 
-        if (!path.StartsWith(MediaLinkProtocol.Path, StringComparison.Ordinal))
+        if (!TryParseHttpRequest(headerText, out var path, out var method, out var headers))
         {
-            var bad = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            await stream.WriteAsync(Encoding.ASCII.GetBytes(bad), cancellationToken);
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(webSocketKey))
+        var errorResponse = ValidateUpgradeRequest(path, method, headers, listenAddress, allowedOrigins, out var webSocketKey);
+        if (errorResponse is not null)
+        {
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(errorResponse), cancellationToken);
+            return false;
+        }
+
+        if (webSocketKey is null)
         {
             return false;
         }
@@ -299,10 +315,15 @@ public sealed class MediaLinkServer : IAsyncDisposable
         throw new InvalidOperationException("HTTP headers too large or incomplete.");
     }
 
-    internal static bool TryParseHttpRequest(string headerText, out string path, out string? webSocketKey)
+    internal static bool TryParseHttpRequest(
+        string headerText,
+        out string path,
+        out string method,
+        out Dictionary<string, string> headers)
     {
         path = string.Empty;
-        webSocketKey = null;
+        method = string.Empty;
+        headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         var lines = headerText.Split("\r\n", StringSplitOptions.None);
         if (lines.Length == 0 || string.IsNullOrWhiteSpace(lines[0]))
@@ -310,13 +331,15 @@ public sealed class MediaLinkServer : IAsyncDisposable
             return false;
         }
 
-        var parts = lines[0].Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (parts.Length < 2 || !parts[0].Equals("GET", StringComparison.OrdinalIgnoreCase))
+        var parts = lines[0].Split(' ', 3, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2)
         {
             return false;
         }
 
+        method = parts[0];
         path = parts[1];
+
         for (var i = 1; i < lines.Length; i++)
         {
             var line = lines[i];
@@ -333,12 +356,139 @@ public sealed class MediaLinkServer : IAsyncDisposable
 
             var name = line[..separator].Trim();
             var value = line[(separator + 1)..].Trim();
-            if (name.Equals("Sec-WebSocket-Key", StringComparison.OrdinalIgnoreCase))
+            headers[name] = value;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 严格校验 WebSocket 升级请求。返回 null 表示通过；返回非空字符串为 HTTP 错误响应。
+    /// </summary>
+    internal static string? ValidateUpgradeRequest(
+        string path,
+        string method,
+        Dictionary<string, string> headers,
+        string listenAddress,
+        HashSet<string>? allowedOrigins,
+        out string? webSocketKey)
+    {
+        webSocketKey = null;
+
+        // Method must be GET
+        if (!method.Equals("GET", StringComparison.OrdinalIgnoreCase))
+        {
+            return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+
+        // Path must be exactly /v1/ws (allow query string)
+        var pathOnly = path.Split('?', 2)[0];
+        if (!pathOnly.Equals(MediaLinkProtocol.Path, StringComparison.Ordinal))
+        {
+            return "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+
+        // Connection must contain "Upgrade"
+        if (!headers.TryGetValue("Connection", out var connection) ||
+            !connection.Contains("Upgrade", StringComparison.OrdinalIgnoreCase))
+        {
+            return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+
+        // Upgrade must be "websocket"
+        if (!headers.TryGetValue("Upgrade", out var upgrade) ||
+            !upgrade.Equals("websocket", StringComparison.OrdinalIgnoreCase))
+        {
+            return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+
+        // Sec-WebSocket-Version must be 13
+        if (headers.TryGetValue("Sec-WebSocket-Version", out var version) &&
+            version != "13")
+        {
+            return "HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: 13\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+
+        // Sec-WebSocket-Key must exist and be 16 bytes base64
+        if (!headers.TryGetValue("Sec-WebSocket-Key", out var key) ||
+            string.IsNullOrWhiteSpace(key))
+        {
+            return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+
+        try
+        {
+            var keyBytes = Convert.FromBase64String(key);
+            if (keyBytes.Length != 16)
             {
-                webSocketKey = value;
+                return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+            }
+        }
+        catch (FormatException)
+        {
+            return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+
+        webSocketKey = key;
+
+        // Host header: must match listen address
+        if (headers.TryGetValue("Host", out var host))
+        {
+            var hostOnly = host.Split(':', 2)[0].Trim();
+            if (!IsHostAllowed(hostOnly, listenAddress))
+            {
+                return "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
             }
         }
 
+        // Origin header: if present, must be in allowed set.
+        // Null allowedOrigins = accept all Origins (no restriction).
+        // Empty allowedOrigins = reject all Origins.
+        if (headers.TryGetValue("Origin", out var origin) && allowedOrigins is not null)
+        {
+            if (!allowedOrigins.Contains(origin) && !allowedOrigins.Contains("null"))
+            {
+                return "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+            }
+        }
+
+        return null; // valid
+    }
+
+    private static bool IsHostAllowed(string host, string listenAddress)
+    {
+        // Allow localhost variants
+        if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("127.0.0.1", StringComparison.Ordinal) ||
+            host.Equals("[::1]", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // Allow the listen address itself
+        if (host.Equals(listenAddress, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // Allow 0.0.0.0 listen address to accept any host
+        if (listenAddress == "0.0.0.0")
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>向后兼容的旧接口。</summary>
+    internal static bool TryParseHttpRequest(string headerText, out string path, out string? webSocketKey)
+    {
+        if (!TryParseHttpRequest(headerText, out path, out _, out var headers))
+        {
+            webSocketKey = null;
+            return false;
+        }
+        headers.TryGetValue("Sec-WebSocket-Key", out webSocketKey);
         return true;
     }
 
