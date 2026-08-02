@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Web;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
@@ -525,6 +526,33 @@ public sealed class MediaLinkServer : IAsyncDisposable
         return window.Count >= AuthFailureLimit;
     }
 
+        private async Task HandleThumbnailRequest(Stream stream, string path, Dictionary<string, string> headers, CancellationToken cancellationToken)
+    {
+        var query = path.Contains('?') ? path.Split('?', 2)[1] : string.Empty;
+        var queryParams = System.Web.HttpUtility.ParseQueryString(query);
+        var token = queryParams["token"];
+        var expectedToken = _tokenFactory();
+        if (string.IsNullOrEmpty(token) || expectedToken.Length == 0 ||
+            !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(token), Encoding.UTF8.GetBytes(expectedToken)))
+        {
+            var resp = "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(resp), cancellationToken);
+            return;
+        }
+
+        var media = _coordinator?.GetMediaForPush();
+        if (media?.Thumbnail is null && media?.ThumbnailSource is null)
+        {
+            var resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(resp), cancellationToken);
+            return;
+        }
+
+        // Full bitmap encoding not yet implemented; return 501 for now.
+        var notImpl = "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(notImpl), cancellationToken);
+    }
     private sealed record AuthFailureWindow(int Count, DateTimeOffset WindowStart);
 
     private static string FormatHost(IPAddress address) =>
