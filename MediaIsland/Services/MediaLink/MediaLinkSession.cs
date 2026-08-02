@@ -254,6 +254,9 @@ public sealed class MediaLinkSession : IAsyncDisposable
             case MediaLinkProtocol.TypePlaybackCommand:
                 await HandlePlaybackCommandAsync(message, cancellationToken);
                 break;
+            case MediaLinkProtocol.TypeUnsubscribe:
+                await HandleUnsubscribeAsync(message, cancellationToken);
+                break;
             default:
                 await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, $"unknown type: {message.Type}", cancellationToken);
                 break;
@@ -359,6 +362,45 @@ public sealed class MediaLinkSession : IAsyncDisposable
         }
     }
 
+    private async Task HandleUnsubscribeAsync(MediaLinkMessage message, CancellationToken cancellationToken)
+    {
+        if (!IsAuthenticated)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorUnauthorized, "authenticate first", cancellationToken);
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized", cancellationToken);
+            return;
+        }
+
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkUnsubscribePayload>(message.Payload);
+        var requested = (payload?.Channels ?? [])
+            .Where(channel => !string.IsNullOrWhiteSpace(channel))
+            .Select(channel => channel.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (requested.Length == 0 || requested.Any(channel => !MediaLinkProtocol.KnownChannels.Contains(channel)))
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, "invalid channels", cancellationToken);
+            return;
+        }
+
+        string[] removed;
+        lock (_gate)
+        {
+            removed = requested.Where(channel => _channels.Remove(channel)).ToArray();
+        }
+
+        if (removed.Length == 0)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, "not subscribed", cancellationToken);
+            return;
+        }
+
+        await SendAsync(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeUnsubscribeOk,
+            new MediaLinkUnsubscribePayload { Channels = removed.ToList() },
+            id: message.Id), cancellationToken);
+    }
     private async Task HandleMediaInjectAsync(MediaLinkMessage message, CancellationToken cancellationToken)
     {
         var store = _options.InjectionStore;

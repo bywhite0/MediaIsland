@@ -175,14 +175,134 @@ public class MediaLinkSessionTests
         Assert.Contains(mediaSocket.Outgoing, json => json.Contains("only-media", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Unsubscribe_RemovesChannelAndSendsOk()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+
+        await session.HandleMessageAsync(AuthJson(), CancellationToken.None);
+        await session.HandleMessageAsync(
+            SubscribeJson(MediaLinkProtocol.ChannelMedia, MediaLinkProtocol.ChannelLyrics),
+            CancellationToken.None);
+
+        Assert.True(session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia));
+        Assert.True(session.IsSubscribedTo(MediaLinkProtocol.ChannelLyrics));
+
+        socket.ClearOutgoing();
+        await session.HandleMessageAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeUnsubscribe,
+                new MediaLinkUnsubscribePayload { Channels = [MediaLinkProtocol.ChannelLyrics] },
+                id: "unsub-1")),
+            CancellationToken.None);
+
+        Assert.True(session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia));
+        Assert.False(session.IsSubscribedTo(MediaLinkProtocol.ChannelLyrics));
+        Assert.Contains(socket.Outgoing, json =>
+            json.Contains(MediaLinkProtocol.TypeUnsubscribeOk, StringComparison.Ordinal) &&
+            json.Contains("unsub-1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Unsubscribe_AllChannels_ThenReceivesNoBroadcasts()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+        var hub = new MediaLinkSessionHub();
+        hub.Add(session);
+
+        await session.HandleMessageAsync(AuthJson(), CancellationToken.None);
+        await session.HandleMessageAsync(SubscribeJson(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
+
+        socket.ClearOutgoing();
+        await session.HandleMessageAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeUnsubscribe,
+                new MediaLinkUnsubscribePayload { Channels = [MediaLinkProtocol.ChannelMedia] },
+                id: "unsub-all")),
+            CancellationToken.None);
+
+        Assert.False(session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia));
+        Assert.Contains(socket.Outgoing, json => json.Contains(MediaLinkProtocol.TypeUnsubscribeOk, StringComparison.Ordinal));
+
+        socket.ClearOutgoing();
+        await hub.BroadcastEventAsync(
+            MediaLinkProtocol.ChannelMedia,
+            MediaLinkProtocol.EventMediaUpdated,
+            new MediaLinkMediaDto { Title = "should-not-arrive" });
+
+        Assert.Empty(socket.Outgoing);
+    }
+
+    [Fact]
+    public async Task Unsubscribe_NotSubscribed_SendsBadRequest()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+
+        await session.HandleMessageAsync(AuthJson(), CancellationToken.None);
+        await session.HandleMessageAsync(SubscribeJson(MediaLinkProtocol.ChannelMedia), CancellationToken.None);
+
+        socket.ClearOutgoing();
+        await session.HandleMessageAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeUnsubscribe,
+                new MediaLinkUnsubscribePayload { Channels = [MediaLinkProtocol.ChannelLyrics] },
+                id: "unsub-fail")),
+            CancellationToken.None);
+
+        Assert.Contains(socket.Outgoing, json =>
+            json.Contains(MediaLinkProtocol.TypeError, StringComparison.Ordinal) &&
+            json.Contains(MediaLinkProtocol.ErrorBadRequest, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Unsubscribe_InvalidChannel_SendsBadRequest()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+
+        await session.HandleMessageAsync(AuthJson(), CancellationToken.None);
+
+        socket.ClearOutgoing();
+        await session.HandleMessageAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeUnsubscribe,
+                new MediaLinkUnsubscribePayload { Channels = ["nonexistent"] },
+                id: "unsub-bad")),
+            CancellationToken.None);
+
+        Assert.Contains(socket.Outgoing, json =>
+            json.Contains(MediaLinkProtocol.TypeError, StringComparison.Ordinal) &&
+            json.Contains(MediaLinkProtocol.ErrorBadRequest, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Unsubscribe_PreAuth_SendsUnauthorizedAndCloses()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+
+        await session.HandleMessageAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeUnsubscribe,
+                new MediaLinkUnsubscribePayload { Channels = [MediaLinkProtocol.ChannelMedia] },
+                id: "unsub-preauth")),
+            CancellationToken.None);
+
+        Assert.Contains(socket.Outgoing, json =>
+            json.Contains(MediaLinkProtocol.ErrorUnauthorized, StringComparison.Ordinal));
+        Assert.Equal(WebSocketState.Closed, socket.State);
+    }
+
     private static string AuthJson() =>
         MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeAuth,
             new MediaLinkAuthPayload { Token = "t" }));
 
-    private static string SubscribeJson(string channel) =>
+    private static string SubscribeJson(params string[] channels) =>
         MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeSubscribe,
-            new MediaLinkSubscribePayload { Channels = [channel] }));
+            new MediaLinkSubscribePayload { Channels = channels.ToList() }));
 }
-
