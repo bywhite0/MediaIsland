@@ -51,7 +51,8 @@ public static class MediaLinkMessageSerializer
         object? payload = null,
         string? id = null,
         string? name = null,
-        long? ts = null) =>
+        long? ts = null,
+        long seq = 0) =>
         new()
         {
             V = MediaLinkProtocol.Version,
@@ -59,6 +60,7 @@ public static class MediaLinkMessageSerializer
             Id = id,
             Name = name,
             Ts = ts ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            Seq = seq,
             Payload = payload is null ? null : ToPayloadElement(payload)
         };
 }

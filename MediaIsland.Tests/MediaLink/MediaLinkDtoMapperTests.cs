@@ -42,11 +42,14 @@ public class MediaLinkDtoMapperTests
         Assert.Equal(nameof(MediaPlaybackState.Playing), dto.PlaybackState);
         Assert.Equal(1.0, dto.PlaybackRate);
         Assert.False(dto.HasThumbnail);
+        Assert.NotNull(dto.TrackToken);
+        Assert.NotEmpty(dto.TrackToken);
 
         var json = MediaLinkMessageSerializer.SerializePayload(dto);
         Assert.DoesNotContain("\"thumbnail\"", json, StringComparison.Ordinal);
         Assert.DoesNotContain("\"bitmap\"", json, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("\"hasThumbnail\":false", json, StringComparison.Ordinal);
+        Assert.Contains("\"trackToken\":", json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -114,6 +117,8 @@ public class MediaLinkDtoMapperTests
 
         var dto = MediaLinkDtoMapper.ToLyricsDto(result);
         Assert.NotNull(dto);
+        Assert.NotNull(dto.TrackToken);
+        Assert.NotEmpty(dto.TrackToken);
 
         var envelope = MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeEvent,
@@ -177,5 +182,96 @@ public class MediaLinkDtoMapperTests
         Assert.Null(MediaLinkMessageSerializer.Deserialize(lyricsJson)!.Payload);
         Assert.DoesNotContain("\"payload\":", mediaJson, StringComparison.Ordinal);
     }
-}
 
+    [Fact]
+    public void TrackToken_IsStable_ForSameTrackIdentity()
+    {
+        var media1 = CreateMediaInfo("Spotify.exe", "Song", "Artist");
+        var media2 = CreateMediaInfo("Spotify.exe", "Song", "Artist");
+
+        var dto1 = MediaLinkDtoMapper.ToMediaDto(media1, MediaInfoChangeKind.CurrentSession)!;
+        var dto2 = MediaLinkDtoMapper.ToMediaDto(media2, MediaInfoChangeKind.CurrentSession)!;
+
+        Assert.Equal(dto1.TrackToken, dto2.TrackToken);
+    }
+
+    [Fact]
+    public void TrackToken_Changes_WhenTrackIdentityChanges()
+    {
+        var media1 = CreateMediaInfo("Spotify.exe", "Song A", "Artist");
+        var media2 = CreateMediaInfo("Spotify.exe", "Song B", "Artist");
+
+        var dto1 = MediaLinkDtoMapper.ToMediaDto(media1, MediaInfoChangeKind.CurrentSession)!;
+        var dto2 = MediaLinkDtoMapper.ToMediaDto(media2, MediaInfoChangeKind.CurrentSession)!;
+
+        Assert.NotEqual(dto1.TrackToken, dto2.TrackToken);
+    }
+
+    [Fact]
+    public void TrackToken_SerializesInEnvelope()
+    {
+        var media = CreateMediaInfo("Spotify.exe", "Song", "Artist");
+        var dto = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession)!;
+
+        var json = MediaLinkMessageSerializer.SerializePayload(dto);
+        Assert.Contains("\"trackToken\":", json, StringComparison.Ordinal);
+
+        var deserialized = MediaLinkMessageSerializer.DeserializePayload<MediaLinkMediaDto>(
+            JsonDocument.Parse(json).RootElement);
+        Assert.NotNull(deserialized);
+        Assert.Equal(dto.TrackToken, deserialized.TrackToken);
+    }
+
+    [Fact]
+    public void PositionCapturedAtMs_And_ServerTimeMs_SerializeWhenSet()
+    {
+        var dto = new MediaLinkMediaDto
+        {
+            ChangeKind = "Timeline",
+            SourceApp = "test",
+            PlaybackState = "Playing",
+            TrackToken = "tok",
+            PositionCapturedAtMs = 1_000_000,
+            ServerTimeMs = 1_000_100
+        };
+
+        var json = MediaLinkMessageSerializer.SerializePayload(dto);
+        Assert.Contains("\"positionCapturedAtMs\":1000000", json, StringComparison.Ordinal);
+        Assert.Contains("\"serverTimeMs\":1000100", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PositionCapturedAtMs_And_ServerTimeMs_OmitWhenDefault()
+    {
+        var dto = new MediaLinkMediaDto
+        {
+            ChangeKind = "Timeline",
+            SourceApp = "test",
+            PlaybackState = "Playing"
+        };
+
+        var json = MediaLinkMessageSerializer.SerializePayload(dto);
+        Assert.DoesNotContain("positionCapturedAtMs", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("serverTimeMs", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ComputeTrackToken_DifferentSourceApps_DifferentTokens()
+    {
+        var tok1 = MediaLinkDtoMapper.ComputeTrackToken("Spotify.exe", "Song", "Artist");
+        var tok2 = MediaLinkDtoMapper.ComputeTrackToken("vlc.exe", "Song", "Artist");
+        Assert.NotEqual(tok1, tok2);
+    }
+
+    [Fact]
+    public void ComputeTrackToken_NullTitleAndArtist_ProducesValidToken()
+    {
+        var tok = MediaLinkDtoMapper.ComputeTrackToken("app", null, null);
+        Assert.NotNull(tok);
+        Assert.NotEmpty(tok);
+    }
+
+    private static MediaInfo CreateMediaInfo(string sourceApp, string? title, string? artist) =>
+        new(sourceApp, title, artist, null, TimeSpan.Zero, TimeSpan.Zero,
+            new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
+}

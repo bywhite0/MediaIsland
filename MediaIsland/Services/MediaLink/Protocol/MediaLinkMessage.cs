@@ -18,6 +18,10 @@ public sealed class MediaLinkMessage
     [JsonPropertyName("ts")]
     public long Ts { get; set; }
 
+    [JsonPropertyName("seq")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public long Seq { get; set; }
+
     [JsonPropertyName("name")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? Name { get; set; }
@@ -58,6 +62,18 @@ public sealed class MediaLinkMediaDto
 
     [JsonPropertyName("hasThumbnail")]
     public bool HasThumbnail { get; set; }
+
+    [JsonPropertyName("trackToken")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TrackToken { get; set; }
+
+    [JsonPropertyName("positionCapturedAtMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public long PositionCapturedAtMs { get; set; }
+
+    [JsonPropertyName("serverTimeMs")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public long ServerTimeMs { get; set; }
 }
 
 public sealed class MediaLinkLyricsDto
@@ -79,6 +95,10 @@ public sealed class MediaLinkLyricsDto
 
     [JsonPropertyName("source")]
     public string Source { get; set; } = string.Empty;
+
+    [JsonPropertyName("trackToken")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? TrackToken { get; set; }
 
     [JsonPropertyName("document")]
     public MediaLinkLyricsDocumentDto? Document { get; set; }
@@ -181,6 +201,12 @@ public sealed class MediaLinkAuthPayload
 }
 
 public sealed class MediaLinkSubscribePayload
+{
+    [JsonPropertyName("channels")]
+    public List<string> Channels { get; set; } = [];
+}
+
+public sealed class MediaLinkUnsubscribePayload
 {
     [JsonPropertyName("channels")]
     public List<string> Channels { get; set; } = [];

@@ -12,6 +12,8 @@ public static class MediaLinkProtocol
     public const string TypeAuthFail = "auth_fail";
     public const string TypeSubscribe = "subscribe";
     public const string TypeSubscribeOk = "subscribe_ok";
+    public const string TypeUnsubscribe = "unsubscribe";
+    public const string TypeUnsubscribeOk = "unsubscribe_ok";
     public const string TypePing = "ping";
     public const string TypePong = "pong";
     public const string TypeError = "error";

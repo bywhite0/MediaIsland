@@ -180,5 +180,108 @@ public class MediaLinkMessageSerializerTests
         Assert.Equal("playback.command", MediaLinkProtocol.TypePlaybackCommand);
         Assert.Equal("not_supported", MediaLinkProtocol.ErrorNotSupported);
         Assert.Equal("no_session", MediaLinkProtocol.ErrorNoSession);
+        Assert.Equal("unsubscribe", MediaLinkProtocol.TypeUnsubscribe);
+        Assert.Equal("unsubscribe_ok", MediaLinkProtocol.TypeUnsubscribeOk);
+    }
+
+    [Fact]
+    public void Envelope_Seq_RoundTrips()
+    {
+        var msg = MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeEvent,
+            new MediaLinkMediaDto { ChangeKind = "Timeline", SourceApp = "test", PlaybackState = "Playing" },
+            name: MediaLinkProtocol.EventMediaUpdated,
+            ts: 1000,
+            seq: 42);
+
+        Assert.Equal(42, msg.Seq);
+
+        var json = MediaLinkMessageSerializer.Serialize(msg);
+        Assert.Contains("\"seq\":42", json, StringComparison.Ordinal);
+
+        var restored = MediaLinkMessageSerializer.Deserialize(json);
+        Assert.NotNull(restored);
+        Assert.Equal(42, restored.Seq);
+    }
+
+    [Fact]
+    public void Envelope_Seq_OmitsWhenZero()
+    {
+        var msg = MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypePing,
+            ts: 1000,
+            seq: 0);
+
+        var json = MediaLinkMessageSerializer.Serialize(msg);
+        Assert.DoesNotContain("seq", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UnsubscribePayload_RoundTrips()
+    {
+        var json = MediaLinkMessageSerializer.Serialize(
+            MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeUnsubscribe,
+                new MediaLinkUnsubscribePayload { Channels = ["lyrics"] },
+                id: "unsub-1"));
+
+        var msg = MediaLinkMessageSerializer.Deserialize(json)!;
+        Assert.Equal(MediaLinkProtocol.TypeUnsubscribe, msg.Type);
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkUnsubscribePayload>(msg.Payload)!;
+        Assert.Single(payload.Channels);
+        Assert.Equal("lyrics", payload.Channels[0]);
+    }
+
+    [Fact]
+    public void MediaDto_WithAllNewFields_RoundTrips()
+    {
+        var dto = new MediaLinkMediaDto
+        {
+            ChangeKind = "Timeline",
+            SourceApp = "Spotify.exe",
+            Title = "Song",
+            Artist = "Artist",
+            PositionMs = 5000,
+            DurationMs = 200000,
+            PlaybackState = "Playing",
+            TrackToken = "abc123",
+            PositionCapturedAtMs = 1_000_000,
+            ServerTimeMs = 1_000_100
+        };
+
+        var msg = MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeEvent, dto,
+            name: MediaLinkProtocol.EventMediaUpdated, ts: 1_000_050, seq: 7);
+
+        var json = MediaLinkMessageSerializer.Serialize(msg);
+        var restored = MediaLinkMessageSerializer.Deserialize(json)!;
+        var restoredDto = MediaLinkMessageSerializer.DeserializePayload<MediaLinkMediaDto>(restored.Payload)!;
+
+        Assert.Equal("abc123", restoredDto.TrackToken);
+        Assert.Equal(1_000_000, restoredDto.PositionCapturedAtMs);
+        Assert.Equal(1_000_100, restoredDto.ServerTimeMs);
+        Assert.Equal(7, restored.Seq);
+    }
+
+    [Fact]
+    public void LyricsDto_TrackToken_RoundTrips()
+    {
+        var dto = new MediaLinkLyricsDto
+        {
+            Id = "ly-1",
+            Title = "Song",
+            Artist = "Artist",
+            DurationMs = 200000,
+            Source = "External",
+            TrackToken = "tok-xyz"
+        };
+
+        var json = MediaLinkMessageSerializer.SerializePayload(dto);
+        Assert.Contains("\"trackToken\":\"tok-xyz\"", json, StringComparison.Ordinal);
+
+        var restored = MediaLinkMessageSerializer.DeserializePayload<MediaLinkLyricsDto>(
+            JsonDocument.Parse(json).RootElement);
+        Assert.NotNull(restored);
+        Assert.Equal("tok-xyz", restored.TrackToken);
     }
 }

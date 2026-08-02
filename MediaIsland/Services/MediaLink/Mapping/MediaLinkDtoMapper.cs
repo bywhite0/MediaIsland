@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
@@ -25,7 +27,8 @@ public static class MediaLinkDtoMapper
             DurationMs = ToMilliseconds(media.Duration),
             PlaybackState = media.PlaybackInfo.PlaybackState.ToString(),
             PlaybackRate = media.PlaybackInfo.PlaybackRate,
-            HasThumbnail = media.Thumbnail is not null || media.ThumbnailSource is not null
+            HasThumbnail = media.Thumbnail is not null || media.ThumbnailSource is not null,
+            TrackToken = ComputeTrackToken(media.SourceApp, media.Title, media.Artist)
         };
     }
 
@@ -44,6 +47,7 @@ public static class MediaLinkDtoMapper
             DurationMs = ToMilliseconds(result.Duration),
             Score = result.Score,
             Source = result.Source.ToString(),
+            TrackToken = ComputeTrackToken(result.Source.ToString(), result.Title, result.Artist),
             Document = ToDocumentDto(result.Document)
         };
     }
@@ -133,6 +137,33 @@ public static class MediaLinkDtoMapper
             LyricsSourceId.External);
         error = null;
         return true;
+    }
+
+    /// <summary>
+    /// 根据曲目标识（SourceApp + Title + Artist）计算稳定的 trackToken。
+    /// 同一曲目多次调用结果一致；不同曲目碰撞概率极低。
+    /// </summary>
+    internal static string ComputeTrackToken(string sourceApp, string? title, string? artist)
+    {
+        var key = string.Create(
+            sourceApp.Length + (title?.Length ?? 0) + (artist?.Length ?? 0) + 2,
+            (sourceApp, title, artist),
+            (span, state) =>
+            {
+                state.sourceApp.AsSpan().CopyTo(span);
+                var pos = state.sourceApp.Length;
+                span[pos++] = '\x1F';
+                (state.title ?? string.Empty).AsSpan().CopyTo(span[pos..]);
+                pos += state.title?.Length ?? 0;
+                span[pos++] = '\x1F';
+                (state.artist ?? string.Empty).AsSpan().CopyTo(span[pos..]);
+            });
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(key));
+        return Convert.ToBase64String(hash, 0, 8)
+            .Replace('+', '-')
+            .Replace('/', '_')
+            .TrimEnd('=');
     }
 
     private static IReadOnlyList<LyricsLine> MapLines(IEnumerable<MediaLinkLyricsLineDto>? lineDtos)
