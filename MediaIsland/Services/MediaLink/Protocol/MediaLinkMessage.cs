@@ -228,6 +228,13 @@ public sealed class MediaLinkServerHelloPayload
 
     [JsonPropertyName("authRequired")]
     public bool AuthRequired { get; set; } = true;
+
+    /// <summary>
+    /// listener 实例代号，进程内单调递增。<c>seq</c> 在 listener 重建后从 0 重新开始，
+    /// 客户端据此判断"seq 变小"是服务端重启而非乱序，从而重置已处理水位。
+    /// </summary>
+    [JsonPropertyName("sessionEpoch")]
+    public long SessionEpoch { get; set; }
 }
 
 public sealed class MediaLinkOkPayload

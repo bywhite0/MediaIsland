@@ -227,6 +227,46 @@ public class MediaLinkEndToEndTests
     }
 
     [Fact]
+    public async Task ServerHello_CarriesSessionEpoch_IncreasingAcrossRebuilds()
+    {
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok");
+
+        await server.StartAsync("127.0.0.1", 0);
+        var firstEpoch = await ReadHelloEpochAsync(server);
+        await server.StopAsync();
+
+        // 重建 listener：seq 归零，客户端必须能靠 epoch 变化识别出这不是乱序
+        await server.StartAsync("127.0.0.1", 0);
+        var secondEpoch = await ReadHelloEpochAsync(server);
+        await server.StopAsync();
+
+        Assert.True(firstEpoch > 0, $"epoch 应为正数，实际 {firstEpoch}");
+        Assert.True(secondEpoch > firstEpoch, $"重建后 epoch 应递增：{firstEpoch} -> {secondEpoch}");
+
+        // HostedService 每次重载都新建 MediaLinkServer，故 epoch 必须跨实例单调，
+        // 否则新实例从 1 重新开始，客户端无法识别重启。
+        var replacement = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok");
+        await replacement.StartAsync("127.0.0.1", 0);
+        var thirdEpoch = await ReadHelloEpochAsync(replacement);
+        await replacement.StopAsync();
+
+        Assert.True(thirdEpoch > secondEpoch, $"新 server 实例的 epoch 应继续递增：{secondEpoch} -> {thirdEpoch}");
+    }
+
+    private static async Task<long> ReadHelloEpochAsync(MediaLinkServer server)
+    {
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+        using var client = new ClientWebSocket();
+        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        var hello = await ReceiveJsonAsync(client);
+        Assert.Equal(MediaLinkProtocol.EventServerHello, hello.GetProperty("name").GetString());
+        var epoch = hello.GetProperty("payload").GetProperty("sessionEpoch").GetInt64();
+        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        return epoch;
+    }
+
+    [Fact]
     public async Task Thumbnail_WrongToken_Returns401()
     {
         var hub = new MediaLinkSessionHub();

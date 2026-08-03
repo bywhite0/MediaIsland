@@ -78,6 +78,14 @@ public sealed class MediaLinkServer : IAsyncDisposable
 
     public string? LastError { get; private set; }
 
+    /// <summary>
+    /// 当前 listener 实例代号，进程内单调递增。随 <see cref="StartAsync"/> 递增，
+    /// 供客户端区分「seq 归零」是服务端重建监听器而非消息乱序。
+    /// </summary>
+    public long SessionEpoch { get; private set; }
+
+    private static long _epochCounter;
+
     public async Task StartAsync(string listenAddress, int port, CancellationToken cancellationToken = default)
     {
         await StopAsync(cancellationToken);
@@ -99,6 +107,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         var listener = new TcpListener(address, port);
         listener.Start();
         _listener = listener;
+        SessionEpoch = Interlocked.Increment(ref _epochCounter);
         var actualPort = ((IPEndPoint)listener.LocalEndpoint).Port;
         Endpoint = $"ws://{FormatHost(address)}:{actualPort}{MediaLinkProtocol.Path}";
         LastError = null;
@@ -278,7 +287,8 @@ public sealed class MediaLinkServer : IAsyncDisposable
                         new MediaLinkServerHelloPayload
                         {
                             ProtocolVersion = MediaLinkProtocol.Version,
-                            AuthRequired = true
+                            AuthRequired = true,
+                            SessionEpoch = SessionEpoch
                         },
                         name: MediaLinkProtocol.EventServerHello);
                     await session.SendAsync(hello, cancellationToken);
