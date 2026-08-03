@@ -6,6 +6,7 @@ using System.Net.WebSockets;
 using System.Text;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
+using MediaIsland.Services.MediaLink.Mapping;
 using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
 
@@ -24,6 +25,9 @@ public sealed class MediaLinkServer : IAsyncDisposable
 
     /// <summary>HTTP 升级请求头最大字节数（防止畸形请求占内存）。</summary>
     internal const int MaxHttpHeaderBytes = 16 * 1024;
+
+    /// <summary>握手阶段整体读超时。</summary>
+    private static readonly TimeSpan HandshakeReadTimeout = TimeSpan.FromSeconds(5);
 
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<MediaLinkSession, Task> _onSubscribedAsync;
@@ -199,7 +203,34 @@ public sealed class MediaLinkServer : IAsyncDisposable
                 await using var network = client.GetStream();
                 var remoteIp = GetRemoteIp(client);
                 var allowedOrigins = ParseAllowedOrigins(_allowedOriginsAccessor?.Invoke());
-                if (!await TryUpgradeAsync(network, _listenAddress, allowedOrigins, cancellationToken))
+
+                string headerText;
+                try
+                {
+                    using var headerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    headerCts.CancelAfter(HandshakeReadTimeout);
+                    headerText = await ReadHttpHeadersAsync(network, headerCts.Token);
+                }
+                catch (Exception)
+                {
+                    return;
+                }
+
+                if (!TryParseHttpRequest(headerText, out var requestPath, out var requestMethod, out var requestHeaders))
+                {
+                    return;
+                }
+
+                // 缩略图端点与 WS 共用同一 listener 与同一 Token。
+                if (SplitPath(requestPath).Equals(MediaLinkProtocol.ThumbnailPath, StringComparison.Ordinal))
+                {
+                    await HandleThumbnailRequestAsync(network, requestPath, cancellationToken);
+                    return;
+                }
+
+                if (!await TryUpgradeParsedAsync(
+                        network, requestPath, requestMethod, requestHeaders,
+                        _listenAddress, allowedOrigins, cancellationToken))
                 {
                     return;
                 }
@@ -287,7 +318,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         try
         {
             using var readCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            readCts.CancelAfter(TimeSpan.FromSeconds(5));
+            readCts.CancelAfter(HandshakeReadTimeout);
             headerText = await ReadHttpHeadersAsync(stream, readCts.Token);
         }
         catch (OperationCanceledException)
@@ -300,6 +331,22 @@ public sealed class MediaLinkServer : IAsyncDisposable
             return false;
         }
 
+        return await TryUpgradeParsedAsync(
+            stream, path, method, headers, listenAddress, allowedOrigins, cancellationToken);
+    }
+
+    /// <summary>
+    /// 已解析 header 后的升级校验与 101 应答。与 <see cref="TryUpgradeAsync"/> 共用同一套校验规则。
+    /// </summary>
+    private static async Task<bool> TryUpgradeParsedAsync(
+        Stream stream,
+        string path,
+        string method,
+        Dictionary<string, string> headers,
+        string listenAddress,
+        HashSet<string>? allowedOrigins,
+        CancellationToken cancellationToken)
+    {
         var errorResponse = ValidateUpgradeRequest(path, method, headers, listenAddress, allowedOrigins, out var webSocketKey);
         if (errorResponse is not null)
         {
@@ -323,6 +370,9 @@ public sealed class MediaLinkServer : IAsyncDisposable
         await stream.WriteAsync(Encoding.ASCII.GetBytes(response), cancellationToken);
         return true;
     }
+
+    /// <summary>剥离 query，返回纯路径部分。</summary>
+    internal static string SplitPath(string path) => path.Split('?', 2)[0];
 
     /// <summary>
     /// 逐字节读到 header 结束符；返回 header 文本（不含 terminator 后的任何字节）。
@@ -645,33 +695,95 @@ public sealed class MediaLinkServer : IAsyncDisposable
         }
     }
 
-        private async Task HandleThumbnailRequest(Stream stream, string path, Dictionary<string, string> headers, CancellationToken cancellationToken)
+    /// <summary>
+    /// <c>GET /v1/thumbnail?token=&lt;token&gt;&amp;t=&lt;trackToken&gt;</c>。
+    /// 浏览器 <c>&lt;img&gt;</c> 无法带自定义头，故 Token 只能走 query，响应一律 no-store。
+    /// </summary>
+    private async Task HandleThumbnailRequestAsync(Stream stream, string path, CancellationToken cancellationToken)
     {
         var query = path.Contains('?') ? path.Split('?', 2)[1] : string.Empty;
-        var queryParams = System.Web.HttpUtility.ParseQueryString(query);
-        var token = queryParams["token"];
-        var expectedToken = _tokenFactory();
-        if (string.IsNullOrEmpty(token) || expectedToken.Length == 0 ||
-            !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
-                Encoding.UTF8.GetBytes(token), Encoding.UTF8.GetBytes(expectedToken)))
+        var queryParams = HttpUtility.ParseQueryString(query);
+
+        if (!MediaLinkAuth.ValidateToken(_tokenFactory(), queryParams["token"]))
         {
-            var resp = "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            await stream.WriteAsync(Encoding.ASCII.GetBytes(resp), cancellationToken);
+            await WriteSimpleResponseAsync(stream, "401 Unauthorized", cancellationToken);
             return;
         }
 
         var media = _coordinator?.GetMediaForPush();
-        if (media?.Thumbnail is null && media?.ThumbnailSource is null)
+        if (media is null)
         {
-            var resp = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            await stream.WriteAsync(Encoding.ASCII.GetBytes(resp), cancellationToken);
+            await WriteSimpleResponseAsync(stream, "404 Not Found", cancellationToken);
             return;
         }
 
-        // Full bitmap encoding not yet implemented; return 501 for now.
-        var notImpl = "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-        await stream.WriteAsync(Encoding.ASCII.GetBytes(notImpl), cancellationToken);
+        // t 仅做存在性比对，用于客户端缓存失效；不匹配即视为已过期。
+        var requestedTrackToken = queryParams["t"];
+        if (!string.IsNullOrEmpty(requestedTrackToken))
+        {
+            var currentTrackToken = MediaLinkDtoMapper.ComputeTrackToken(
+                media.SourceApp, media.Title, media.Artist);
+            if (!string.Equals(requestedTrackToken, currentTrackToken, StringComparison.Ordinal))
+            {
+                await WriteSimpleResponseAsync(stream, "404 Not Found", cancellationToken);
+                return;
+            }
+        }
+
+        byte[]? png;
+        try
+        {
+            png = await EncodeThumbnailPngAsync(media, cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "MediaLink 缩略图编码失败");
+            await WriteSimpleResponseAsync(stream, "500 Internal Server Error", cancellationToken);
+            return;
+        }
+
+        if (png is null || png.Length == 0)
+        {
+            await WriteSimpleResponseAsync(stream, "404 Not Found", cancellationToken);
+            return;
+        }
+
+        var header =
+            "HTTP/1.1 200 OK\r\n" +
+            "Content-Type: image/png\r\n" +
+            $"Content-Length: {png.Length}\r\n" +
+            "Cache-Control: no-store\r\n" +
+            "Connection: close\r\n\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(header), cancellationToken);
+        await stream.WriteAsync(png, cancellationToken);
+        await stream.FlushAsync(cancellationToken);
     }
+
+    /// <summary>把封面编码为 PNG。Avalonia 的 <c>Bitmap.Save</c> 输出 PNG。</summary>
+    internal static async Task<byte[]?> EncodeThumbnailPngAsync(MediaInfo media, CancellationToken cancellationToken)
+    {
+        var bitmap = media.Thumbnail;
+        if (bitmap is null && media.ThumbnailSource is not null)
+        {
+            bitmap = await media.ThumbnailSource.LoadBitmapAsync(false, cancellationToken);
+        }
+
+        if (bitmap is null)
+        {
+            return null;
+        }
+
+        using var buffer = new MemoryStream();
+        bitmap.Save(buffer);
+        return buffer.ToArray();
+    }
+
+    private static Task WriteSimpleResponseAsync(Stream stream, string status, CancellationToken cancellationToken) =>
+        stream.WriteAsync(
+            Encoding.ASCII.GetBytes(
+                $"HTTP/1.1 {status}\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"),
+            cancellationToken).AsTask();
+
     private sealed record AuthFailureWindow(int Count, DateTimeOffset WindowStart);
 
     private static string FormatHost(IPAddress address) =>

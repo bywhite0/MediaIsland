@@ -4,6 +4,7 @@ public static class MediaLinkProtocol
 {
     public const int Version = 1;
     public const string Path = "/v1/ws";
+    public const string ThumbnailPath = "/v1/thumbnail";
 
     public const string TypeEvent = "event";
     public const string TypeHello = "hello";

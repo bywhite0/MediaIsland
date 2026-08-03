@@ -227,6 +227,103 @@ public class MediaLinkEndToEndTests
     }
 
     [Fact]
+    public async Task Thumbnail_WrongToken_Returns401()
+    {
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "right");
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        var response = await HttpGetAsync(port, "/v1/thumbnail?token=wrong");
+        Assert.Contains("401", response);
+
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task Thumbnail_NoMedia_Returns404()
+    {
+        var media = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings { MediaLinkPushUsesEffective = true };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok", coordinator: coordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        var response = await HttpGetAsync(port, "/v1/thumbnail?token=tok");
+        Assert.Contains("404", response);
+
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task Thumbnail_TrackTokenMismatch_Returns404()
+    {
+        var media = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings { MediaLinkPushUsesEffective = true };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+        media.Raise(
+            new MediaInfo("app", "Song", "Artist", null, TimeSpan.Zero, TimeSpan.FromMinutes(3),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null),
+            MediaInfoChangeKind.MediaProperties);
+
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok", coordinator: coordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        var response = await HttpGetAsync(port, "/v1/thumbnail?token=tok&t=stale-track-token");
+        Assert.Contains("404", response);
+
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task Thumbnail_RoutedIndependentlyOfWebSocketUpgrade()
+    {
+        // 缩略图端点必须与 /v1/ws 分流：不带 WS 升级头也应得到 HTTP 响应而非 400。
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok");
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        var response = await HttpGetAsync(port, "/v1/thumbnail?token=tok");
+        Assert.StartsWith("HTTP/1.1", response);
+        Assert.DoesNotContain("501", response);
+        Assert.Contains("no-store", response);
+
+        await server.StopAsync();
+    }
+
+    private static async Task<string> HttpGetAsync(int port, string pathAndQuery)
+    {
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, port);
+        await using var stream = client.GetStream();
+        var request = Encoding.ASCII.GetBytes(
+            $"GET {pathAndQuery} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+        await stream.WriteAsync(request);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var buffer = new MemoryStream();
+        var chunk = new byte[4096];
+        while (true)
+        {
+            var read = await stream.ReadAsync(chunk, cts.Token);
+            if (read == 0) break;
+            buffer.Write(chunk, 0, read);
+        }
+
+        return Encoding.Latin1.GetString(buffer.ToArray());
+    }
+
+    [Fact]
     public async Task AuthFailuresOverLimit_RejectNewConnectionsAtAccept()
     {
         var hub = new MediaLinkSessionHub();
