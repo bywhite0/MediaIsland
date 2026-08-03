@@ -387,7 +387,8 @@ public sealed class MediaLinkServer : IAsyncDisposable
         Dictionary<string, string> headers,
         string listenAddress,
         HashSet<string>? allowedOrigins,
-        out string? webSocketKey)
+        out string? webSocketKey,
+        IReadOnlySet<string>? localAddresses = null)
     {
         webSocketKey = null;
 
@@ -447,14 +448,15 @@ public sealed class MediaLinkServer : IAsyncDisposable
 
         webSocketKey = key;
 
-        // Host header: must match listen address
-        if (headers.TryGetValue("Host", out var host))
+        // Host header: 必须存在（HTTP/1.1 强制）且指向本机
+        if (!headers.TryGetValue("Host", out var host) || string.IsNullOrWhiteSpace(host))
         {
-            var hostOnly = host.Split(':', 2)[0].Trim();
-            if (!IsHostAllowed(hostOnly, listenAddress))
-            {
-                return "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
-            }
+            return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+        }
+
+        if (!IsHostAllowed(NormalizeHostHeader(host), listenAddress, localAddresses))
+        {
+            return "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
         }
 
         // Origin header: if present, must be in the allowed set.
@@ -489,30 +491,82 @@ public sealed class MediaLinkServer : IAsyncDisposable
         return result;
     }
 
-    private static bool IsHostAllowed(string host, string listenAddress)
+    /// <summary>
+    /// 剥离 <c>Host</c> 头的端口部分。IPv6 字面量形如 <c>[::1]:17654</c>，方括号内的冒号不是端口分隔符。
+    /// </summary>
+    internal static string NormalizeHostHeader(string host)
     {
-        // Allow localhost variants
+        var trimmed = host.Trim();
+        if (trimmed.StartsWith('['))
+        {
+            var end = trimmed.IndexOf(']');
+            return end > 0 ? trimmed[..(end + 1)] : trimmed;
+        }
+
+        var separator = trimmed.IndexOf(':');
+        return separator >= 0 ? trimmed[..separator] : trimmed;
+    }
+
+    private static bool IsHostAllowed(string host, string listenAddress, IReadOnlySet<string>? localAddresses)
+    {
+        // Loopback variants are always local.
         if (host.Equals("localhost", StringComparison.OrdinalIgnoreCase) ||
             host.Equals("127.0.0.1", StringComparison.Ordinal) ||
-            host.Equals("[::1]", StringComparison.Ordinal))
+            host.Equals("[::1]", StringComparison.Ordinal) ||
+            host.Equals("::1", StringComparison.Ordinal))
         {
             return true;
         }
 
-        // Allow the listen address itself
+        // Allow the listen address itself.
         if (host.Equals(listenAddress, StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        // Allow 0.0.0.0 listen address to accept any host
-        if (listenAddress == "0.0.0.0")
+        // Wildcard listen address: accept any address that actually belongs to this machine.
+        // 不能无条件放行，否则 DNS rebinding 恰好在唯一需要防护的配置下失效。
+        if (listenAddress is "0.0.0.0" or "::")
         {
-            return true;
+            return (localAddresses ?? GetLocalAddresses()).Contains(host);
         }
 
         return false;
     }
+
+    /// <summary>
+    /// 本机所有单播地址的字面量形式（IPv6 带方括号）。缓存 60s，避免每次握手枚举网卡。
+    /// </summary>
+    private static IReadOnlySet<string> GetLocalAddresses()
+    {
+        var cached = Volatile.Read(ref _localAddressCache);
+        if (cached is not null && (DateTimeOffset.UtcNow - cached.CapturedAt).TotalSeconds < 60)
+        {
+            return cached.Addresses;
+        }
+
+        var addresses = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var address in Dns.GetHostAddresses(Dns.GetHostName()))
+            {
+                addresses.Add(address.AddressFamily == AddressFamily.InterNetworkV6
+                    ? $"[{address}]"
+                    : address.ToString());
+            }
+        }
+        catch (Exception)
+        {
+            // 枚举失败时退化为仅回环，宁可误拒也不误放。
+        }
+
+        Volatile.Write(ref _localAddressCache, new LocalAddressCache(addresses, DateTimeOffset.UtcNow));
+        return addresses;
+    }
+
+    private static LocalAddressCache? _localAddressCache;
+
+    private sealed record LocalAddressCache(IReadOnlySet<string> Addresses, DateTimeOffset CapturedAt);
 
     /// <summary>向后兼容的旧接口。</summary>
     internal static bool TryParseHttpRequest(string headerText, out string path, out string? webSocketKey)

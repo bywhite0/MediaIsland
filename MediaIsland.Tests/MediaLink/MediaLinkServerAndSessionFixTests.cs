@@ -136,6 +136,73 @@ public class MediaLinkServerUpgradeTests
     }
 
     [Fact]
+    public void ValidateUpgradeRequest_MissingHost_Returns400()
+    {
+        var headers = MakeHeaders();
+        headers.Remove("Host");
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("400", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_WildcardListen_RejectsForeignHost()
+    {
+        // 0.0.0.0 下不得无条件放行，否则 DNS rebinding 防护失效。
+        var headers = MakeHeaders();
+        headers["Host"] = "evil.com";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "0.0.0.0", null, out _,
+            localAddresses: new HashSet<string> { "192.168.1.50" });
+        Assert.NotNull(result);
+        Assert.Contains("403", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_WildcardListen_AllowsLocalIp()
+    {
+        var headers = MakeHeaders();
+        headers["Host"] = "192.168.1.50:17654";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "0.0.0.0", null, out _,
+            localAddresses: new HashSet<string> { "192.168.1.50" });
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_WildcardListen_AllowsLoopbackWithoutLocalSet()
+    {
+        var headers = MakeHeaders();
+        headers["Host"] = "127.0.0.1:17654";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "0.0.0.0", null, out _,
+            localAddresses: new HashSet<string>());
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_IPv6LoopbackHost_ReturnsNull()
+    {
+        var headers = MakeHeaders();
+        headers["Host"] = "[::1]:17654";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "::1", null, out _);
+        Assert.Null(result);
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1:17654", "127.0.0.1")]
+    [InlineData("127.0.0.1", "127.0.0.1")]
+    [InlineData("[::1]:17654", "[::1]")]
+    [InlineData("[fe80::1]", "[fe80::1]")]
+    [InlineData(" localhost:80 ", "localhost")]
+    public void NormalizeHostHeader_StripsPortWithoutBreakingIPv6(string raw, string expected)
+    {
+        Assert.Equal(expected, MediaLinkServer.NormalizeHostHeader(raw));
+    }
+
+    [Fact]
     public void ValidateUpgradeRequest_NoOriginHeader_ReturnsNull()
     {
         // 原生脚本客户端不发 Origin，白名单为空也应放行。
