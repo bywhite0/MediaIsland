@@ -89,7 +89,7 @@ public sealed class MediaLinkStatePublisher : IDisposable
             await session.EnqueueAsync(
                 MediaLinkMessageSerializer.Create(
                     MediaLinkProtocol.TypeEvent,
-                    MediaLinkDtoMapper.ToLyricsDto(lyrics),
+                    MediaLinkDtoMapper.ToLyricsDto(lyrics, media),
                     name: MediaLinkProtocol.EventLyricsUpdated,
                     ts: nowMs, seq: NextSeq()),
                 droppable: false,
@@ -208,7 +208,8 @@ public sealed class MediaLinkStatePublisher : IDisposable
     private void OnEffectiveLyricsChanged(object? sender, LyricsSearchResultChangedEventArgs e)
     {
         var lyrics = _coordinator.GetLyricsForPush();
-        var dto = MediaLinkDtoMapper.ToLyricsDto(lyrics);
+        // 歌词必须携带其所属媒体的 trackToken，客户端据此丢弃切歌后到达的陈旧歌词。
+        var dto = MediaLinkDtoMapper.ToLyricsDto(lyrics, _coordinator.GetMediaForPush());
         _ = SafeBroadcastLyricsAsync(dto);
     }
 

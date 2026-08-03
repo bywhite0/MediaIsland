@@ -117,8 +117,8 @@ public class MediaLinkDtoMapperTests
 
         var dto = MediaLinkDtoMapper.ToLyricsDto(result);
         Assert.NotNull(dto);
-        Assert.NotNull(dto.TrackToken);
-        Assert.NotEmpty(dto.TrackToken);
+        // 未提供归属媒体时 trackToken 为 null（协议规定："无法确定归属则为 null"）。
+        Assert.Null(dto.TrackToken);
 
         var envelope = MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeEvent,
@@ -270,6 +270,115 @@ public class MediaLinkDtoMapperTests
         Assert.NotNull(tok);
         Assert.NotEmpty(tok);
     }
+
+    [Fact]
+    public void LyricsTrackToken_MatchesMediaTrackToken_ForSameTrack()
+    {
+        // 协议核心契约：客户端按 lyrics.trackToken != media.trackToken 丢弃歌词，
+        // 故同一曲目的两个频道必须算出同一个 token。
+        var media = CreateMediaInfo("Spotify.exe", "Song", "Artist");
+        var lyrics = CreateLyricsResult("Song", "Artist", LyricsSourceId.QqMusic);
+
+        var mediaDto = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession)!;
+        var lyricsDto = MediaLinkDtoMapper.ToLyricsDto(lyrics, media)!;
+
+        Assert.Equal(mediaDto.TrackToken, lyricsDto.TrackToken);
+    }
+
+    [Fact]
+    public void LyricsTrackToken_IndependentOfLyricsSource()
+    {
+        // 歌词来源不同（QQ / 网易）但归属同一曲目时，token 必须一致。
+        var media = CreateMediaInfo("Spotify.exe", "Song", "Artist");
+        var fromQq = MediaLinkDtoMapper.ToLyricsDto(
+            CreateLyricsResult("Song", "Artist", LyricsSourceId.QqMusic), media)!;
+        var fromNetease = MediaLinkDtoMapper.ToLyricsDto(
+            CreateLyricsResult("Song", "Artist", LyricsSourceId.Netease), media)!;
+
+        Assert.Equal(fromQq.TrackToken, fromNetease.TrackToken);
+    }
+
+    [Fact]
+    public void LyricsTrackToken_DiffersFromCurrentMedia_AfterTrackChange()
+    {
+        // 切歌后到达的歌词仍指向其所属旧曲目，客户端据此判定为陈旧。
+        var oldMedia = CreateMediaInfo("Spotify.exe", "Old Song", "Artist");
+        var newMedia = CreateMediaInfo("Spotify.exe", "New Song", "Artist");
+
+        var lateLyrics = MediaLinkDtoMapper.ToLyricsDto(
+            CreateLyricsResult("Old Song", "Artist", LyricsSourceId.QqMusic), oldMedia)!;
+        var currentMedia = MediaLinkDtoMapper.ToMediaDto(newMedia, MediaInfoChangeKind.MediaProperties)!;
+
+        Assert.NotEqual(currentMedia.TrackToken, lateLyrics.TrackToken);
+    }
+
+    [Fact]
+    public void ComputeTrackToken_DistinguishesAlbumTitle()
+    {
+        var tok1 = MediaLinkDtoMapper.ComputeTrackToken("app", "Song", "Artist", "Album A");
+        var tok2 = MediaLinkDtoMapper.ComputeTrackToken("app", "Song", "Artist", "Album B");
+        Assert.NotEqual(tok1, tok2);
+    }
+
+    [Fact]
+    public void ComputeTrackToken_IsSixteenLowerHexChars()
+    {
+        var tok = MediaLinkDtoMapper.ComputeTrackToken("app", "Song", "Artist", "Album");
+        Assert.Equal(16, tok.Length);
+        Assert.Matches("^[0-9a-f]{16}$", tok);
+    }
+
+    [Fact]
+    public void ComputeTrackToken_SeparatorPreventsFieldAmbiguity()
+    {
+        // "ab"+"c" 与 "a"+"bc" 不得碰撞。
+        var tok1 = MediaLinkDtoMapper.ComputeTrackToken("app", "ab", "c");
+        var tok2 = MediaLinkDtoMapper.ComputeTrackToken("app", "a", "bc");
+        Assert.NotEqual(tok1, tok2);
+    }
+
+    [Theory]
+    [InlineData(LyricsSourceId.Netease, "Netease")]
+    [InlineData(LyricsSourceId.QqMusic, "QqMusic")]
+    [InlineData(LyricsSourceId.SPlayerNext, "SPlayerNext")]
+    [InlineData(LyricsSourceId.External, "External")]
+    [InlineData((LyricsSourceId)999, "Unknown")]
+    public void MapLyricsSource_UnmappedValueDegradesToUnknown(LyricsSourceId source, string expected)
+    {
+        Assert.Equal(expected, MediaLinkDtoMapper.MapLyricsSource(source));
+    }
+
+    [Theory]
+    [InlineData(LyricsFormat.Ttml, "Ttml")]
+    [InlineData((LyricsFormat)999, "Unknown")]
+    public void MapLyricsFormat_UnmappedValueDegradesToUnknown(LyricsFormat format, string expected)
+    {
+        Assert.Equal(expected, MediaLinkDtoMapper.MapLyricsFormat(format));
+    }
+
+    [Theory]
+    [InlineData(LyricsSyncMode.Word, "Word")]
+    [InlineData((LyricsSyncMode)999, "Unknown")]
+    public void MapSyncMode_UnmappedValueDegradesToUnknown(LyricsSyncMode syncMode, string expected)
+    {
+        Assert.Equal(expected, MediaLinkDtoMapper.MapSyncMode(syncMode));
+    }
+
+    private static LyricsSearchResult CreateLyricsResult(string title, string artist, LyricsSourceId source) =>
+        new(
+            new LyricsDocument(
+                new LyricsMetadata(title, artist, null, TimeSpan.FromSeconds(90)),
+                [],
+                LyricsSyncMode.Line,
+                source,
+                "item",
+                LyricsFormat.Lrc),
+            "item",
+            title,
+            artist,
+            TimeSpan.FromSeconds(90),
+            80,
+            source);
 
     [Fact]
     public void MapPlaybackState_KnownValues_MatchEnumNames()

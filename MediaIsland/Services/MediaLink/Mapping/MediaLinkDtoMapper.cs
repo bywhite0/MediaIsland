@@ -28,11 +28,16 @@ public static class MediaLinkDtoMapper
             PlaybackState = MapPlaybackState(media.PlaybackInfo.PlaybackState),
             PlaybackRate = media.PlaybackInfo.PlaybackRate,
             HasThumbnail = media.Thumbnail is not null || media.ThumbnailSource is not null,
-            TrackToken = ComputeTrackToken(media.SourceApp, media.Title, media.Artist)
+            TrackToken = ComputeTrackToken(media.SourceApp, media.Title, media.Artist, media.AlbumTitle)
         };
     }
 
-    public static MediaLinkLyricsDto? ToLyricsDto(LyricsSearchResult? result)
+    /// <summary>
+    /// 映射歌词 DTO。<paramref name="owningMedia"/> 是这份歌词**所属的**媒体，
+    /// 其 trackToken 必须与 <c>media.updated.trackToken</c> 同源计算，否则客户端
+    /// 按协议规则比对后会丢弃全部歌词。无法确定归属时传 null。
+    /// </summary>
+    public static MediaLinkLyricsDto? ToLyricsDto(LyricsSearchResult? result, MediaInfo? owningMedia = null)
     {
         if (result is null)
         {
@@ -46,8 +51,10 @@ public static class MediaLinkDtoMapper
             Artist = result.Artist,
             DurationMs = ToMilliseconds(result.Duration),
             Score = result.Score,
-            Source = result.Source.ToString(),
-            TrackToken = ComputeTrackToken(result.Source.ToString(), result.Title, result.Artist),
+            Source = MapLyricsSource(result.Source),
+            TrackToken = owningMedia is null
+                ? null
+                : ComputeTrackToken(owningMedia.SourceApp, owningMedia.Title, owningMedia.Artist, owningMedia.AlbumTitle),
             Document = ToDocumentDto(result.Document)
         };
     }
@@ -55,10 +62,10 @@ public static class MediaLinkDtoMapper
     public static MediaLinkLyricsDocumentDto ToDocumentDto(LyricsDocument document) =>
         new()
         {
-            Format = document.Format.ToString(),
-            SyncMode = document.SyncMode.ToString(),
+            Format = MapLyricsFormat(document.Format),
+            SyncMode = MapSyncMode(document.SyncMode),
             ProviderItemId = document.ProviderItemId,
-            Source = document.Source.ToString(),
+            Source = MapLyricsSource(document.Source),
             Metadata = new MediaLinkLyricsMetadataDto
             {
                 Title = document.Metadata.Title,
@@ -140,30 +147,15 @@ public static class MediaLinkDtoMapper
     }
 
     /// <summary>
-    /// 根据曲目标识（SourceApp + Title + Artist）计算稳定的 trackToken。
+    /// 根据曲目标识（SourceApp + Title + Artist + AlbumTitle）计算稳定的 trackToken。
     /// 同一曲目多次调用结果一致；不同曲目碰撞概率极低。
+    /// 分隔符用 U+001F，避免字段内容拼接产生歧义。
     /// </summary>
-    internal static string ComputeTrackToken(string sourceApp, string? title, string? artist)
+    internal static string ComputeTrackToken(string sourceApp, string? title, string? artist, string? albumTitle = null)
     {
-        var key = string.Create(
-            sourceApp.Length + (title?.Length ?? 0) + (artist?.Length ?? 0) + 2,
-            (sourceApp, title, artist),
-            (span, state) =>
-            {
-                state.sourceApp.AsSpan().CopyTo(span);
-                var pos = state.sourceApp.Length;
-                span[pos++] = '\x1F';
-                (state.title ?? string.Empty).AsSpan().CopyTo(span[pos..]);
-                pos += state.title?.Length ?? 0;
-                span[pos++] = '\x1F';
-                (state.artist ?? string.Empty).AsSpan().CopyTo(span[pos..]);
-            });
-
+        var key = string.Join('\x1F', sourceApp, title ?? string.Empty, artist ?? string.Empty, albumTitle ?? string.Empty);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(key));
-        return Convert.ToBase64String(hash, 0, 8)
-            .Replace('+', '-')
-            .Replace('/', '_')
-            .TrimEnd('=');
+        return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
     }
 
     private static IReadOnlyList<LyricsLine> MapLines(IEnumerable<MediaLinkLyricsLineDto>? lineDtos)
@@ -269,6 +261,38 @@ public static class MediaLinkDtoMapper
         MediaPlaybackState.Stopped => nameof(MediaPlaybackState.Stopped),
         MediaPlaybackState.Playing => nameof(MediaPlaybackState.Playing),
         MediaPlaybackState.Paused => nameof(MediaPlaybackState.Paused),
+        _ => "Unknown"
+    };
+
+    /// <summary>安全映射歌词来源：wire 值与内部枚举解耦，未知值输出 "Unknown"。</summary>
+    internal static string MapLyricsSource(LyricsSourceId source) => source switch
+    {
+        LyricsSourceId.Netease => nameof(LyricsSourceId.Netease),
+        LyricsSourceId.QqMusic => nameof(LyricsSourceId.QqMusic),
+        LyricsSourceId.Kugou => nameof(LyricsSourceId.Kugou),
+        LyricsSourceId.AmllTtml => nameof(LyricsSourceId.AmllTtml),
+        LyricsSourceId.SPlayerNext => nameof(LyricsSourceId.SPlayerNext),
+        LyricsSourceId.External => nameof(LyricsSourceId.External),
+        _ => "Unknown"
+    };
+
+    /// <summary>安全映射歌词格式：未知值输出 "Unknown"。</summary>
+    internal static string MapLyricsFormat(LyricsFormat format) => format switch
+    {
+        LyricsFormat.Unknown => nameof(LyricsFormat.Unknown),
+        LyricsFormat.Lrc => nameof(LyricsFormat.Lrc),
+        LyricsFormat.Qrc => nameof(LyricsFormat.Qrc),
+        LyricsFormat.Krc => nameof(LyricsFormat.Krc),
+        LyricsFormat.Ttml => nameof(LyricsFormat.Ttml),
+        _ => "Unknown"
+    };
+
+    /// <summary>安全映射歌词同步模式：未知值输出 "Unknown"。</summary>
+    internal static string MapSyncMode(LyricsSyncMode syncMode) => syncMode switch
+    {
+        LyricsSyncMode.Unsynced => nameof(LyricsSyncMode.Unsynced),
+        LyricsSyncMode.Line => nameof(LyricsSyncMode.Line),
+        LyricsSyncMode.Word => nameof(LyricsSyncMode.Word),
         _ => "Unknown"
     };
 
