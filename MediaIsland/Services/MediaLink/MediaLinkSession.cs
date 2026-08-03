@@ -110,6 +110,8 @@ public sealed class MediaLinkSessionOptions
 
     public Action? OnAuthFailed { get; init; }
 
+    public Action? OnAuthSucceeded { get; init; }
+
     public Func<MediaLinkSession, Task>? OnSubscribedAsync { get; init; }
 
     // Phase 2
@@ -378,6 +380,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
         var ok = MediaLinkAuth.ValidateToken(_options.ExpectedToken, payload?.Token);
         if (!ok)
         {
+            _options.OnAuthFailed?.Invoke();
             await SendAsync(MediaLinkMessageSerializer.Create(
                 MediaLinkProtocol.TypeAuthFail,
                 new MediaLinkErrorPayload
@@ -395,6 +398,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
             _authenticated = true;
         }
 
+        _options.OnAuthSucceeded?.Invoke();
         await SendAsync(MediaLinkMessageSerializer.Create(MediaLinkProtocol.TypeAuthOk, id: message.Id), cancellationToken);
     }
 

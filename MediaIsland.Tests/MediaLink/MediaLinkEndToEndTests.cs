@@ -226,6 +226,53 @@ public class MediaLinkEndToEndTests
         await server.StopAsync();
     }
 
+    [Fact]
+    public async Task AuthFailuresOverLimit_RejectNewConnectionsAtAccept()
+    {
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "right-token");
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        // 连续用错误 Token 认证失败，直到达到限速阈值
+        for (var i = 0; i < MediaLinkServer.AuthFailureLimit; i++)
+        {
+            using var bad = new ClientWebSocket();
+            await bad.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+            await ReceiveJsonAsync(bad); // hello
+            await SendJsonAsync(bad, new { type = "auth", id = "a", v = 1, ts = NowMs(), payload = new { token = "wrong" } });
+            try { await ReceiveJsonAsync(bad); } catch { /* auth_fail 后立即关闭 */ }
+        }
+
+        // 被限速的连接应在 accept 阶段直接关闭：读到 EOF，且没有任何 HTTP 响应字节
+        using var blocked = new TcpClient();
+        await blocked.ConnectAsync(IPAddress.Loopback, port);
+        await using var stream = blocked.GetStream();
+        var request = Encoding.ASCII.GetBytes(
+            "GET /v1/ws HTTP/1.1\r\n" +
+            $"Host: 127.0.0.1:{port}\r\n" +
+            "Connection: Upgrade\r\nUpgrade: websocket\r\n" +
+            "Sec-WebSocket-Version: 13\r\n" +
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n");
+        try { await stream.WriteAsync(request); } catch (IOException) { /* 已被 RST */ }
+
+        using var readCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var buffer = new byte[64];
+        int read;
+        try
+        {
+            read = await stream.ReadAsync(buffer, readCts.Token);
+        }
+        catch (IOException)
+        {
+            read = 0; // RST 等同于拒绝
+        }
+
+        Assert.Equal(0, read);
+
+        await server.StopAsync();
+    }
+
     private static async Task<JsonElement> ReceiveJsonAsync(WebSocket ws, int timeoutMs = 3000)
     {
         using var cts = new CancellationTokenSource(timeoutMs);

@@ -280,6 +280,66 @@ public class MediaLinkServerUpgradeTests
         Assert.True(server.IsAuthRateLimited("192.168.1.1"));
         Assert.False(server.IsAuthRateLimited("192.168.1.2"));
     }
+
+    [Fact]
+    public void AuthFailureRateLimit_ClearedOnSuccess()
+    {
+        // NAT 共享出口 IP 场景：一台设备认证成功后不应让同 IP 其它实例继续受罚。
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "token");
+
+        for (var i = 0; i < MediaLinkServer.AuthFailureLimit; i++)
+        {
+            server.RecordAuthFailure("10.0.0.5");
+        }
+
+        Assert.True(server.IsAuthRateLimited("10.0.0.5"));
+        server.ClearAuthFailures("10.0.0.5");
+        Assert.False(server.IsAuthRateLimited("10.0.0.5"));
+    }
+
+    [Fact]
+    public async Task AuthFailure_InvokesOnAuthFailedCallback()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var failures = 0;
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions
+        {
+            ExpectedToken = "secret",
+            OnAuthFailed = () => Interlocked.Increment(ref failures)
+        });
+
+        await session.HandleMessageAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeAuth,
+                new MediaLinkAuthPayload { Token = "wrong" },
+                id: "1")),
+            CancellationToken.None);
+
+        Assert.Equal(1, Volatile.Read(ref failures));
+    }
+
+    [Fact]
+    public async Task AuthSuccess_InvokesOnAuthSucceededCallback()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var successes = 0;
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions
+        {
+            ExpectedToken = "secret",
+            OnAuthSucceeded = () => Interlocked.Increment(ref successes)
+        });
+
+        await session.HandleMessageAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeAuth,
+                new MediaLinkAuthPayload { Token = "secret" },
+                id: "1")),
+            CancellationToken.None);
+
+        Assert.True(session.IsAuthenticated);
+        Assert.Equal(1, Volatile.Read(ref successes));
+    }
     private static Dictionary<string, string> MakeHeaders() => new(StringComparer.OrdinalIgnoreCase)
     {
         ["Host"] = "127.0.0.1",

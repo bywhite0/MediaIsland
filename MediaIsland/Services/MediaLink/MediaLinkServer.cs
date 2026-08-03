@@ -170,6 +170,13 @@ public sealed class MediaLinkServer : IAsyncDisposable
                 continue;
             }
 
+            if (GetRemoteIp(client) is { } remoteIp && IsAuthRateLimited(remoteIp))
+            {
+                _logger?.LogWarning("MediaLink 认证失败次数超限，暂时拒绝来自 {Ip} 的连接", remoteIp);
+                try { client.Close(); } catch { /* ignore */ }
+                continue;
+            }
+
             var task = Task.Run(() => HandleClientAsync(client, token, cancellationToken), CancellationToken.None);
             lock (_gate)
             {
@@ -190,6 +197,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
             try
             {
                 await using var network = client.GetStream();
+                var remoteIp = GetRemoteIp(client);
                 var allowedOrigins = ParseAllowedOrigins(_allowedOriginsAccessor?.Invoke());
                 if (!await TryUpgradeAsync(network, _listenAddress, allowedOrigins, cancellationToken))
                 {
@@ -209,6 +217,20 @@ public sealed class MediaLinkServer : IAsyncDisposable
                     {
                         ExpectedToken = token,
                         OnSubscribedAsync = _onSubscribedAsync,
+                        OnAuthFailed = () =>
+                        {
+                            if (remoteIp is not null)
+                            {
+                                RecordAuthFailure(remoteIp);
+                            }
+                        },
+                        OnAuthSucceeded = () =>
+                        {
+                            if (remoteIp is not null)
+                            {
+                                ClearAuthFailures(remoteIp);
+                            }
+                        },
                         InjectionStore = _injectionStore,
                         Coordinator = _coordinator,
                         PlaybackControllerAccessor = _playbackControllerAccessor,
@@ -603,6 +625,24 @@ public sealed class MediaLinkServer : IAsyncDisposable
             return false;
         }
         return window.Count >= AuthFailureLimit;
+    }
+
+    /// <summary>
+    /// 认证成功后清零该 IP 的失败计数。多台设备经 NAT 共享出口 IP 时，
+    /// 一台填错 Token 不应持续影响同网段其它实例。
+    /// </summary>
+    internal void ClearAuthFailures(string ip) => _authFailures.TryRemove(ip, out _);
+
+    private static string? GetRemoteIp(TcpClient client)
+    {
+        try
+        {
+            return (client.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString();
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
         private async Task HandleThumbnailRequest(Stream stream, string path, Dictionary<string, string> headers, CancellationToken cancellationToken)
