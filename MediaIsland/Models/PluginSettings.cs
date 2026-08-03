@@ -356,7 +356,7 @@ namespace MediaIsland.Models
         }
 
         /// <summary>
-        /// 允许的 Origin 白名单，逗号分隔。空表示拒绝所有带 Origin 的连接。
+        /// 允许的 Origin 白名单，分号或逗号分隔。空表示拒绝所有带 Origin 的连接。
         /// </summary>
         public string MediaLinkAllowedOrigins
         {

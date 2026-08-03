@@ -28,6 +28,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<MediaLinkSession, Task> _onSubscribedAsync;
     private readonly Func<string> _tokenFactory;
+    private readonly Func<string>? _allowedOriginsAccessor;
     private readonly MediaLinkInjectionStore? _injectionStore;
     private readonly MediaSourceCoordinator? _coordinator;
     private readonly Func<IMediaPlaybackController?>? _playbackControllerAccessor;
@@ -40,7 +41,6 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private readonly List<Task> _sessionTasks = [];
     private readonly ConcurrentDictionary<string, AuthFailureWindow> _authFailures = new();
     private string _listenAddress = "127.0.0.1";
-    private HashSet<string>? _allowedOrigins;
     private readonly object _gate = new();
     private int _activeSessions;
 
@@ -48,6 +48,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         MediaLinkSessionHub hub,
         Func<MediaLinkSession, Task> onSubscribedAsync,
         Func<string> tokenFactory,
+        Func<string>? allowedOriginsAccessor = null,
         MediaLinkInjectionStore? injectionStore = null,
         MediaSourceCoordinator? coordinator = null,
         Func<IMediaPlaybackController?>? playbackControllerAccessor = null,
@@ -58,6 +59,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         _hub = hub;
         _onSubscribedAsync = onSubscribedAsync;
         _tokenFactory = tokenFactory;
+        _allowedOriginsAccessor = allowedOriginsAccessor;
         _injectionStore = injectionStore;
         _coordinator = coordinator;
         _playbackControllerAccessor = playbackControllerAccessor;
@@ -188,7 +190,8 @@ public sealed class MediaLinkServer : IAsyncDisposable
             try
             {
                 await using var network = client.GetStream();
-                if (!await TryUpgradeAsync(network, _listenAddress, _allowedOrigins, cancellationToken))
+                var allowedOrigins = ParseAllowedOrigins(_allowedOriginsAccessor?.Invoke());
+                if (!await TryUpgradeAsync(network, _listenAddress, allowedOrigins, cancellationToken))
                 {
                     return;
                 }
@@ -249,6 +252,9 @@ public sealed class MediaLinkServer : IAsyncDisposable
     /// <summary>
     /// 纯字节解析 HTTP 升级请求，严格停在 <c>\r\n\r\n</c> 之后，不吞掉后续 WebSocket 帧。
     /// </summary>
+    /// <param name="allowedOrigins">
+    /// Origin 白名单。空或 null 时拒绝所有带 <c>Origin</c> 头的连接；无 Origin 头的原生客户端始终放行。
+    /// </param>
     internal static async Task<bool> TryUpgradeAsync(
         Stream stream,
         string listenAddress = "127.0.0.1",
@@ -451,18 +457,36 @@ public sealed class MediaLinkServer : IAsyncDisposable
             }
         }
 
-        // Origin header: if present, must be in allowed set.
-        // Null allowedOrigins = accept all Origins (no restriction).
-        // Empty allowedOrigins = reject all Origins.
-        if (headers.TryGetValue("Origin", out var origin) && allowedOrigins is not null)
+        // Origin header: if present, must be in the allowed set.
+        // Empty/null allowedOrigins = reject every connection that carries an Origin.
+        if (headers.TryGetValue("Origin", out var origin))
         {
-            if (!allowedOrigins.Contains(origin) && !allowedOrigins.Contains("null"))
+            if (allowedOrigins is null || !allowedOrigins.Contains(origin.Trim()))
             {
                 return "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
             }
         }
 
         return null; // valid
+    }
+
+    /// <summary>
+    /// 解析 Origin 白名单设置（分号或逗号分隔）。空集合表示拒绝所有带 Origin 的连接。
+    /// </summary>
+    internal static HashSet<string> ParseAllowedOrigins(string? raw)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return result;
+        }
+
+        foreach (var entry in raw.Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            result.Add(entry);
+        }
+
+        return result;
     }
 
     private static bool IsHostAllowed(string host, string listenAddress)

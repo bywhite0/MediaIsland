@@ -136,6 +136,60 @@ public class MediaLinkServerUpgradeTests
     }
 
     [Fact]
+    public void ValidateUpgradeRequest_NoOriginHeader_ReturnsNull()
+    {
+        // 原生脚本客户端不发 Origin，白名单为空也应放行。
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", MakeHeaders(), "127.0.0.1", new HashSet<string>(), out _);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_OriginPresentWithNullAllowList_Returns403()
+    {
+        // 未配置白名单时必须拒绝所有带 Origin 的连接，而非放行。
+        var headers = MakeHeaders();
+        headers["Origin"] = "https://example.com";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("403", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_NullAllowed_DoesNotWhitelistOtherOrigins()
+    {
+        // 白名单含 "null" 时不得放行其它 Origin。
+        var headers = MakeHeaders();
+        headers["Origin"] = "https://evil.com";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", new HashSet<string> { "null" }, out _);
+        Assert.NotNull(result);
+        Assert.Contains("403", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_OriginAllowed_ReturnsNull()
+    {
+        var headers = MakeHeaders();
+        headers["Origin"] = "https://obs.local";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1",
+            MediaLinkServer.ParseAllowedOrigins("null;https://obs.local"), out _);
+        Assert.Null(result);
+    }
+
+    [Theory]
+    [InlineData("null;https://a.com", 2)]
+    [InlineData("null, https://a.com , ", 2)]
+    [InlineData("", 0)]
+    [InlineData(null, 0)]
+    public void ParseAllowedOrigins_HandlesBothSeparatorsAndBlanks(string? raw, int expected)
+    {
+        Assert.Equal(expected, MediaLinkServer.ParseAllowedOrigins(raw).Count);
+    }
+
+    [Fact]
     public void ValidateUpgradeRequest_NonGet_Returns400()
     {
         var result = MediaLinkServer.ValidateUpgradeRequest(

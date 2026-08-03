@@ -181,6 +181,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                 _hub,
                 session => _publisher.PublishSnapshotAsync(session),
                 () => settings.MediaLinkToken,
+                allowedOriginsAccessor: () => settings.MediaLinkAllowedOrigins,
                 injectionStore: _injectionStore,
                 coordinator: _coordinator,
                 playbackControllerAccessor: () =>
