@@ -29,6 +29,9 @@ public sealed class MediaLinkServer : IAsyncDisposable
     /// <summary>握手阶段整体读超时。</summary>
     private static readonly TimeSpan HandshakeReadTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>停服时等待单个会话完成关闭握手的上限。</summary>
+    private static readonly TimeSpan GoingAwayTimeout = TimeSpan.FromSeconds(1);
+
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<MediaLinkSession, Task> _onSubscribedAsync;
     private readonly Func<string> _tokenFactory;
@@ -123,13 +126,17 @@ public sealed class MediaLinkServer : IAsyncDisposable
         IsRunning = false;
         Endpoint = null;
 
+        // 先停止 accept 再发关闭帧：新连接不再进来，但已有会话的 socket 仍存活。
+        // 顺序不能反 —— 取消 _acceptCts 会终止 RunAsync 并 Dispose socket，关闭帧就发不出去了。
+        _listener?.Stop();
+        _listener = null;
+
+        await _hub.CloseAllGoingAwayAsync(GoingAwayTimeout, cancellationToken);
+
         if (_acceptCts is not null)
         {
             try { _acceptCts.Cancel(); } catch { /* ignore */ }
         }
-
-        _listener?.Stop();
-        _listener = null;
 
         if (_acceptLoop is not null)
         {

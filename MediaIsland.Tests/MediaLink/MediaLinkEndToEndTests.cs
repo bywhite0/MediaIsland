@@ -171,6 +171,37 @@ public class MediaLinkEndToEndTests
     }
 
     [Fact]
+    public async Task ServerStop_SendsGoingAwayToConnectedClient()
+    {
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok");
+        await server.StartAsync("127.0.0.1", 0);
+        var actualPort = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        using var client = new ClientWebSocket();
+        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"), CancellationToken.None);
+        await ReceiveJsonAsync(client);
+        await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
+        await ReceiveJsonAsync(client);
+
+        await server.StopAsync();
+
+        // 停服后客户端应收到关闭帧而非被硬断开：读到 Close 消息，且状态码为 1001。
+        var buffer = new byte[4096];
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (client.State == WebSocketState.Open)
+        {
+            var result = await client.ReceiveAsync(buffer, cts.Token);
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                break;
+            }
+        }
+
+        Assert.Equal((WebSocketCloseStatus)1001, client.CloseStatus);
+    }
+
+    [Fact]
     public async Task RapidTrackChanges_TrackTokenMatchesSourceApp()
     {
         var hub = new MediaLinkSessionHub();

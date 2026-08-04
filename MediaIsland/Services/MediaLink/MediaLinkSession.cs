@@ -856,6 +856,13 @@ public sealed class MediaLinkSession : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 服务停止时主动告知对端，使客户端能区分「服务端正常下线」与「网络故障」，
+    /// 从而决定是否重连。仅此一处对外暴露关闭能力。
+    /// </summary>
+    public Task CloseGoingAwayAsync(CancellationToken cancellationToken = default) =>
+        CloseAsync((WebSocketCloseStatus)1001, "server stopping", cancellationToken);
+
     public ValueTask DisposeAsync()
     {
         _closed = true;
@@ -946,6 +953,28 @@ public sealed class MediaLinkSessionHub
             catch
             {
                 // drop broken sessions on next cleanup
+            }
+        }
+    }
+
+    /// <summary>
+    /// 向所有在线会话发 1001 GoingAway。必须在取消会话令牌之前调用：
+    /// 一旦取消，RunAsync 立即结束并 Dispose socket，关闭帧就发不出去了。
+    /// 单会话失败或超时不影响其余会话，也不阻塞停服。
+    /// </summary>
+    public async Task CloseAllGoingAwayAsync(TimeSpan perSessionTimeout, CancellationToken cancellationToken = default)
+    {
+        foreach (var session in _sessions.Keys)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(perSessionTimeout);
+                await session.CloseGoingAwayAsync(cts.Token);
+            }
+            catch
+            {
+                // 对端已死或不回关闭握手：停服不能因此挂住
             }
         }
     }
