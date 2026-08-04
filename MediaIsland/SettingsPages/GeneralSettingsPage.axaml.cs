@@ -44,8 +44,10 @@ namespace MediaIsland.SettingsPages
         private readonly IMediaLinkGateway? _mediaLinkGateway;
         private readonly IEffectiveMediaSource? _effectiveMediaSource;
         private readonly MediaLinkInjectionStore? _injectionStore;
+        private readonly MediaLinkUpstreamHostedService? _upstream;
         private string _mediaLinkStatusText = "未启用";
         private string _mediaLinkExposureWarning = string.Empty;
+        private string _mediaLinkUpstreamStatusText = "未启用";
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -233,6 +235,12 @@ namespace MediaIsland.SettingsPages
 
         public bool HasMediaLinkExposureWarning => !string.IsNullOrEmpty(_mediaLinkExposureWarning);
 
+        public string MediaLinkUpstreamStatusText
+        {
+            get => _mediaLinkUpstreamStatusText;
+            private set => SetProperty(ref _mediaLinkUpstreamStatusText, value);
+        }
+
         public int MediaLinkMediaSourceModeIndex
         {
             get => (int)Settings.MediaLinkMediaSourceMode;
@@ -258,7 +266,8 @@ namespace MediaIsland.SettingsPages
             LyricsSearchService lyricsSearchService,
             IMediaLinkGateway? mediaLinkGateway = null,
             IEffectiveMediaSource? effectiveMediaSource = null,
-            MediaLinkInjectionStore? injectionStore = null)
+            MediaLinkInjectionStore? injectionStore = null,
+            MediaLinkUpstreamHostedService? upstream = null)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
@@ -268,6 +277,7 @@ namespace MediaIsland.SettingsPages
             _mediaLinkGateway = mediaLinkGateway;
             _effectiveMediaSource = effectiveMediaSource;
             _injectionStore = injectionStore;
+            _upstream = upstream;
             RemoveNullMediaSources();
             InitializeComponent();
             LoadLyricsSettings();
@@ -275,6 +285,7 @@ namespace MediaIsland.SettingsPages
             {
                 _isDetached = true;
                 UnsubscribeMediaLinkGateway();
+                UnsubscribeUpstream();
                 Settings.PropertyChanged -= OnPluginSettingsChangedForMediaLink;
                 if (_effectiveMediaSource is not null)
                 {
@@ -305,6 +316,8 @@ namespace MediaIsland.SettingsPages
             RefreshMediaSourceDisplayInfos();
             RefreshMediaLinkStatus();
             SubscribeMediaLinkGateway();
+            RefreshUpstreamStatus();
+            SubscribeUpstream();
             var screenshotApp = new MediaSource
             {
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
@@ -1017,6 +1030,22 @@ namespace MediaIsland.SettingsPages
             _mediaLinkGateway.PropertyChanged += OnMediaLinkGatewayChanged;
         }
 
+        private void SubscribeUpstream()
+        {
+            if (_upstream is not null)
+            {
+                _upstream.StateChanged += OnUpstreamStateChanged;
+            }
+        }
+
+        private void UnsubscribeUpstream()
+        {
+            if (_upstream is not null)
+            {
+                _upstream.StateChanged -= OnUpstreamStateChanged;
+            }
+        }
+
         private void UnsubscribeMediaLinkGateway()
         {
             if (_mediaLinkGateway is null)
@@ -1044,12 +1073,68 @@ namespace MediaIsland.SettingsPages
             });
         }
 
+        private void OnUpstreamStateChanged(object? sender, EventArgs e)
+        {
+            if (_isDetached)
+            {
+                return;
+            }
+
+            // 同样来自后台线程：重连循环与设置热更新都不在 UI 线程上。
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!_isDetached)
+                {
+                    RefreshUpstreamStatus();
+                }
+            });
+        }
+
+        private void RefreshUpstreamStatus()
+        {
+            if (_upstream is null)
+            {
+                MediaLinkUpstreamStatusText = "上游消费服务不可用";
+                return;
+            }
+
+            if (!Settings.MediaLinkUpstreamIsEnabled)
+            {
+                MediaLinkUpstreamStatusText = "未启用";
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_upstream.LastError))
+            {
+                MediaLinkUpstreamStatusText = $"未连接；{_upstream.LastError}";
+                return;
+            }
+
+            // 媒体源模式不含外部时，收到的数据不会进入界面——这是最容易踩的坑。
+            var modeHint = Settings.MediaLinkMediaSourceMode == MediaLinkMediaSourceMode.PlatformOnly
+                ? "；⚠ 当前媒体源模式为「仅系统会话」，上游数据不会生效"
+                : string.Empty;
+
+            MediaLinkUpstreamStatusText = _upstream.IsConnected
+                ? $"已连接{modeHint}"
+                : $"连接中…{modeHint}";
+        }
+
         private void OnPluginSettingsChangedForMediaLink(object? sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(PluginSettings.MediaLinkMediaSourceMode))
             {
                 OnPropertyChanged(nameof(MediaLinkMediaSourceModeIndex));
                 RefreshMediaLinkStatus();
+                RefreshUpstreamStatus();   // 提示语依赖当前媒体源模式
+                return;
+            }
+
+            if (e.PropertyName is nameof(PluginSettings.MediaLinkUpstreamIsEnabled)
+                or nameof(PluginSettings.MediaLinkUpstreamEndpoint)
+                or nameof(PluginSettings.MediaLinkUpstreamToken))
+            {
+                RefreshUpstreamStatus();
                 return;
             }
 

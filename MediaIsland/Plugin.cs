@@ -74,6 +74,13 @@ namespace MediaIsland
                 provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()));
             services.AddSingleton<IMediaLinkGateway>(provider => provider.GetRequiredService<MediaLinkHostedService>());
             services.AddHostedService(provider => provider.GetRequiredService<MediaLinkHostedService>());
+            // 上游消费与服务端相互独立：一台实例可以只推、只收，或两者同时（转发中继）。
+            services.AddSingleton<MediaLinkUpstreamHostedService>(provider => new MediaLinkUpstreamHostedService(
+                provider.GetRequiredService<MediaLinkInjectionStore>(),
+                provider.GetRequiredService<MediaSourceCoordinator>(),
+                () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
+                provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()));
+            services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
             services.AddComponent<LyricsComponent, LyricsComponentSettings>();

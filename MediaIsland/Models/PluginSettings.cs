@@ -381,6 +381,51 @@ namespace MediaIsland.Models
             }
         }
 
+        private bool _mediaLinkUpstreamIsEnabled;
+        private string _mediaLinkUpstreamEndpoint = string.Empty;
+        private string _mediaLinkUpstreamToken = string.Empty;
+
+        /// <summary>
+        /// 是否消费另一台实例的 MediaLink 推送。收到的媒体与歌词写入注入存储，
+        /// 故还需把「媒体源模式」设为外部优先或仅外部注入才会实际生效。
+        /// </summary>
+        public bool MediaLinkUpstreamIsEnabled
+        {
+            get => _mediaLinkUpstreamIsEnabled;
+            set
+            {
+                if (_mediaLinkUpstreamIsEnabled == value) return;
+                _mediaLinkUpstreamIsEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>上游实例的 WebSocket 地址，形如 <c>ws://192.168.1.10:17654/v1/ws</c>。</summary>
+        public string MediaLinkUpstreamEndpoint
+        {
+            get => _mediaLinkUpstreamEndpoint;
+            set
+            {
+                var normalized = value?.Trim() ?? string.Empty;
+                if (_mediaLinkUpstreamEndpoint == normalized) return;
+                _mediaLinkUpstreamEndpoint = normalized;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>上游实例的 Token。与本机的 <see cref="MediaLinkToken"/> 无关。</summary>
+        public string MediaLinkUpstreamToken
+        {
+            get => _mediaLinkUpstreamToken;
+            set
+            {
+                var normalized = value ?? string.Empty;
+                if (_mediaLinkUpstreamToken == normalized) return;
+                _mediaLinkUpstreamToken = normalized;
+                OnPropertyChanged();
+            }
+        }
+
         private MediaLinkMediaSourceMode _mediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly;
         private bool _mediaLinkUiUsesEffective = true;
         private bool _mediaLinkPushUsesEffective = true;

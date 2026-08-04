@@ -324,6 +324,63 @@ public class MediaLinkEndToEndTests
         await server.StopAsync();
     }
 
+    [Fact]
+    public async Task UpstreamHostedService_AgainstRealServer_WritesIntoInjectionStore()
+    {
+        // 接线的实际验收点：启用上游后，对方的媒体应当成为本机的有效媒体。
+        // 前面的测试只验到"客户端收到了"，没验到"配置驱动的服务把它用起来了"。
+        var upstreamMedia = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var upstreamSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var upstreamCoordinator = new MediaSourceCoordinator(
+            upstreamMedia, lyrics, new MediaLinkInjectionStore(), () => upstreamSettings);
+        var hub = new MediaLinkSessionHub();
+        using var publisher = new MediaLinkStatePublisher(upstreamCoordinator, hub, timelineMinIntervalMs: () => 0);
+        publisher.Start();
+
+        var server = new MediaLinkServer(hub, s => publisher.PublishSnapshotAsync(s), () => "up-tok", coordinator: upstreamCoordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        // 下游：用简写地址，顺便验证补全逻辑在真实链路上成立
+        var downstreamSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.ExternalPreferred,
+            MediaLinkUpstreamIsEnabled = true,
+            MediaLinkUpstreamEndpoint = $"127.0.0.1:{port}",
+            MediaLinkUpstreamToken = "up-tok"
+        };
+        var downstreamStore = new MediaLinkInjectionStore();
+        var downstreamMedia = new E2EFakeMediaService();
+        using var downstreamCoordinator = new MediaSourceCoordinator(
+            downstreamMedia, lyrics, downstreamStore, () => downstreamSettings);
+
+        using var upstreamService = new MediaLinkUpstreamHostedService(
+            downstreamStore, downstreamCoordinator, () => downstreamSettings);
+
+        await upstreamService.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => upstreamService.IsConnected);
+
+        upstreamMedia.Raise(
+            new MediaInfo("upstream-app", "WiredSong", "WiredArtist", null,
+                TimeSpan.FromSeconds(15), TimeSpan.FromMinutes(4),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null),
+            MediaInfoChangeKind.MediaProperties);
+
+        await WaitUntilAsync(() => downstreamStore.GetMediaSnapshot()?.Title == "WiredSong");
+
+        Assert.Equal("WiredSong", downstreamStore.GetMediaSnapshot()!.Title);
+        // 外部优先模式下，合成结果也应当采用上游数据
+        Assert.Equal("WiredSong", downstreamCoordinator.ComposeMedia()?.Title);
+
+        await upstreamService.StopAsync(CancellationToken.None);
+        await server.StopAsync();
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(10);

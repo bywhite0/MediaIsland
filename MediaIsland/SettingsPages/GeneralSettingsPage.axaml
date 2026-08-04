@@ -541,6 +541,39 @@
                                MaxWidth="360" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <ci:IconText Glyph="&#xE1F7;" Text="消费其它实例（上游）" Margin="0 16 0 8" />
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1F7;}"
+                                       Header="接收其它实例的推送"
+                                       Description="连接同一局域网中另一台运行 MediaIsland 的 ClassIsland，把它的媒体与歌词作为本机的外部注入。需同时把「媒体源模式」设为外部优先或仅外部注入才会生效。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUpstreamIsEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
+                                       Header="上游地址与 Token"
+                                       Description="地址可只填 主机:端口，会自动补全为 ws://…/v1/ws。Token 是对方实例的，与本机 Token 无关。">
+                <controls:SettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox Width="220"
+                                 Watermark="192.168.1.10:17654"
+                                 Text="{Binding Settings.MediaLinkUpstreamEndpoint, Mode=TwoWay}" />
+                        <TextBox Width="200"
+                                 PasswordChar="•"
+                                 Watermark="对方的 Token"
+                                 Text="{Binding Settings.MediaLinkUpstreamToken, Mode=TwoWay}" />
+                    </StackPanel>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0A2;}"
+                                       Header="上游连接状态"
+                                       Description="断线后自动重连，退避上限 30 秒。">
+                <controls:SettingsExpander.Footer>
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding MediaLinkUpstreamStatusText}"
+                               TextWrapping="Wrap"
+                               MaxWidth="360" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <ci:IconText Glyph="&#xEAEF;" Text="隐私" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
                                        Header="匿名使用情况分析"
