@@ -384,9 +384,14 @@ GET /v1/thumbnail?token=<token>&t=<trackToken>
 ## 出站队列与背压
 
 - 每个客户端有独立的 64 槽位出站队列
-- `media.updated` 可丢弃最旧帧（客户端有插值兜底）
-- `lyrics.updated` 和控制帧不可丢弃，队列满时以 `rate_limited` 关闭该客户端
+- 队列满时只挤掉**最旧的可丢帧**（`media.updated`，客户端有插值兜底）；
+  队头恰好是歌词或控制帧时不会被误丢
+- `lyrics.updated` 与控制帧不可丢。队列满且无可丢帧可牺牲时，以 `rate_limited` + 1011 关闭该客户端
+- 单帧发送超时 5 秒，超时视同该会话故障并断开
 - 一个慢客户端**不影响**其他客户端的推送
+
+因此 `media.updated` 的 `seq` 可能跳号，这是正常的背压结果，不是消息丢失故障；
+`lyrics.updated` 的 `seq` 不会因背压跳号。
 
 ## 序列号 (`seq`)
 

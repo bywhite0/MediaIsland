@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Threading.Channels;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -128,8 +127,141 @@ public sealed class MediaLinkSessionOptions
     public Func<Task>? OnEffectiveLyricsMutatedAsync { get; init; }
 }
 
+/// <summary>出站帧。<paramref name="Droppable"/> 决定队列满时它能否被牺牲。</summary>
+internal readonly record struct MediaLinkOutboundFrame(string Json, bool Droppable);
+
+/// <summary>
+/// 每会话出站有界队列。相比 <c>Channel</c> 的 DropOldest，这里的丢弃是**按可丢标记选择**的：
+/// 队列满时只挤掉最旧的可丢帧（<c>media.updated</c>，客户端有插值兜底），
+/// 歌词与控制帧永不被挤掉。队头恰好是不可丢帧时 Channel 的 DropOldest 会丢错对象。
+/// </summary>
+internal sealed class MediaLinkOutboundQueue
+{
+    private readonly int _capacity;
+    private readonly LinkedList<MediaLinkOutboundFrame> _items = new();
+    private readonly object _gate = new();
+    private readonly SemaphoreSlim _signal = new(0);
+    private bool _completed;
+
+    public MediaLinkOutboundQueue(int capacity) => _capacity = capacity;
+
+    public int Count
+    {
+        get { lock (_gate) return _items.Count; }
+    }
+
+    /// <summary>
+    /// 入队。返回 false 表示队列已满且无可牺牲的帧，调用方应以 <c>rate_limited</c> 关闭该会话。
+    /// </summary>
+    public bool TryEnqueue(MediaLinkOutboundFrame frame)
+    {
+        lock (_gate)
+        {
+            if (_completed)
+            {
+                return true; // 会话正在结束，静默丢弃不算背压失败
+            }
+
+            if (_items.Count >= _capacity)
+            {
+                // 不可丢的帧到达且队列已满：不牺牲任何东西，交由调用方关闭会话。
+                if (!frame.Droppable)
+                {
+                    return false;
+                }
+
+                var victim = FindOldestDroppable();
+                if (victim is null)
+                {
+                    return false;
+                }
+
+                _items.Remove(victim);
+            }
+
+            _items.AddLast(frame);
+        }
+
+        // 丢弃+新增时净数量不变，此处会多释放一次信号量。
+        // 多余的唤醒是良性的：出队方拿不到帧就继续等待；少释放才会导致帧滞留。
+        _signal.Release();
+        return true;
+    }
+
+    /// <summary>取下一帧；队列被 <see cref="Complete"/> 且排空后返回 null。</summary>
+    public async Task<MediaLinkOutboundFrame?> DequeueAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            lock (_gate)
+            {
+                if (_items.First is { } head)
+                {
+                    _items.RemoveFirst();
+                    return head.Value;
+                }
+
+                if (_completed)
+                {
+                    return null;
+                }
+            }
+
+            await _signal.WaitAsync(cancellationToken);
+        }
+    }
+
+    /// <summary>非阻塞取帧：队列为空时返回 false，不等待新帧。</summary>
+    public bool TryDequeue(out MediaLinkOutboundFrame frame)
+    {
+        lock (_gate)
+        {
+            if (_items.First is { } head)
+            {
+                _items.RemoveFirst();
+                frame = head.Value;
+                return true;
+            }
+        }
+
+        frame = default;
+        return false;
+    }
+
+    public void Complete()
+    {
+        lock (_gate)
+        {
+            if (_completed)
+            {
+                return;
+            }
+
+            _completed = true;
+        }
+
+        _signal.Release(); // 唤醒等待中的出队方，使其观察到 _completed
+    }
+
+    private LinkedListNode<MediaLinkOutboundFrame>? FindOldestDroppable()
+    {
+        for (var node = _items.First; node is not null; node = node.Next)
+        {
+            if (node.Value.Droppable)
+            {
+                return node;
+            }
+        }
+
+        return null;
+    }
+}
+
 public sealed class MediaLinkSession : IAsyncDisposable
 {
+    /// <summary>单帧发送超时；超时视同该会话故障。</summary>
+    private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IMediaLinkSocket _socket;
     private readonly MediaLinkSessionOptions _options;
     private readonly ILogger? _logger;
@@ -138,7 +270,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private readonly HashSet<string> _channels = new(StringComparer.Ordinal);
     private bool _authenticated;
     private bool _closed;
-    private readonly Channel<string> _outbound = Channel.CreateBounded<string>(64);
+    private readonly MediaLinkOutboundQueue _outbound = new(64);
     private Task? _writerTask;
 
     public MediaLinkSession(IMediaLinkSocket socket, MediaLinkSessionOptions options, ILogger? logger = null)
@@ -209,7 +341,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
         finally
         {
             _closed = true;
-            _outbound.Writer.TryComplete();
+            _outbound.Complete();
         }
     }
 
@@ -226,14 +358,24 @@ public sealed class MediaLinkSession : IAsyncDisposable
     {
         try
         {
-            await foreach (var json in _outbound.Reader.ReadAllAsync(cancellationToken))
+            while (true)
             {
-                if (_closed || _socket.State != WebSocketState.Open) break;
+                var frame = await _outbound.DequeueAsync(cancellationToken);
+                if (frame is null)
+                {
+                    break; // 队列已 Complete 且排空
+                }
+
+                if (_closed || _socket.State != WebSocketState.Open)
+                {
+                    break;
+                }
+
                 try
                 {
                     using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    sendCts.CancelAfter(TimeSpan.FromSeconds(5));
-                    await _socket.SendTextAsync(json, sendCts.Token);
+                    sendCts.CancelAfter(SendTimeout);
+                    await _socket.SendTextAsync(frame.Value.Json, sendCts.Token);
                 }
                 catch
                 {
@@ -242,32 +384,32 @@ public sealed class MediaLinkSession : IAsyncDisposable
             }
         }
         catch (OperationCanceledException) { }
-        catch (ChannelClosedException) { }
         finally
         {
             _closed = true;
         }
     }
 
+    /// <summary>
+    /// 所有出站帧统一走队列，由单写者串行发出。控制帧不得绕过队列直发 socket：
+    /// 那样会与队列中待发的事件帧交错，破坏 seq 单调性，且没有发送超时保护。
+    /// </summary>
     public async Task EnqueueAsync(MediaLinkMessage message, bool droppable = false, CancellationToken cancellationToken = default)
     {
         if (_closed) return;
         var json = MediaLinkMessageSerializer.Serialize(message);
-        if (_outbound.Writer.TryWrite(json)) return;
-        if (droppable)
+        if (_outbound.TryEnqueue(new MediaLinkOutboundFrame(json, droppable)))
         {
-            // DropOldest 语义：尝试读一条丢弃后再写
-            _outbound.Reader.TryRead(out _);
-            _outbound.Writer.TryWrite(json);
             return;
         }
+
         await CloseRateLimitedAsync(cancellationToken);
     }
 
     private async Task CloseRateLimitedAsync(CancellationToken cancellationToken)
     {
         _closed = true;
-        _outbound.Writer.TryComplete();
+        _outbound.Complete();
         try
         {
             if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -354,6 +496,16 @@ public sealed class MediaLinkSession : IAsyncDisposable
             droppable: eventName == MediaLinkProtocol.EventMediaUpdated,
             cancellationToken);
 
+    /// <summary>
+    /// 控制帧与响应帧直发 socket，不入队。这是刻意的：调用方（接收循环）依赖
+    /// "本方法返回即已送出"来实现请求-响应语义，入队会让回复在处理器返回后才发出。
+    ///
+    /// 顺序不受影响：seq 只存在于事件帧上，而事件帧全部经出站队列由单写者发出，
+    /// 它们的相对顺序由队列保证；控制帧插在其间不破坏 seq 单调性。
+    ///
+    /// 超时是必需的：对端 TCP 窗口塞满时，无超时的写会连带 socket 锁一起挂住
+    /// 接收循环与写者任务，整个会话僵死。
+    /// </summary>
     public async Task SendAsync(MediaLinkMessage message, CancellationToken cancellationToken = default)
     {
         if (_closed || _socket.State != WebSocketState.Open)
@@ -370,7 +522,19 @@ public sealed class MediaLinkSession : IAsyncDisposable
                 return;
             }
 
-            await _socket.SendTextAsync(json, cancellationToken);
+            using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            sendCts.CancelAfter(SendTimeout);
+            try
+            {
+                await _socket.SendTextAsync(json, sendCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // 写超时：对端已不可达，标记会话故障让接收循环退出。
+                _closed = true;
+                _outbound.Complete();
+                _logger?.LogDebug("MediaLink 出站写超时，终止会话");
+            }
         }
         finally
         {
@@ -843,6 +1007,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private async Task CloseAsync(WebSocketCloseStatus status, string description, CancellationToken cancellationToken)
     {
         _closed = true;
+        _outbound.Complete();
         try
         {
             if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -866,7 +1031,9 @@ public sealed class MediaLinkSession : IAsyncDisposable
     public ValueTask DisposeAsync()
     {
         _closed = true;
-        // 不 Dispose _sendLock：停止过程中仍可能有 in-flight Send。
+        // 只 Complete，不 Dispose：写者任务可能仍在 await 信号量、发送方仍在 await _sendLock，
+        // 此刻释放它们会让对方拿到 ObjectDisposedException。Complete 足以让写者退出。
+        _outbound.Complete();
         return ValueTask.CompletedTask;
     }
 }
