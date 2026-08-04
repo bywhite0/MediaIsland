@@ -286,6 +286,53 @@ function positionNow(p, recvAt) {
 
 详见源码 `MediaLinkSession.cs` 中的 `HandleMediaInjectAsync` 等方法。
 
+### `media.inject`
+
+```json
+{
+  "type": "media.inject",
+  "id": "inj1",
+  "v": 1,
+  "ts": 1710000000000,
+  "payload": {
+    "sourceApp": "upstream-instance",
+    "title": "歌曲名",
+    "artist": "歌手",
+    "albumTitle": "专辑",
+    "positionMs": 30000,
+    "durationMs": 180000,
+    "playbackState": "Playing",
+    "playbackRate": 1.0,
+    "positionAgeMs": 120
+  }
+}
+```
+
+| 字段 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `title` | string | 是 | 空白则 `bad_request` |
+| `sourceApp` | string? | 否 | 省略时为 `external` |
+| `positionMs` / `durationMs` | long | 否 | 必须 ≥ 0 |
+| `playbackState` | string | 是 | 同 `media.updated` 的取值 |
+| `playbackRate` | double? | 否 | 默认 1.0 |
+| `positionAgeMs` | long? | 否 | `positionMs` 的采样距今已过去多少毫秒，默认 0 |
+
+#### `positionAgeMs` 与转发
+
+把本实例收到的 `media.updated` 转发给下游实例时，**必须**填 `positionAgeMs`，
+否则每转发一跳，进度都会落后一次传输与处理的耗时。
+
+用相对量而非绝对时间戳是刻意的：绝对值要求两台机器时钟同步，相对值只依赖
+发送方自己的时钟差。计算方式与 §进度插值同源：
+
+```
+positionAgeMs = (serverTimeMs - positionCapturedAtMs) + (本地当前时刻 - 本地收帧时刻)
+```
+
+服务端会据此把时间基准回拨，使注入后的位置从采样那一刻算起继续推进。
+`playbackState` 非 `Playing` 时该字段无效——暂停的曲目位置不随时间前进。
+
+
 ## 封面
 
 有两条获取途径，任选其一。已经建立 WebSocket 连接的客户端**建议走 WebSocket**：无需把 Token 放进 URL，也不必为一张图另开一条 TCP 连接。

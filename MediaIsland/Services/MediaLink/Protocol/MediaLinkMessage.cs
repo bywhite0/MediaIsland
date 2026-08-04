@@ -268,6 +268,18 @@ public sealed class MediaLinkMediaInjectPayload
 
     [JsonPropertyName("playbackRate")]
     public double? PlaybackRate { get; set; }
+
+    /// <summary>
+    /// <paramref name="PositionMs"/> 的采样距今已过去多少毫秒。省略或 0 表示"就是当前值"。
+    ///
+    /// 用相对量而非绝对时间戳（如发送方的 Unix 毫秒）是刻意的：绝对值要求两台机器
+    /// 时钟同步，而相对值只依赖发送方自己的时钟差，跨机转发时无需对时。
+    ///
+    /// 转发场景下这个字段是必需的：上游 <c>media.updated</c> 的位置在传输与处理期间
+    /// 已经继续前进，不回填这段时间的话每转发一跳都会让进度落后一次。
+    /// </summary>
+    [JsonPropertyName("positionAgeMs")]
+    public long? PositionAgeMs { get; set; }
 }
 
 public sealed class MediaLinkClearInjectPayload

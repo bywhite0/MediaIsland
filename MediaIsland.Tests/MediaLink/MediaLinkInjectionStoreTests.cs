@@ -82,6 +82,100 @@ public class MediaLinkInjectionStoreTests
     }
 
     [Fact]
+    public void PositionAgeMs_BackdatesBaseline_SoPositionIncludesElapsedTime()
+    {
+        // 转发场景：上游采样位置 5000ms，经传输与处理 800ms 后才注入。
+        // 不回补这 800ms，转发链上每跳都会让进度落后一次。
+        var tick = 10_000L;
+        var store = new MediaLinkInjectionStore(tickProvider: () => tick);
+
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "T",
+            PositionMs = 5_000,
+            DurationMs = 60_000,
+            PlaybackState = "Playing",
+            PlaybackRate = 1.0,
+            PositionAgeMs = 800
+        }, out _));
+
+        Assert.Equal(TimeSpan.FromMilliseconds(5_800), store.GetMediaSnapshot()!.Position);
+    }
+
+    [Fact]
+    public void PositionAgeMs_Omitted_TreatsPositionAsCurrent()
+    {
+        // 未携带该字段的旧客户端行为不变。
+        var tick = 10_000L;
+        var store = new MediaLinkInjectionStore(tickProvider: () => tick);
+
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "T",
+            PositionMs = 5_000,
+            DurationMs = 60_000,
+            PlaybackState = "Playing",
+            PlaybackRate = 1.0
+        }, out _));
+
+        Assert.Equal(TimeSpan.FromMilliseconds(5_000), store.GetMediaSnapshot()!.Position);
+    }
+
+    [Fact]
+    public void PositionAgeMs_IgnoredWhilePaused()
+    {
+        // 暂停时位置不随时间前进，补偿也就无从谈起。
+        var tick = 10_000L;
+        var store = new MediaLinkInjectionStore(tickProvider: () => tick);
+
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "T",
+            PositionMs = 5_000,
+            DurationMs = 60_000,
+            PlaybackState = "Paused",
+            PositionAgeMs = 800
+        }, out _));
+
+        Assert.Equal(TimeSpan.FromMilliseconds(5_000), store.GetMediaSnapshot()!.Position);
+    }
+
+    [Fact]
+    public void PositionAgeMs_ScalesWithPlaybackRate()
+    {
+        var tick = 10_000L;
+        var store = new MediaLinkInjectionStore(tickProvider: () => tick);
+
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "T",
+            PositionMs = 5_000,
+            DurationMs = 60_000,
+            PlaybackState = "Playing",
+            PlaybackRate = 2.0,
+            PositionAgeMs = 500
+        }, out _));
+
+        // 2 倍速下 500ms 真实时间对应 1000ms 曲目时间
+        Assert.Equal(TimeSpan.FromMilliseconds(6_000), store.GetMediaSnapshot()!.Position);
+    }
+
+    [Fact]
+    public void NegativePositionAgeMs_BadRequest()
+    {
+        var store = new MediaLinkInjectionStore();
+        Assert.False(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "T",
+            PositionMs = 0,
+            DurationMs = 1_000,
+            PlaybackState = "Playing",
+            PositionAgeMs = -1
+        }, out var err));
+        Assert.Contains("positionAgeMs", err, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Clear_Channels_Independent()
     {
         var store = new MediaLinkInjectionStore();

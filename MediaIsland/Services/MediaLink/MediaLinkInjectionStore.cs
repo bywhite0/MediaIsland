@@ -90,6 +90,12 @@ public sealed class MediaLinkInjectionStore
             return false;
         }
 
+        if (payload.PositionAgeMs is < 0)
+        {
+            error = "positionAgeMs must be >= 0";
+            return false;
+        }
+
         var rate = payload.PlaybackRate is > 0 ? payload.PlaybackRate.Value : 1.0;
         var sourceApp = string.IsNullOrWhiteSpace(payload.SourceApp)
             ? "external"
@@ -99,7 +105,10 @@ public sealed class MediaLinkInjectionStore
         var albumTitle = string.IsNullOrWhiteSpace(payload.AlbumTitle) ? null : payload.AlbumTitle.Trim();
         var position = TimeSpan.FromMilliseconds(payload.PositionMs);
         var duration = TimeSpan.FromMilliseconds(payload.DurationMs);
-        var nowTick = _tickProvider();
+
+        // 把基准时刻回拨 positionAgeMs：位置值对应的是过去那一刻，不是现在。
+        // 不回拨的话，采样与注入之间的时间被静默丢弃，转发链上每跳都落后一次。
+        var nowTick = _tickProvider() - (payload.PositionAgeMs ?? 0);
 
         lock (_gate)
         {
