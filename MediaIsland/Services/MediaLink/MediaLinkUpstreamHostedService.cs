@@ -149,7 +149,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
 
             if (string.IsNullOrWhiteSpace(settings.MediaLinkUpstreamToken))
             {
-                LastError = "上游 Token 为空";
+                LastError = "尚未填写对方的连接密钥";
                 RaiseStateChanged();
                 return;
             }
@@ -190,13 +190,13 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     internal static bool TryBuildEndpoint(string? raw, out Uri uri, out string? error)
     {
         uri = null!;
-        if (string.IsNullOrWhiteSpace(raw))
+        var text = raw?.Trim() ?? string.Empty;
+        if (string.IsNullOrEmpty(text))
         {
-            error = "上游地址为空";
+            error = "尚未填写对方设备的地址";
             return false;
         }
 
-        var text = raw.Trim();
         if (!text.Contains("://", StringComparison.Ordinal))
         {
             text = "ws://" + text;
@@ -204,13 +204,13 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
 
         if (!Uri.TryCreate(text, UriKind.Absolute, out var parsed))
         {
-            error = $"无法解析地址：{raw}";
+            error = $"地址格式不正确：{raw}";
             return false;
         }
 
         if (parsed.Scheme is not ("ws" or "wss"))
         {
-            error = $"仅支持 ws / wss，实际为 {parsed.Scheme}";
+            error = "地址格式不正确，请直接填写对方的 IP 和端口，例如 192.168.1.10:17654";
             return false;
         }
 

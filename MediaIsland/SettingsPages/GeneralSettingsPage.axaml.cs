@@ -964,28 +964,29 @@ namespace MediaIsland.SettingsPages
         {
             if (_mediaLinkGateway is null)
             {
-                MediaLinkStatusText = "媒体链接服务不可用";
+                MediaLinkStatusText = "共享服务不可用";
                 MediaLinkExposureWarning = string.Empty;
                 return;
             }
 
-            var endpoint = _mediaLinkGateway.Endpoint ?? "-";
-            var running = _mediaLinkGateway.IsRunning ? "运行中" : "已停止";
-            var error = string.IsNullOrWhiteSpace(_mediaLinkGateway.LastError)
-                ? string.Empty
-                : $"；错误：{_mediaLinkGateway.LastError}";
-            var inject = string.Empty;
-            if (_injectionStore is not null &&
-                (_injectionStore.HasExternalMedia || _injectionStore.HasExternalLyrics))
+            if (!_mediaLinkGateway.IsRunning)
             {
-                inject = "；外部注入中";
+                var stoppedReason = string.IsNullOrWhiteSpace(_mediaLinkGateway.LastError)
+                    ? "未开启"
+                    : $"无法启动：{_mediaLinkGateway.LastError}";
+                MediaLinkStatusText = stoppedReason;
+                MediaLinkExposureWarning = BuildExposureWarning();
+                return;
             }
 
-            var sessions = _mediaLinkGateway.IsRunning
-                ? $"；{_mediaLinkGateway.ActiveSessionCount} 个客户端"
+            var count = _mediaLinkGateway.ActiveSessionCount;
+            var clients = count == 0 ? "暂无程序连接" : $"{count} 个程序已连接";
+            var inject = _injectionStore is not null &&
+                         (_injectionStore.HasExternalMedia || _injectionStore.HasExternalLyrics)
+                ? "；正在显示外部来源的内容"
                 : string.Empty;
 
-            MediaLinkStatusText = $"{running} · {endpoint}{sessions}{error}{inject}";
+            MediaLinkStatusText = $"运行中 · {_mediaLinkGateway.Endpoint ?? "-"} · {clients}{inject}";
             MediaLinkExposureWarning = BuildExposureWarning();
         }
 
@@ -1012,7 +1013,7 @@ namespace MediaIsland.SettingsPages
 
             return isLoopback
                 ? string.Empty
-                : "⚠ 明文传输：当前地址可被同网段访问，Token 与播放信息均可被嗅探。仅在可信网络中这样配置。";
+                : "⚠ 当前设置允许局域网内的其它设备连接。传输过程未加密，同一网络下的人可能截获连接密钥与播放信息，请仅在自己信任的网络中这样设置。";
         }
 
         /// <summary>
@@ -1094,30 +1095,30 @@ namespace MediaIsland.SettingsPages
         {
             if (_upstream is null)
             {
-                MediaLinkUpstreamStatusText = "上游消费服务不可用";
+                MediaLinkUpstreamStatusText = "接收服务不可用";
                 return;
             }
 
             if (!Settings.MediaLinkUpstreamIsEnabled)
             {
-                MediaLinkUpstreamStatusText = "未启用";
+                MediaLinkUpstreamStatusText = "未开启";
                 return;
             }
 
             if (!string.IsNullOrWhiteSpace(_upstream.LastError))
             {
-                MediaLinkUpstreamStatusText = $"未连接；{_upstream.LastError}";
+                MediaLinkUpstreamStatusText = $"未连接：{_upstream.LastError}";
                 return;
             }
 
-            // 媒体源模式不含外部时，收到的数据不会进入界面——这是最容易踩的坑。
+            // 来源设为「本机播放器」时收到的内容不会显示出来，这是最容易踩的坑。
             var modeHint = Settings.MediaLinkMediaSourceMode == MediaLinkMediaSourceMode.PlatformOnly
-                ? "；⚠ 当前媒体源模式为「仅系统会话」，上游数据不会生效"
+                ? "。⚠ 但「播放信息来源」当前为「本机播放器」，接收到的内容不会显示，请改为「外部来源优先」"
                 : string.Empty;
 
             MediaLinkUpstreamStatusText = _upstream.IsConnected
                 ? $"已连接{modeHint}"
-                : $"连接中…{modeHint}";
+                : $"正在连接对方设备…{modeHint}";
         }
 
         private void OnPluginSettingsChangedForMediaLink(object? sender, PropertyChangedEventArgs e)

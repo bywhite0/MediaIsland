@@ -456,17 +456,17 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-                        <ci:IconText Glyph="&#xE968;" Text="媒体链接（WebSocket）" Margin="0 16 0 8" />
+                        <ci:IconText Glyph="&#xE968;" Text="媒体链接" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
-                                       Header="启用媒体链接推送"
-                                       Description="明文 ws 推送媒体与歌词；必须 Token；勿对不可信网络暴露；仅本机可用 127.0.0.1。">
+                                       Header="把播放信息共享给其它程序"
+                                       Description="开启后，其它程序（如 OBS 字幕、自制歌词条，或另一台电脑上的 ClassIsland）可以实时获取当前播放的歌曲与歌词。需要凭下方的连接密钥才能读取。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkIsEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1F7;}"
-                                       Header="监听地址与端口"
-                                       Description="默认 127.0.0.1:17654，仅本机可访问。改为 0.0.0.0 会对同网段开放。">
+                                       Header="允许谁连接"
+                                       Description="保持 127.0.0.1 表示只有本机程序能连接，最安全。要让同一局域网的其它设备连接，改成 0.0.0.0。端口一般不需要改。">
                 <controls:SettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="140"
@@ -484,8 +484,8 @@
                        TextWrapping="Wrap"
                        Margin="0 4 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
-                                       Header="允许的 Origin"
-                                       Description="浏览器一律发送 Origin 请求头，不在此列表内的一律拒绝；分号或逗号分隔。用 file:// 打开的页面 Origin 为 null。留空表示拒绝所有带 Origin 的连接（脚本客户端不受影响）。">
+                                       Header="允许的网页来源"
+                                       Description="只有从网页连接时才需要填。出于安全考虑，网页默认一律被拒绝；把网页地址填进来才放行，多个用分号隔开。用浏览器直接打开本地 HTML 文件时，请填 null。用脚本或其它程序连接不受此限制。">
                 <controls:SettingsExpander.Footer>
                     <TextBox Width="280"
                              Watermark="null;http://localhost:3000"
@@ -493,8 +493,8 @@
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0B0;}"
-                                       Header="访问 Token"
-                                       Description="连接后首条业务消息需 auth。可复制或重新生成。">
+                                       Header="连接密钥"
+                                       Description="其它程序需要凭这串密钥才能读取播放信息。请勿公开分享。重新生成后，所有已连接的程序都会断开，需要重新填写新密钥。">
                 <controls:SettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="220"
@@ -506,34 +506,34 @@
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
-                                       Header="媒体源模式"
-                                       Description="仅系统会话 / 仅外部注入 / 外部优先。默认仅系统会话与 MVP 一致。">
+                                       Header="播放信息来源"
+                                       Description="决定歌曲信息从哪里来。默认「本机播放器」即读取本机正在播放的音乐；要显示另一台电脑或外部程序发来的内容，请选后两项。">
                 <controls:SettingsExpander.Footer>
-                    <ComboBox Width="200"
+                    <ComboBox Width="220"
                               SelectedIndex="{Binding MediaLinkMediaSourceModeIndex, Mode=TwoWay}">
-                        <ComboBoxItem Content="仅系统会话" />
-                        <ComboBoxItem Content="仅外部注入" />
-                        <ComboBoxItem Content="外部优先" />
+                        <ComboBoxItem Content="本机播放器" />
+                        <ComboBoxItem Content="仅外部来源" />
+                        <ComboBoxItem Content="外部来源优先" />
                     </ComboBox>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE285;}"
-                                       Header="界面使用合成状态"
-                                       Description="NowPlaying / 歌词组件读取 MediaLink 合成结果。">
+                                       Header="桌面组件跟随上述来源"
+                                       Description="关闭后，桌面上的歌曲与歌词组件将始终显示本机播放器的内容，忽略外部来源。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUiUsesEffective, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
-                                       Header="推送使用合成状态"
-                                       Description="WebSocket media/lyrics 推送走合成结果。">
+                                       Header="共享给其它程序的内容跟随上述来源"
+                                       Description="关闭后，共享出去的始终是本机播放器的内容，忽略外部来源。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkPushUsesEffective, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0A2;}"
-                                       Header="服务状态"
-                                       Description="路径固定为 /v1/ws。">
+                                       Header="当前状态"
+                                       Description="共享服务的运行情况与连接地址。">
                 <controls:SettingsExpander.Footer>
                     <TextBlock VerticalAlignment="Center"
                                Text="{Binding MediaLinkStatusText}"
@@ -541,17 +541,17 @@
                                MaxWidth="360" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
-            <ci:IconText Glyph="&#xE1F7;" Text="消费其它实例（上游）" Margin="0 16 0 8" />
+            <ci:IconText Glyph="&#xE1F7;" Text="接收其它设备的播放信息" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1F7;}"
-                                       Header="接收其它实例的推送"
-                                       Description="连接同一局域网中另一台运行 MediaIsland 的 ClassIsland，把它的媒体与歌词作为本机的外部注入。需同时把「媒体源模式」设为外部优先或仅外部注入才会生效。">
+                                       Header="从另一台设备接收"
+                                       Description="显示同一局域网内另一台 ClassIsland 正在播放的歌曲与歌词。对方需要先开启上面的「把播放信息共享给其它程序」。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUpstreamIsEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE968;}"
-                                       Header="上游地址与 Token"
-                                       Description="地址可只填 主机:端口，会自动补全为 ws://…/v1/ws。Token 是对方实例的，与本机 Token 无关。">
+                                       Header="对方的地址与密钥"
+                                       Description="填对方设备的 IP 和端口（如 192.168.1.10:17654），以及对方设置页里的连接密钥。注意不是本机的密钥。">
                 <controls:SettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="220"
@@ -559,14 +559,14 @@
                                  Text="{Binding Settings.MediaLinkUpstreamEndpoint, Mode=TwoWay}" />
                         <TextBox Width="200"
                                  PasswordChar="•"
-                                 Watermark="对方的 Token"
+                                 Watermark="对方的连接密钥"
                                  Text="{Binding Settings.MediaLinkUpstreamToken, Mode=TwoWay}" />
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0A2;}"
-                                       Header="上游连接状态"
-                                       Description="断线后自动重连，退避上限 30 秒。">
+                                       Header="接收状态"
+                                       Description="断开后会自动重试，无需手动重连。">
                 <controls:SettingsExpander.Footer>
                     <TextBlock VerticalAlignment="Center"
                                Text="{Binding MediaLinkUpstreamStatusText}"
