@@ -245,7 +245,7 @@ public class MediaLinkSessionCountNotificationTests
         Assert.Equal(2, hub.Sessions.Count);
 
         hub.Remove(a);
-        Assert.Equal(1, hub.Sessions.Count);
+        Assert.Single(hub.Sessions);
     }
 
     private static MediaLinkSession NewSession() =>
