@@ -186,10 +186,45 @@ MediaLink 是 ClassIsland 媒体信息插件提供的本地 WebSocket 推送服�
 
 #### 进度插值
 
-客户端应使用三元组 `(positionMs, positionCapturedAtMs, serverTimeMs)` 本地插值:
+服务端**不会**周期性推送位置。播放中位置由客户端本地插值得出，仅在
+`playbackState` / `playbackRate` 变化或切歌时才有新的 `media.updated`。
+
+客户端应使用三元组 `(positionMs, positionCapturedAtMs, serverTimeMs)` 插值：
 
 ```
-当前位置 ≈ positionMs + (本地时钟 - serverTimeMs) × playbackRate
+若 playbackState == "Playing":
+    位置 = positionMs
+         + ((serverTimeMs - positionCapturedAtMs) + (本地当前时刻 - 本地收帧时刻))
+           × playbackRate
+否则:
+    位置 = positionMs
+```
+
+两个差值各自在**同一个时钟内**求得，因此客户端不需要与服务端对时：
+
+- `serverTimeMs - positionCapturedAtMs`：服务端内部从采样到发送的延迟，两值都出自服务端时钟。
+- `本地当前时刻 - 本地收帧时刻`：客户端收到该帧后经过的时间，两值都出自客户端时钟。
+
+> **不要**写成 `本地当前时刻 - serverTimeMs`。那是拿两台机器的时钟直接相减，
+> 只在双方时钟严格同步时才成立；跨机消费（例如另一台设备上的歌词条）会得到
+> 一个等于时钟偏差的固定误差。
+
+本地时刻建议取单调时钟（浏览器 `performance.now()`、Python
+`time.monotonic()`），避免系统时间被 NTP 校正时进度跳变。
+
+结果应按 `[0, durationMs]` 截断。
+
+JavaScript 参考实现：
+
+```js
+// 收到 media.updated 时：recvAt = performance.now()，并存下 payload
+function positionNow(p, recvAt) {
+  if (p.playbackState !== 'Playing') return p.positionMs;
+  const elapsed = (p.serverTimeMs - p.positionCapturedAtMs)
+                + (performance.now() - recvAt);
+  const pos = p.positionMs + elapsed * (p.playbackRate || 1);
+  return Math.min(Math.max(0, pos), p.durationMs || pos);
+}
 ```
 
 ### `lyrics.updated`
