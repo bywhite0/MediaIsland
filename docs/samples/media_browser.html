@@ -2,65 +2,434 @@
 <html lang="zh">
 <head>
 <meta charset="UTF-8">
-<title>MediaLink 歌词条</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MediaLink 示例客户端</title>
 <style>
-  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-  #title { font-size: 2em; font-weight: bold; }
-  #artist { font-size: 1.2em; color: #aaa; margin: 0.3em 0; }
-  #progress { width: 60%; height: 4px; background: #333; border-radius: 2px; margin: 1em 0; }
-  #bar { height: 100%; background: #4fc3f7; border-radius: 2px; width: 0; transition: width 0.3s linear; }
-  #time { font-size: 0.9em; color: #888; }
-  #status { margin-top: 1em; font-size: 0.8em; color: #666; }
-  #connect { margin-bottom: 1em; }
-  input { padding: 0.4em; width: 300px; }
-  button { padding: 0.4em 0.8em; margin-left: 0.5em; }
+  :root {
+    --bg: #1a1a2e;
+    --panel: #22223c;
+    --fg: #eee;
+    --dim: #8a8aa3;
+    --accent: #4fc3f7;
+    --sung: #ffd166;
+  }
+  * { box-sizing: border-box; }
+  /* UA 的 [hidden]{display:none} 优先级低于下面按 id 写的 display，必须显式压过去。 */
+  [hidden] { display: none !important; }
+  body {
+    font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg);
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    padding: 16px; gap: 16px;
+  }
+  #connect { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; max-width: 100%; }
+  input { padding: 8px; background: var(--panel); color: var(--fg); border: 1px solid #3a3a5c; border-radius: 4px; min-width: 0; }
+  #url { flex: 1 1 280px; }
+  #token { flex: 1 1 200px; }
+  button { padding: 8px 16px; background: var(--accent); color: #06202b; border: 0; border-radius: 4px; cursor: pointer; font-weight: 600; }
+  button:disabled { background: #3a3a5c; color: var(--dim); cursor: default; }
+
+  #app { display: flex; gap: 24px; width: 100%; max-width: 960px; flex: 1; flex-wrap: wrap; }
+  #left { flex: 0 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  #cover, #cover-empty {
+    width: 100%; aspect-ratio: 1; border-radius: 8px; background: var(--panel);
+  }
+  #cover { object-fit: cover; display: block; }
+  #cover-empty {
+    display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 0.9em;
+  }
+  #title { font-size: 1.4em; font-weight: 700; line-height: 1.3; }
+  #artist { color: var(--dim); }
+  #album { color: var(--dim); font-size: 0.85em; }
+  #progress { height: 4px; background: #3a3a5c; border-radius: 2px; overflow: hidden; }
+  #bar { height: 100%; width: 0; background: var(--accent); }
+  #time { display: flex; justify-content: space-between; font-size: 0.8em; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+  /* 基准 280px 让窄屏换行到封面下方，min-width:0 允许它在放不下时继续收缩而不撑破视口。 */
+  #lyrics { flex: 1 1 280px; min-width: 0; overflow-y: auto; max-height: 70vh; padding: 8px 0; scrollbar-width: thin; }
+  .line { padding: 8px 4px; color: var(--dim); transition: color 0.2s; }
+  .line.active { color: var(--fg); }
+  .line .sub { display: block; font-size: 0.8em; color: var(--dim); margin-top: 4px; }
+  .line.active .sub { color: #b9b9cc; }
+  .word { color: inherit; }
+  .line.active .word.sung { color: var(--sung); }
+  .line.active .word.singing {
+    background: linear-gradient(90deg, var(--sung) var(--p, 0%), var(--fg) var(--p, 0%));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #placeholder { color: var(--dim); padding: 8px 4px; }
+
+  #status { font-size: 0.8em; color: var(--dim); text-align: center; max-width: 720px; }
+  #status b { color: var(--accent); font-weight: 600; }
+  code { background: var(--panel); padding: 2px 4px; border-radius: 4px; }
 </style>
 </head>
 <body>
+
 <div id="connect">
-  <input id="token" placeholder="输入 Token" />
-  <button onclick="connect()">连接</button>
+  <input id="url" value="ws://127.0.0.1:17654/v1/ws" aria-label="服务地址">
+  <input id="token" type="password" placeholder="Token" aria-label="Token">
+  <button id="go" type="button">连接</button>
 </div>
-<div id="title">未连接</div>
-<div id="artist"></div>
-<div id="progress"><div id="bar"></div></div>
-<div id="time"></div>
-<div id="status"></div>
+
+<div id="app">
+  <div id="left">
+    <img id="cover" alt="封面" hidden>
+    <div id="cover-empty">无封面</div>
+    <div id="title">未连接</div>
+    <div id="artist"></div>
+    <div id="album"></div>
+    <div id="progress"><div id="bar"></div></div>
+    <div id="time"><span id="t-now">0:00</span><span id="t-total">0:00</span></div>
+  </div>
+  <div id="lyrics"><div id="placeholder">连接后显示歌词</div></div>
+</div>
+
+<div id="status">
+  <b id="state-line"></b>
+  <div>
+    浏览器一律发送 <code>Origin</code> 请求头，服务端会按白名单校验。用 <code>file://</code> 打开本页时 Origin 为
+    <code>null</code>，需要先在 ClassIsland 设置页把它加入「允许的 Origin」，否则握手会被 403 拒绝。
+  </div>
+</div>
+
 <script>
-let ws, trackToken, positionMs, capturedAt, serverTime, playbackRate;
+'use strict';
+
+const $ = (id) => document.getElementById(id);
+const PLACEHOLDER = '连接后显示歌词';
+
+const state = {
+  ws: null,
+  epoch: null,          // server.hello 的 sessionEpoch
+  lastSeq: 0,           // 已处理的 seq 水位，epoch 变化时清零
+  reqId: 0,
+  media: null,          // 最近一次 media.updated 的插值三元组
+  recvAt: 0,            // 收到该帧时的本地单调时钟
+  trackToken: null,
+  hasThumbnail: false,
+  coverToken: null,     // 当前封面所属曲目
+  pendingCover: null,   // 正在请求封面的曲目
+  lines: [],            // 当前歌词行
+  lineNodes: [],
+  activeLine: -1,
+  futureLyrics: null,   // trackToken 领先于 media.updated 的歌词，暂存待配
+  reconnect: null,
+  closedByUser: false
+};
+
+// ---------- 连接 ----------
+
+$('go').addEventListener('click', () => {
+  if (state.ws) {
+    state.closedByUser = true;
+    state.ws.close();
+    return;
+  }
+  connect();
+});
+
 function connect() {
-  const token = document.getElementById('token').value || 'YOUR_TOKEN';
-  ws = new WebSocket(`ws://127.0.0.1:17654/v1/ws`);
-  ws.onopen = () => { document.getElementById('status').textContent = '已连接，等待认证...'; };
+  clearTimeout(state.reconnect);
+  state.closedByUser = false;
+  const url = $('url').value.trim();
+  let ws;
+  try {
+    ws = new WebSocket(url);
+  } catch (err) {
+    setStatus('地址无效：' + err.message);
+    return;
+  }
+  state.ws = ws;
+  $('go').textContent = '断开';
+  setStatus('连接中…');
+
+  ws.onopen = () => setStatus('已连接，等待 server.hello…');
   ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === 'event' && msg.name === 'server.hello') {
-      ws.send(JSON.stringify({ type: 'auth', id: 'a1', v: 1, ts: 0, payload: { token } }));
-    } else if (msg.type === 'auth_ok') {
-      ws.send(JSON.stringify({ type: 'subscribe', id: 's1', v: 1, ts: 0, payload: { channels: ['media', 'lyrics'] } }));
-    } else if (msg.type === 'subscribe_ok') {
-      document.getElementById('status').textContent = '已订阅';
-    } else if (msg.name === 'media.updated') {
-      const p = msg.payload;
-      document.getElementById('title').textContent = p.title || '未知曲目';
-      document.getElementById('artist').textContent = p.artist || '';
-      positionMs = p.positionMs; capturedAt = p.positionCapturedAtMs; serverTime = p.serverTimeMs;
-      playbackRate = p.playbackRate || 1; trackToken = p.trackToken;
-    }
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    handle(msg);
   };
-  ws.onclose = () => { document.getElementById('status').textContent = '已断开'; };
+  ws.onerror = () => setStatus('连接出错（多半是 Origin 未加入白名单，或 Token 错误）');
+  ws.onclose = (e) => {
+    state.ws = null;
+    $('go').textContent = '连接';
+    if (state.closedByUser) {
+      setStatus('已断开');
+      return;
+    }
+    setStatus(`连接关闭（code ${e.code}），3 秒后重连…`);
+    state.reconnect = setTimeout(connect, 3000);
+  };
+}
+
+function send(type, payload) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return null;
+  const id = type + '-' + (++state.reqId);
+  state.ws.send(JSON.stringify({ v: 1, type, id, ts: Date.now(), payload }));
+  return id;
+}
+
+// ---------- 消息分发 ----------
+
+function handle(msg) {
+  // server.hello 不带 seq，先处理 epoch 再做 seq 去重。
+  if (msg.type === 'event' && msg.name === 'server.hello') {
+    onHello(msg.payload || {});
+    return;
+  }
+
+  // seq 单调递增，重复或乱序的事件直接丢弃。
+  if (typeof msg.seq === 'number' && msg.seq > 0) {
+    if (msg.seq <= state.lastSeq) return;
+    state.lastSeq = msg.seq;
+  }
+
+  switch (msg.type) {
+    case 'auth_ok':
+      send('subscribe', { channels: ['media', 'lyrics'] });
+      break;
+    case 'auth_fail':
+      state.closedByUser = true;   // Token 错了，重连也没用
+      setStatus('认证失败：Token 不正确');
+      break;
+    case 'subscribe_ok':
+      setStatus('已订阅 media / lyrics');
+      break;
+    case 'thumbnail':
+      onThumbnail(msg.payload || {});
+      break;
+    case 'error':
+      onError(msg.payload || {});
+      break;
+    case 'event':
+      if (msg.name === 'media.updated') onMedia(msg.payload);
+      else if (msg.name === 'lyrics.updated') onLyrics(msg.payload);
+      break;
+  }
+}
+
+function onHello(p) {
+  // seq 在服务端重建监听器后从 0 重新开始；不跟着 epoch 重置水位就会永久停止更新。
+  if (p.sessionEpoch !== state.epoch) {
+    state.epoch = p.sessionEpoch ?? null;
+    state.lastSeq = 0;
+    state.coverToken = null;
+    state.pendingCover = null;
+  }
+  send('auth', { token: $('token').value });
+}
+
+function onError(p) {
+  if (p.code === 'no_session') return;  // 无媒体会话不是异常
+  setStatus('服务端返回错误：' + (p.code || '?') + ' ' + (p.message || ''));
+}
+
+// ---------- 媒体 ----------
+
+function onMedia(p) {
+  if (!p) {
+    state.media = null;
+    state.trackToken = null;
+    render(null);
+    setCover(null);
+    return;
+  }
+
+  const changed = p.trackToken !== state.trackToken;
+  state.trackToken = p.trackToken ?? null;
+  state.hasThumbnail = !!p.hasThumbnail;
+  state.media = {
+    positionMs: p.positionMs || 0,
+    durationMs: p.durationMs || 0,
+    capturedAtMs: p.positionCapturedAtMs || p.serverTimeMs || 0,
+    serverTimeMs: p.serverTimeMs || 0,
+    rate: p.playbackRate || 1,
+    playbackState: p.playbackState || 'Unknown'
+  };
+  state.recvAt = performance.now();
+  render(p);
+
+  if (changed) {
+    // 切歌后旧歌词与旧封面都作废，等新的到达。
+    setCover(null);
+    if (state.futureLyrics && state.futureLyrics.token === state.trackToken) {
+      // 歌词比 media.updated 先到，此刻才配得上。
+      showLines(state.futureLyrics.lines, '无歌词');
+    } else {
+      showLines([], '搜索歌词中…');
+    }
+    state.futureLyrics = null;
+  }
+  ensureCover();
+}
+
+function render(p) {
+  $('title').textContent = p?.title || '无播放中的媒体';
+  $('artist').textContent = p?.artist || '';
+  $('album').textContent = p?.albumTitle || '';
+  $('t-total').textContent = fmt(p?.durationMs || 0);
+}
+
+// 位置插值：不假设两台机器时钟同步。
+// serverTimeMs - positionCapturedAtMs 是服务端内部的采样延迟；
+// performance.now() - recvAt 是本地收到后经过的时间。两段都用各自时钟内的差值。
+function positionNow() {
+  const m = state.media;
+  if (!m) return 0;
+  if (m.playbackState !== 'Playing') return m.positionMs;
+  const elapsed = (m.serverTimeMs - m.capturedAtMs) + (performance.now() - state.recvAt);
+  const pos = m.positionMs + elapsed * m.rate;
+  return Math.min(Math.max(0, pos), m.durationMs > 0 ? m.durationMs : pos);
+}
+
+// ---------- 封面 ----------
+
+function ensureCover() {
+  if (!state.trackToken || !state.hasThumbnail) return;
+  if (state.coverToken === state.trackToken) return;
+  if (state.pendingCover === state.trackToken) return;
+  state.pendingCover = state.trackToken;
+  // 带上 trackToken，服务端失配时返回空数据，避免把上一首的图配到新曲目上。
+  send('thumbnail.get', { trackToken: state.trackToken });
+}
+
+function onThumbnail(p) {
+  state.pendingCover = null;
+  if (p.trackToken && p.trackToken !== state.trackToken) {
+    // 服务端已经切歌但 media.updated 还没到，等它到达后再请求。
+    return;
+  }
+  state.coverToken = state.trackToken;
+  setCover(p.dataBase64 ? `data:${p.mimeType};base64,${p.dataBase64}` : null);
+}
+
+function setCover(src) {
+  const img = $('cover');
+  if (src) {
+    img.src = src;
+    img.hidden = false;
+    $('cover-empty').hidden = true;
+  } else {
+    img.removeAttribute('src');
+    img.hidden = true;
+    $('cover-empty').hidden = false;
+  }
+}
+
+// ---------- 歌词 ----------
+
+function onLyrics(p) {
+  if (!p || !p.document) {
+    showLines([], '无歌词');
+    return;
+  }
+  // 歌词到达晚于切歌时 trackToken 会对不上。此时不能直接显示，但也不能直接扔：
+  // 歌词也可能反过来先于 media.updated 到达，那就暂存到对应的 media 帧到达时再配。
+  if (p.trackToken && state.trackToken && p.trackToken !== state.trackToken) {
+    state.futureLyrics = { token: p.trackToken, lines: p.document.lines || [] };
+    return;
+  }
+  showLines(p.document.lines || [], '无歌词');
+}
+
+function showLines(lines, emptyText) {
+  state.lines = lines;
+  state.lineNodes = [];
+  state.activeLine = -1;
+  const box = $('lyrics');
+  box.textContent = '';
+
+  if (!lines.length) {
+    const ph = document.createElement('div');
+    ph.id = 'placeholder';
+    ph.textContent = emptyText;
+    box.appendChild(ph);
+    return;
+  }
+
+  for (const line of lines) {
+    const el = document.createElement('div');
+    el.className = 'line';
+    const words = line.words || [];
+    if (words.length) {
+      for (const w of words) {
+        const span = document.createElement('span');
+        span.className = 'word';
+        span.textContent = w.text;
+        el.appendChild(span);
+      }
+    } else {
+      el.appendChild(document.createTextNode(line.text || ''));
+    }
+    for (const extra of [line.romanization, line.translation]) {
+      if (!extra) continue;
+      const sub = document.createElement('span');
+      sub.className = 'sub';
+      sub.textContent = extra;
+      el.appendChild(sub);
+    }
+    box.appendChild(el);
+    state.lineNodes.push(el);
+  }
+}
+
+function updateLyrics(pos) {
+  if (!state.lines.length) return;
+
+  let index = -1;
+  for (let i = 0; i < state.lines.length; i++) {
+    if (state.lines[i].startMs <= pos) index = i; else break;
+  }
+
+  if (index !== state.activeLine) {
+    state.lineNodes[state.activeLine]?.classList.remove('active');
+    const node = state.lineNodes[index];
+    if (node) {
+      node.classList.add('active');
+      node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+    state.activeLine = index;
+  }
+
+  if (index < 0) return;
+  const words = state.lines[index].words || [];
+  if (!words.length) return;
+  const spans = state.lineNodes[index].querySelectorAll('.word');
+  for (let i = 0; i < words.length && i < spans.length; i++) {
+    const w = words[i];
+    const span = spans[i];
+    if (pos >= w.endMs) {
+      span.className = 'word sung';
+    } else if (pos >= w.startMs) {
+      const span_ms = Math.max(1, w.endMs - w.startMs);
+      span.className = 'word singing';
+      span.style.setProperty('--p', ((pos - w.startMs) / span_ms * 100).toFixed(1) + '%');
+    } else {
+      span.className = 'word';
+    }
+  }
+}
+
+// ---------- 渲染循环 ----------
+
+function tick() {
+  const pos = positionNow();
+  const total = state.media?.durationMs || 0;
+  $('bar').style.width = total > 0 ? (pos / total * 100).toFixed(2) + '%' : '0';
+  $('t-now').textContent = fmt(pos);
+  updateLyrics(pos);
   requestAnimationFrame(tick);
 }
-function tick() {
-  if (positionMs != null && serverTime) {
-    const elapsed = Date.now() - serverTime;
-    const pos = Math.max(0, positionMs + elapsed * playbackRate);
-    const pct = Math.min(100, (pos / 180000) * 100);
-    document.getElementById('bar').style.width = pct + '%';
-    const s = Math.floor(pos / 1000);
-    document.getElementById('time').textContent = `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
-  }
-  requestAnimationFrame(tick);
+requestAnimationFrame(tick);
+
+function fmt(ms) {
+  const s = Math.floor(Math.max(0, ms) / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// textContent 而非 innerHTML：服务端返回的 message 会走到这里。
+function setStatus(text) {
+  $('state-line').textContent = text;
 }
 </script>
 </body>
