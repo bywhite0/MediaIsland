@@ -13,6 +13,13 @@ using Xunit;
 
 namespace MediaIsland.Tests.MediaLink;
 
+/// <summary>
+/// 走真实回环 TCP 的端到端测试。回环端口与 accept 队列是进程级共享资源，
+/// 且认证限速按 IP 记账（同一进程内所有连接都来自 127.0.0.1），
+/// 故整类串行执行，避免测试间通过这些共享状态相互干扰。
+/// </summary>
+[Collection(nameof(MediaLinkEndToEndTests))]
+[CollectionDefinition(nameof(MediaLinkEndToEndTests), DisableParallelization = true)]
 public class MediaLinkEndToEndTests
 {
     [Fact]
@@ -267,6 +274,43 @@ public class MediaLinkEndToEndTests
     }
 
     [Fact]
+    public async Task ThumbnailGet_OverWebSocket_ReturnsPayloadWithTrackToken()
+    {
+        var media = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        var settings = new PluginSettings { MediaLinkPushUsesEffective = true };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, store, () => settings);
+        media.Raise(
+            new MediaInfo("player", "Song", "Artist", null, TimeSpan.Zero, TimeSpan.FromMinutes(3),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null),
+            MediaInfoChangeKind.MediaProperties);
+
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok", coordinator: coordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        using var client = new ClientWebSocket();
+        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ReceiveJsonAsync(client); // hello
+        await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
+        await ReceiveJsonAsync(client); // auth_ok
+
+        // 无需订阅任何频道，也无需把 Token 放进 URL
+        await SendJsonAsync(client, new { type = "thumbnail.get", id = "th1", v = 1, ts = NowMs() });
+        var response = await ReceiveJsonAsync(client);
+
+        Assert.Equal(MediaLinkProtocol.TypeThumbnail, response.GetProperty("type").GetString());
+        Assert.Equal("th1", response.GetProperty("id").GetString());
+        var payload = response.GetProperty("payload");
+        Assert.False(string.IsNullOrEmpty(payload.GetProperty("trackToken").GetString()));
+
+        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await server.StopAsync();
+    }
+
+    [Fact]
     public async Task Thumbnail_WrongToken_Returns401()
     {
         var hub = new MediaLinkSessionHub();
@@ -407,6 +451,9 @@ public class MediaLinkEndToEndTests
 
         Assert.Equal(0, read);
 
+        // 限速按 IP 记账，同进程内所有连接都来自 127.0.0.1：
+        // 不清理会让后续测试的连接被误拒。
+        server.ClearAuthFailures("127.0.0.1");
         await server.StopAsync();
     }
 

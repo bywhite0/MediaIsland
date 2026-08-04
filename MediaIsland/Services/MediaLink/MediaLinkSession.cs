@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
+using MediaIsland.Services.MediaLink.Mapping;
 using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
 
@@ -334,6 +335,9 @@ public sealed class MediaLinkSession : IAsyncDisposable
             case MediaLinkProtocol.TypeUnsubscribe:
                 await HandleUnsubscribeAsync(message, cancellationToken);
                 break;
+            case MediaLinkProtocol.TypeThumbnailGet:
+                await HandleThumbnailGetAsync(message, cancellationToken);
+                break;
             default:
                 await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, $"unknown type: {message.Type}", cancellationToken);
                 break;
@@ -483,6 +487,60 @@ public sealed class MediaLinkSession : IAsyncDisposable
             new MediaLinkUnsubscribePayload { Channels = removed.ToList() },
             id: message.Id), cancellationToken);
     }
+    /// <summary>
+    /// 经 WebSocket 取当前封面。相比 HTTP 端点，已认证连接无需把 Token 放进 URL，
+    /// 也不必为一张图另开一条 TCP 连接。
+    /// </summary>
+    private async Task HandleThumbnailGetAsync(MediaLinkMessage message, CancellationToken cancellationToken)
+    {
+        var coordinator = _options.Coordinator;
+        if (coordinator is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, "not configured", cancellationToken);
+            return;
+        }
+
+        var media = coordinator.GetMediaForPush();
+        if (media is null)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorNoSession, "no session", cancellationToken);
+            return;
+        }
+
+        var currentTrackToken = MediaLinkDtoMapper.ComputeTrackToken(
+            media.SourceApp, media.Title, media.Artist, media.AlbumTitle);
+
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkThumbnailGetPayload>(message.Payload);
+        var requested = payload?.TrackToken;
+        var stale = !string.IsNullOrEmpty(requested) &&
+                    !string.Equals(requested, currentTrackToken, StringComparison.Ordinal);
+
+        byte[]? png = null;
+        if (!stale)
+        {
+            try
+            {
+                png = await MediaLinkThumbnail.EncodePngAsync(media, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "MediaLink WS 缩略图编码失败");
+                await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, "thumbnail encode failed", cancellationToken);
+                return;
+            }
+        }
+
+        await SendAsync(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeThumbnail,
+            new MediaLinkThumbnailPayload
+            {
+                TrackToken = currentTrackToken,
+                MimeType = png is null ? null : MediaLinkThumbnail.MimeType,
+                DataBase64 = png is null ? null : Convert.ToBase64String(png)
+            },
+            id: message.Id), cancellationToken);
+    }
+
     private async Task HandleMediaInjectAsync(MediaLinkMessage message, CancellationToken cancellationToken)
     {
         var store = _options.InjectionStore;

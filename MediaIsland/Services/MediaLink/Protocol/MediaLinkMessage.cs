@@ -281,3 +281,31 @@ public sealed class MediaLinkPlaybackCommandPayload
     [JsonPropertyName("action")]
     public string? Action { get; set; }
 }
+
+public sealed class MediaLinkThumbnailGetPayload
+{
+    /// <summary>
+    /// 期望的曲目标识。与当前有效媒体不一致时服务端返回空封面，
+    /// 避免客户端把上一首的封面配到新曲目上。省略则不做校验。
+    /// </summary>
+    [JsonPropertyName("trackToken")]
+    public string? TrackToken { get; set; }
+}
+
+public sealed class MediaLinkThumbnailPayload
+{
+    /// <summary>本次封面所属曲目的标识；无媒体时为 null。</summary>
+    [JsonPropertyName("trackToken")]
+    public string? TrackToken { get; set; }
+
+    /// <summary>有封面数据时为 MIME 类型，否则为 null。</summary>
+    [JsonPropertyName("mimeType")]
+    public string? MimeType { get; set; }
+
+    /// <summary>
+    /// base64 编码的图片数据。无封面、封面过大或 trackToken 失配时为 null——
+    /// 这三种情况都不是错误，客户端按"当前无可用封面"处理即可。
+    /// </summary>
+    [JsonPropertyName("dataBase64")]
+    public string? DataBase64 { get; set; }
+}

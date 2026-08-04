@@ -23,6 +23,8 @@ public static class MediaLinkProtocol
     public const string TypeLyricsInject = "lyrics.inject";
     public const string TypeMediaClearInject = "media.clear_inject";
     public const string TypePlaybackCommand = "playback.command";
+    public const string TypeThumbnailGet = "thumbnail.get";
+    public const string TypeThumbnail = "thumbnail";
 
     public const string EventMediaUpdated = "media.updated";
     public const string EventLyricsUpdated = "lyrics.updated";

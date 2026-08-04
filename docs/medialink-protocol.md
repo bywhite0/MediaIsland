@@ -223,10 +223,19 @@ MediaLink 是 ClassIsland 媒体信息插件提供的本地 WebSocket 推送服�
   "ts": 1710000000000,
   "payload": {
     "protocolVersion": 1,
-    "authRequired": true
+    "authRequired": true,
+    "sessionEpoch": 3
   }
 }
 ```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `protocolVersion` | int | 服务端协议版本 |
+| `authRequired` | bool | 是否需要认证 |
+| `sessionEpoch` | long | 监听器实例代号，进程内单调递增 |
+
+`sessionEpoch` 用于识别服务端重启：`seq` 在监听器重建后从 0 重新开始，客户端若一律「丢弃 seq ≤ 已处理值」会永久停止更新。正确做法是**发现 `sessionEpoch` 变化时重置已处理的 seq 水位**。
 
 ## 控制指令（Phase 2）
 
@@ -238,22 +247,83 @@ MediaLink 是 ClassIsland 媒体信息插件提供的本地 WebSocket 推送服�
 | `lyrics.inject` | 注入歌词 |
 | `media.clear_inject` | 清除注入 |
 | `playback.command` | 播放控制（play / pause / next / previous） |
+| `thumbnail.get` | 取当前封面（见「封面」一节） |
 
 详见源码 `MediaLinkSession.cs` 中的 `HandleMediaInjectAsync` 等方法。
 
-## 缩略图端点
+## 封面
+
+有两条获取途径，任选其一。已经建立 WebSocket 连接的客户端**建议走 WebSocket**：无需把 Token 放进 URL，也不必为一张图另开一条 TCP 连接。
+
+### 途径一：WebSocket（推荐）
+
+#### `thumbnail.get`（客户端→服务端）
+
+认证后可发送，不要求订阅任何频道。
+
+```json
+{
+  "type": "thumbnail.get",
+  "id": "th1",
+  "v": 1,
+  "ts": 1710000000000,
+  "payload": {
+    "trackToken": "abc123def"
+  }
+}
+```
+
+`payload.trackToken` 可选。填入时服务端会与当前有效曲目比对，不一致则返回空数据——这可以防止切歌后把上一首的封面配到新曲目上。省略则不做校验。
+
+服务端回复 `thumbnail`，携带相同的 `id`：
+
+```json
+{
+  "type": "thumbnail",
+  "id": "th1",
+  "v": 1,
+  "ts": 1710000000000,
+  "payload": {
+    "trackToken": "abc123def",
+    "mimeType": "image/png",
+    "dataBase64": "iVBORw0KGgo..."
+  }
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `trackToken` | string? | 本次封面所属曲目的标识；无媒体时为 null |
+| `mimeType` | string? | 有数据时为 MIME 类型，否则为 null |
+| `dataBase64` | string? | base64 编码的图片数据；无可用封面时为 null |
+
+`dataBase64` 为 null 的三种情形——曲目无封面、封面超过 1 MiB、`trackToken` 与当前曲目失配——**都不是错误**，客户端按「当前无可用封面」处理即可。此时 `trackToken` 仍会返回当前值，客户端可据此判断是否需要重新请求。
+
+无任何媒体会话时返回 `error` + `no_session`。
+
+浏览器端可直接拼成 data URL：
+
+```js
+img.src = `data:${p.mimeType};base64,${p.dataBase64}`;
+```
+
+### 途径二：HTTP 端点
 
 ```
 GET /v1/thumbnail?token=<token>&t=<trackToken>
 ```
 
-- 共用同一 Token
-- `t` 参数用于缓存失效，服务端只做存在性比对
-- 成功返回 `image/png` 或 `image/jpeg`，`Cache-Control: no-store`
-- 401: Token 不匹配
-- 404: 无封面或曲目已过期
+适用于无法维持 WebSocket 连接的场景（例如把 URL 直接填进 OBS 图像源）。
 
-> **安全提示**: 此 URL 含 Token，不应写入日志或分享。
+- 与 WebSocket 共用同一 Token 与同一监听端口
+- `t` 参数可选，用于缓存失效，服务端只做存在性比对
+- 成功返回 `image/png`，`Cache-Control: no-store`
+- 401: Token 不匹配
+- 404: 无媒体、无封面或 `t` 已过期
+
+> **安全提示**: 此 URL 含 Token，不应写入日志或分享。浏览器 `<img>` 无法携带自定义请求头，这是该端点只能用 query 传 Token 的原因；能用 WebSocket 时优先用 WebSocket。
+
+封面上限为 **1 MiB**，超限时两条途径都按「无封面」处理。
 
 ## 错误码
 
@@ -278,8 +348,11 @@ GET /v1/thumbnail?token=<token>&t=<trackToken>
 
 每个事件携带单调递增的 `seq`（从 1 开始）。客户端可用于:
 
-- 检测消息乱序
-- 检测消息丢失（`seq` 跳变）
+- 检测消息乱序（丢弃 `seq` 不大于已处理值的消息）
+- 检测消息丢失（`seq` 跳变，通常是队列丢弃了可丢帧）
+
+> **重要**: `seq` 在服务端重建监听器后从 0 重新开始。客户端必须在 `server.hello` 的
+> `sessionEpoch` 变化时重置已处理水位，否则重启后会永久停止更新。
 
 ## 最小客户端示例
 

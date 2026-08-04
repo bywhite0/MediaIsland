@@ -732,7 +732,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         if (!string.IsNullOrEmpty(requestedTrackToken))
         {
             var currentTrackToken = MediaLinkDtoMapper.ComputeTrackToken(
-                media.SourceApp, media.Title, media.Artist);
+                media.SourceApp, media.Title, media.Artist, media.AlbumTitle);
             if (!string.Equals(requestedTrackToken, currentTrackToken, StringComparison.Ordinal))
             {
                 await WriteSimpleResponseAsync(stream, "404 Not Found", cancellationToken);
@@ -743,7 +743,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         byte[]? png;
         try
         {
-            png = await EncodeThumbnailPngAsync(media, cancellationToken);
+            png = await MediaLinkThumbnail.EncodePngAsync(media, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -760,32 +760,13 @@ public sealed class MediaLinkServer : IAsyncDisposable
 
         var header =
             "HTTP/1.1 200 OK\r\n" +
-            "Content-Type: image/png\r\n" +
+            $"Content-Type: {MediaLinkThumbnail.MimeType}\r\n" +
             $"Content-Length: {png.Length}\r\n" +
             "Cache-Control: no-store\r\n" +
             "Connection: close\r\n\r\n";
         await stream.WriteAsync(Encoding.ASCII.GetBytes(header), cancellationToken);
         await stream.WriteAsync(png, cancellationToken);
         await stream.FlushAsync(cancellationToken);
-    }
-
-    /// <summary>把封面编码为 PNG。Avalonia 的 <c>Bitmap.Save</c> 输出 PNG。</summary>
-    internal static async Task<byte[]?> EncodeThumbnailPngAsync(MediaInfo media, CancellationToken cancellationToken)
-    {
-        var bitmap = media.Thumbnail;
-        if (bitmap is null && media.ThumbnailSource is not null)
-        {
-            bitmap = await media.ThumbnailSource.LoadBitmapAsync(false, cancellationToken);
-        }
-
-        if (bitmap is null)
-        {
-            return null;
-        }
-
-        using var buffer = new MemoryStream();
-        bitmap.Save(buffer);
-        return buffer.ToArray();
     }
 
     private static Task WriteSimpleResponseAsync(Stream stream, string status, CancellationToken cancellationToken) =>
