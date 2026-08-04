@@ -103,6 +103,40 @@ public static class MediaLinkDtoMapper
                 }).ToList()
         };
 
+    /// <summary>
+    /// 把收到的 <c>media.updated</c> 转成可转发的 <c>media.inject</c> 载荷。
+    ///
+    /// <paramref name="elapsedSinceReceiveMs"/> 是本地收帧后经过的时间。它与
+    /// 上游的 <c>serverTimeMs - positionCapturedAtMs</c> 相加得到 positionAgeMs：
+    /// 两段各自在同一时钟内求得，故跨机转发无需两端对时。
+    /// </summary>
+    public static MediaLinkMediaInjectPayload ToInjectPayload(
+        MediaLinkMediaDto dto,
+        long elapsedSinceReceiveMs)
+    {
+        ArgumentNullException.ThrowIfNull(dto);
+
+        var captureLagMs = dto.ServerTimeMs > 0 && dto.PositionCapturedAtMs > 0
+            ? dto.ServerTimeMs - dto.PositionCapturedAtMs
+            : 0;
+
+        // 时钟回拨或字段缺失都可能让差值为负；负的"年龄"没有意义，钳到 0。
+        var ageMs = Math.Max(0, captureLagMs + Math.Max(0, elapsedSinceReceiveMs));
+
+        return new MediaLinkMediaInjectPayload
+        {
+            SourceApp = dto.SourceApp,
+            Title = dto.Title,
+            Artist = dto.Artist,
+            AlbumTitle = dto.AlbumTitle,
+            PositionMs = dto.PositionMs,
+            DurationMs = dto.DurationMs,
+            PlaybackState = dto.PlaybackState,
+            PlaybackRate = dto.PlaybackRate,
+            PositionAgeMs = ageMs
+        };
+    }
+
     public static bool TryMapInjectedLyrics(
         MediaLinkLyricsDto payload,
         out LyricsSearchResult? result,

@@ -7,6 +7,7 @@ using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink;
+using MediaIsland.Services.MediaLink.Mapping;
 using MediaIsland.Services.MediaLink.Protocol;
 using MediaIsland.Models;
 using Xunit;
@@ -199,6 +200,137 @@ public class MediaLinkEndToEndTests
         }
 
         Assert.Equal((WebSocketCloseStatus)1001, client.CloseStatus);
+    }
+
+    [Fact]
+    public async Task MediaLinkClient_AgainstRealServer_ReceivesMediaAndLyrics()
+    {
+        // 两端都是本仓库的实现：客户端的协议假设若与服务端不一致，这里会暴露。
+        var media = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var coordinator = new MediaSourceCoordinator(media, lyrics, new MediaLinkInjectionStore(), () => settings);
+        var hub = new MediaLinkSessionHub();
+        using var publisher = new MediaLinkStatePublisher(coordinator, hub, timelineMinIntervalMs: () => 0);
+        publisher.Start();
+
+        var server = new MediaLinkServer(hub, s => publisher.PublishSnapshotAsync(s), () => "tok", coordinator: coordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        await using var client = new MediaLinkClient(new MediaLinkClientOptions
+        {
+            Endpoint = new Uri($"ws://127.0.0.1:{port}/v1/ws"),
+            Token = "tok",
+            InitialRetryDelay = TimeSpan.FromMilliseconds(100)
+        });
+
+        var received = new List<MediaLinkMediaDto>();
+        var gate = new object();
+        client.MediaReceived += (_, e) => { lock (gate) received.Add(e.Media); };
+
+        client.Start();
+        await WaitUntilAsync(() => client.IsConnected);
+
+        media.Raise(
+            new MediaInfo("app", "E2ESong", "E2EArtist", "Album",
+                TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(3),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null),
+            MediaInfoChangeKind.MediaProperties);
+
+        await WaitUntilAsync(() =>
+        {
+            lock (gate) return received.Any(m => m.Title == "E2ESong");
+        });
+
+        MediaLinkMediaDto match;
+        lock (gate) match = received.First(m => m.Title == "E2ESong");
+
+        Assert.Equal("E2EArtist", match.Artist);
+        Assert.False(string.IsNullOrEmpty(match.TrackToken));
+        // 时间基准必须完整传到客户端，否则转发时算不出 positionAgeMs。
+        Assert.True(match.PositionCapturedAtMs > 0);
+        Assert.True(match.ServerTimeMs > 0);
+
+        await client.StopAsync();
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task TwoInstanceChain_ForwardsMediaWithPreservedTimeBase()
+    {
+        // 上游实例 → 客户端 → 下游实例的注入存储。这是"另一台 ClassIsland
+        // 消费本实例"的完整链路，也是 positionAgeMs 唯一真正被用到的地方。
+        var upstreamMedia = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var settings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var upstreamCoordinator = new MediaSourceCoordinator(
+            upstreamMedia, lyrics, new MediaLinkInjectionStore(), () => settings);
+        var hub = new MediaLinkSessionHub();
+        using var publisher = new MediaLinkStatePublisher(upstreamCoordinator, hub, timelineMinIntervalMs: () => 0);
+        publisher.Start();
+
+        var server = new MediaLinkServer(hub, s => publisher.PublishSnapshotAsync(s), () => "tok", coordinator: upstreamCoordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        // 下游实例的注入存储，用可控时钟以便断言位置
+        var downstreamTick = 100_000L;
+        var downstreamStore = new MediaLinkInjectionStore(tickProvider: () => downstreamTick);
+
+        await using var client = new MediaLinkClient(new MediaLinkClientOptions
+        {
+            Endpoint = new Uri($"ws://127.0.0.1:{port}/v1/ws"),
+            Token = "tok",
+            InitialRetryDelay = TimeSpan.FromMilliseconds(100)
+        }, tickProvider: () => downstreamTick);
+
+        client.MediaReceived += (_, e) =>
+        {
+            // 模拟收帧后经过 200ms 才完成转发
+            var elapsed = (downstreamTick + 200) - e.ReceivedAtTick;
+            var payload = MediaLinkDtoMapper.ToInjectPayload(e.Media, elapsed);
+            downstreamStore.TrySetMedia(payload, out string? _);
+        };
+
+        client.Start();
+        await WaitUntilAsync(() => client.IsConnected);
+
+        upstreamMedia.Raise(
+            new MediaInfo("upstream-app", "ChainSong", "Artist", null,
+                TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(3),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null),
+            MediaInfoChangeKind.MediaProperties);
+
+        await WaitUntilAsync(() => downstreamStore.GetMediaSnapshot()?.Title == "ChainSong");
+
+        var snapshot = downstreamStore.GetMediaSnapshot()!;
+        Assert.Equal("ChainSong", snapshot.Title);
+        Assert.Equal("upstream-app", snapshot.SourceApp);
+        // 位置至少补回了那 200ms 的转发耗时，而不是停在上游采样的 30s。
+        Assert.True(
+            snapshot.Position >= TimeSpan.FromMilliseconds(30_200),
+            $"位置未回补转发耗时：{snapshot.Position}");
+
+        await client.StopAsync();
+        await server.StopAsync();
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        while (!condition() && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
     }
 
     [Fact]
