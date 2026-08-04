@@ -66,34 +66,45 @@ public sealed class MediaLinkStatePublisher : IDisposable
     {
         var media = _coordinator.GetMediaForPush();
         var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia))
-        {
-            var dto = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession);
-            if (dto is not null)
-            {
-                dto.PositionCapturedAtMs = nowMs;
-                dto.ServerTimeMs = nowMs;
-            }
-            await session.EnqueueAsync(
-                MediaLinkMessageSerializer.Create(
-                    MediaLinkProtocol.TypeEvent, dto,
-                    name: MediaLinkProtocol.EventMediaUpdated,
-                    ts: nowMs, seq: NextSeq()),
-                droppable: true,
-                cancellationToken);
-        }
 
-        if (session.IsSubscribedTo(MediaLinkProtocol.ChannelLyrics))
+        // 快照与广播共用 seq 分配器，故也必须经同一道门：否则新订阅者可能先收到
+        // 增量、后收到序号更小的快照，并永久停在旧状态（D2）。
+        await _broadcastGate.WaitAsync(cancellationToken);
+        try
         {
-            var lyrics = _coordinator.GetLyricsForPush();
-            await session.EnqueueAsync(
-                MediaLinkMessageSerializer.Create(
-                    MediaLinkProtocol.TypeEvent,
-                    MediaLinkDtoMapper.ToLyricsDto(lyrics, media),
-                    name: MediaLinkProtocol.EventLyricsUpdated,
-                    ts: nowMs, seq: NextSeq()),
-                droppable: false,
-                cancellationToken);
+            if (session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia))
+            {
+                var dto = MediaLinkDtoMapper.ToMediaDto(media, MediaInfoChangeKind.CurrentSession);
+                if (dto is not null)
+                {
+                    dto.PositionCapturedAtMs = nowMs;
+                    dto.ServerTimeMs = nowMs;
+                }
+                await session.EnqueueAsync(
+                    MediaLinkMessageSerializer.Create(
+                        MediaLinkProtocol.TypeEvent, dto,
+                        name: MediaLinkProtocol.EventMediaUpdated,
+                        ts: nowMs, seq: NextSeq()),
+                    droppable: true,
+                    cancellationToken);
+            }
+
+            if (session.IsSubscribedTo(MediaLinkProtocol.ChannelLyrics))
+            {
+                var lyrics = _coordinator.GetLyricsForPush();
+                await session.EnqueueAsync(
+                    MediaLinkMessageSerializer.Create(
+                        MediaLinkProtocol.TypeEvent,
+                        MediaLinkDtoMapper.ToLyricsDto(lyrics, media),
+                        name: MediaLinkProtocol.EventLyricsUpdated,
+                        ts: nowMs, seq: NextSeq()),
+                    droppable: false,
+                    cancellationToken);
+            }
+        }
+        finally
+        {
+            _broadcastGate.Release();
         }
     }
 
@@ -213,12 +224,26 @@ public sealed class MediaLinkStatePublisher : IDisposable
         _ = SafeBroadcastLyricsAsync(dto);
     }
 
+    /// <summary>
+    /// seq 分配必须与入队原子完成。分配与入队之间若可交错，两个并发变更能拿到
+    /// seq=5 / seq=6 后以相反顺序入队，客户端按"丢弃 seq ≤ 已处理值"就会丢掉较新的那条。
+    /// 广播本身只是入队（不等 socket），故串行化不会让慢客户端阻塞发布。
+    /// </summary>
+    private readonly SemaphoreSlim _broadcastGate = new(1, 1);
+
     private async Task SafeBroadcastMediaAsync(MediaLinkMediaDto? dto)
     {
         try
         {
-            var seq = NextSeq();
-            await _hub.BroadcastMediaUpdatedAsync(dto, seq);
+            await _broadcastGate.WaitAsync();
+            try
+            {
+                await _hub.BroadcastMediaUpdatedAsync(dto, NextSeq());
+            }
+            finally
+            {
+                _broadcastGate.Release();
+            }
         }
         catch (Exception ex)
         {
@@ -230,8 +255,15 @@ public sealed class MediaLinkStatePublisher : IDisposable
     {
         try
         {
-            var seq = NextSeq();
-            await _hub.BroadcastLyricsUpdatedAsync(dto, seq);
+            await _broadcastGate.WaitAsync();
+            try
+            {
+                await _hub.BroadcastLyricsUpdatedAsync(dto, NextSeq());
+            }
+            finally
+            {
+                _broadcastGate.Release();
+            }
         }
         catch (Exception ex)
         {
@@ -248,5 +280,6 @@ public sealed class MediaLinkStatePublisher : IDisposable
 
         Stop();
         _disposed = true;
+        _broadcastGate.Dispose();
     }
 }
