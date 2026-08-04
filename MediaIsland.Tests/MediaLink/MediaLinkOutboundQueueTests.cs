@@ -187,3 +187,67 @@ public class MediaLinkSendTimeoutTests
         }
     }
 }
+
+/// <summary>
+/// 会话数变更通知。设置页据此显示在线客户端数；此前该值只在 listener 重建时刷新，
+/// 客户端连接/断开不会更新，界面长期停在 0。
+/// </summary>
+public class MediaLinkSessionCountNotificationTests
+{
+    [Fact]
+    public void Add_RaisesSessionCountChanged()
+    {
+        var hub = new MediaLinkSessionHub();
+        var hits = 0;
+        hub.SessionCountChanged += () => hits++;
+
+        hub.Add(NewSession());
+
+        Assert.Equal(1, hits);
+    }
+
+    [Fact]
+    public void Remove_RaisesSessionCountChanged()
+    {
+        var hub = new MediaLinkSessionHub();
+        var session = NewSession();
+        hub.Add(session);
+
+        var hits = 0;
+        hub.SessionCountChanged += () => hits++;
+        hub.Remove(session);
+
+        Assert.Equal(1, hits);
+    }
+
+    [Fact]
+    public void Remove_UnknownSession_DoesNotRaise()
+    {
+        // 重复 Remove 不应产生虚假通知。
+        var hub = new MediaLinkSessionHub();
+        var hits = 0;
+        hub.SessionCountChanged += () => hits++;
+
+        hub.Remove(NewSession());
+
+        Assert.Equal(0, hits);
+    }
+
+    [Fact]
+    public void SessionCount_TracksAddAndRemove()
+    {
+        var hub = new MediaLinkSessionHub();
+        var a = NewSession();
+        var b = NewSession();
+
+        hub.Add(a);
+        hub.Add(b);
+        Assert.Equal(2, hub.Sessions.Count);
+
+        hub.Remove(a);
+        Assert.Equal(1, hub.Sessions.Count);
+    }
+
+    private static MediaLinkSession NewSession() =>
+        new(new FakeMediaLinkSocket(), new MediaLinkSessionOptions { ExpectedToken = "t" });
+}

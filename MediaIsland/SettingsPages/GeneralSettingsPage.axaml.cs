@@ -45,7 +45,7 @@ namespace MediaIsland.SettingsPages
         private readonly IEffectiveMediaSource? _effectiveMediaSource;
         private readonly MediaLinkInjectionStore? _injectionStore;
         private string _mediaLinkStatusText = "未启用";
-        private DispatcherTimer? _mediaLinkStatusTimer;
+        private string _mediaLinkExposureWarning = string.Empty;
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -218,6 +218,21 @@ namespace MediaIsland.SettingsPages
             private set => SetProperty(ref _mediaLinkStatusText, value);
         }
 
+        /// <summary>非回环监听时的明文暴露提示；为空表示无需提示。</summary>
+        public string MediaLinkExposureWarning
+        {
+            get => _mediaLinkExposureWarning;
+            private set
+            {
+                if (SetProperty(ref _mediaLinkExposureWarning, value))
+                {
+                    OnPropertyChanged(nameof(HasMediaLinkExposureWarning));
+                }
+            }
+        }
+
+        public bool HasMediaLinkExposureWarning => !string.IsNullOrEmpty(_mediaLinkExposureWarning);
+
         public int MediaLinkMediaSourceModeIndex
         {
             get => (int)Settings.MediaLinkMediaSourceMode;
@@ -259,7 +274,7 @@ namespace MediaIsland.SettingsPages
             DetachedFromVisualTree += (_, _) =>
             {
                 _isDetached = true;
-                StopMediaLinkStatusPolling();
+                UnsubscribeMediaLinkGateway();
                 Settings.PropertyChanged -= OnPluginSettingsChangedForMediaLink;
                 if (_effectiveMediaSource is not null)
                 {
@@ -289,7 +304,7 @@ namespace MediaIsland.SettingsPages
             _ = RefreshCurrentMediaInfoAsync(CurrentUiMediaInfo);
             RefreshMediaSourceDisplayInfos();
             RefreshMediaLinkStatus();
-            StartMediaLinkStatusPolling();
+            SubscribeMediaLinkGateway();
             var screenshotApp = new MediaSource
             {
                 Source = "Microsoft.ScreenSketch_8wekyb3d8bbwe!App",
@@ -937,6 +952,7 @@ namespace MediaIsland.SettingsPages
             if (_mediaLinkGateway is null)
             {
                 MediaLinkStatusText = "媒体链接服务不可用";
+                MediaLinkExposureWarning = string.Empty;
                 return;
             }
 
@@ -952,41 +968,80 @@ namespace MediaIsland.SettingsPages
                 inject = "；外部注入中";
             }
 
-            MediaLinkStatusText = $"{running} · {endpoint}{error}{inject}";
+            var sessions = _mediaLinkGateway.IsRunning
+                ? $"；{_mediaLinkGateway.ActiveSessionCount} 个客户端"
+                : string.Empty;
+
+            MediaLinkStatusText = $"{running} · {endpoint}{sessions}{error}{inject}";
+            MediaLinkExposureWarning = BuildExposureWarning();
         }
 
-        private void StartMediaLinkStatusPolling()
+        /// <summary>
+        /// 监听地址非回环时给出明文暴露提示。传输无 TLS，同网段可嗅探 Token
+        /// 与全部播放信息，这个代价必须让用户看见。
+        /// </summary>
+        private string BuildExposureWarning()
         {
-            if (_mediaLinkGateway is null || _mediaLinkStatusTimer is not null)
+            if (!Settings.MediaLinkIsEnabled)
+            {
+                return string.Empty;
+            }
+
+            var address = Settings.MediaLinkListenAddress?.Trim();
+            if (string.IsNullOrEmpty(address))
+            {
+                return string.Empty;
+            }
+
+            var isLoopback = address is "127.0.0.1" or "::1" or "[::1]" ||
+                             address.StartsWith("127.", StringComparison.Ordinal) ||
+                             address.Equals("localhost", StringComparison.OrdinalIgnoreCase);
+
+            return isLoopback
+                ? string.Empty
+                : "⚠ 明文传输：当前地址可被同网段访问，Token 与播放信息均可被嗅探。仅在可信网络中这样配置。";
+        }
+
+        /// <summary>
+        /// 订阅 gateway 的变更通知。此前用 1s DispatcherTimer 轮询：
+        /// 界面最多滞后 1 秒，且页面停留期间持续空转。gateway 已实现
+        /// INotifyPropertyChanged，事件驱动既即时又无空转。
+        /// </summary>
+        private void SubscribeMediaLinkGateway()
+        {
+            if (_mediaLinkGateway is null)
             {
                 return;
             }
 
-            _mediaLinkStatusTimer = new DispatcherTimer
+            _mediaLinkGateway.PropertyChanged += OnMediaLinkGatewayChanged;
+        }
+
+        private void UnsubscribeMediaLinkGateway()
+        {
+            if (_mediaLinkGateway is null)
             {
-                Interval = TimeSpan.FromSeconds(1)
-            };
-            _mediaLinkStatusTimer.Tick += (_, _) =>
+                return;
+            }
+
+            _mediaLinkGateway.PropertyChanged -= OnMediaLinkGatewayChanged;
+        }
+
+        private void OnMediaLinkGatewayChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (_isDetached)
             {
-                if (_isDetached)
+                return;
+            }
+
+            // gateway 的通知来自后台线程（listener 重建、会话增减），必须回到 UI 线程。
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (!_isDetached)
                 {
-                    return;
+                    RefreshMediaLinkStatus();
                 }
-
-                RefreshMediaLinkStatus();
-            };
-            _mediaLinkStatusTimer.Start();
-        }
-
-        private void StopMediaLinkStatusPolling()
-        {
-            if (_mediaLinkStatusTimer is null)
-            {
-                return;
-            }
-
-            _mediaLinkStatusTimer.Stop();
-            _mediaLinkStatusTimer = null;
+            });
         }
 
         private void OnPluginSettingsChangedForMediaLink(object? sender, PropertyChangedEventArgs e)
@@ -1006,7 +1061,11 @@ namespace MediaIsland.SettingsPages
                 or nameof(PluginSettings.MediaLinkUiUsesEffective)
                 or nameof(PluginSettings.MediaLinkPushUsesEffective))
             {
-                // 热更新异步完成，短延迟后再读 gateway 状态。
+                // 暴露提示只取决于设置本身，立即更新；不能等 gateway 那 300ms，
+                // 否则用户改成非回环地址后要过一会儿才看到警告。
+                MediaLinkExposureWarning = BuildExposureWarning();
+
+                // 运行状态是热更新异步完成的，短延迟后再读 gateway。
                 Dispatcher.UIThread.Post(async () =>
                 {
                     await Task.Delay(300);

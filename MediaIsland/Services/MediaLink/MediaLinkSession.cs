@@ -1042,9 +1042,22 @@ public sealed class MediaLinkSessionHub
 {
     private readonly ConcurrentDictionary<MediaLinkSession, byte> _sessions = new();
 
-    public void Add(MediaLinkSession session) => _sessions[session] = 0;
+    /// <summary>会话数变化时触发，供设置页等观察方刷新，避免轮询。</summary>
+    public event Action? SessionCountChanged;
 
-    public void Remove(MediaLinkSession session) => _sessions.TryRemove(session, out _);
+    public void Add(MediaLinkSession session)
+    {
+        _sessions[session] = 0;
+        SessionCountChanged?.Invoke();
+    }
+
+    public void Remove(MediaLinkSession session)
+    {
+        if (_sessions.TryRemove(session, out _))
+        {
+            SessionCountChanged?.Invoke();
+        }
+    }
 
     public IReadOnlyCollection<MediaLinkSession> Sessions => _sessions.Keys.ToArray();
 

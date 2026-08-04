@@ -170,6 +170,8 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             }
 
             _hub = new MediaLinkSessionHub();
+            // 会话增减需通知设置页，否则「N 个客户端」只会在 listener 重建时刷新。
+            _hub.SessionCountChanged += OnSessionCountChanged;
             _publisher = new MediaLinkStatePublisher(
                 _coordinator,
                 _hub,
@@ -225,6 +227,9 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         }
     }
 
+    private void OnSessionCountChanged() =>
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ActiveSessionCount)));
+
     private void NotifyGatewayChanged()
     {
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(IsRunning)));
@@ -244,7 +249,11 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
         _publisher?.Dispose();
         _publisher = null;
-        _hub = null;
+        if (_hub is not null)
+        {
+            _hub.SessionCountChanged -= OnSessionCountChanged;
+            _hub = null;
+        }
     }
 
     public void Dispose()
