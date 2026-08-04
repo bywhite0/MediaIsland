@@ -508,9 +508,10 @@ public sealed class MediaLinkServer : IAsyncDisposable
             return "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
         }
 
-        // Sec-WebSocket-Version must be 13
-        if (headers.TryGetValue("Sec-WebSocket-Version", out var version) &&
-            version != "13")
+        // Sec-WebSocket-Version 必须存在且为 13。RFC 6455 要求客户端必发此头，
+        // 缺失与版本不符同样处理：426 并回告本端支持的版本。
+        if (!headers.TryGetValue("Sec-WebSocket-Version", out var version) ||
+            version.Trim() != "13")
         {
             return "HTTP/1.1 426 Upgrade Required\r\nSec-WebSocket-Version: 13\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
         }

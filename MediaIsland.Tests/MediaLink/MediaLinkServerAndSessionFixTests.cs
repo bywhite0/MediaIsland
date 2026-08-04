@@ -93,6 +93,31 @@ public class MediaLinkServerUpgradeTests
     }
 
     [Fact]
+    public void ValidateUpgradeRequest_MissingVersion_Returns426()
+    {
+        // RFC 6455 要求客户端必发此头；缺失与版本不符同等处理，否则非 WS 客户端
+        // 只要凑齐其余头就能升级成功。
+        var headers = MakeHeaders();
+        headers.Remove("Sec-WebSocket-Version");
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", null, out _);
+        Assert.NotNull(result);
+        Assert.Contains("426", result);
+        Assert.Contains("Sec-WebSocket-Version: 13", result);
+    }
+
+    [Fact]
+    public void ValidateUpgradeRequest_VersionWithSurroundingSpace_ReturnsNull()
+    {
+        // header 值两侧空白由 HTTP 解析层保留，不应因此误拒合法客户端。
+        var headers = MakeHeaders();
+        headers["Sec-WebSocket-Version"] = " 13 ";
+        var result = MediaLinkServer.ValidateUpgradeRequest(
+            "/v1/ws", "GET", headers, "127.0.0.1", null, out _);
+        Assert.Null(result);
+    }
+
+    [Fact]
     public void ValidateUpgradeRequest_BadKey_Returns400()
     {
         var headers = MakeHeaders();
