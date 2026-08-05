@@ -64,6 +64,133 @@ public class SPlayerNextLyricsClientTests
     }
 
     [Fact]
+    public void IsLineLyricsOnly_ReturnsTrue_WhenSourceFormatIsLrc()
+    {
+        var snapshot = new SPlayerNextLyricsClient.SPlayerLyricsSnapshot
+        {
+            Lyric =
+            [
+                new SPlayerNextLyricsClient.SPlayerLyricLine
+                {
+                    Words =
+                    [
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "A", StartTime = 0, EndTime = 100 },
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "B", StartTime = 100, EndTime = 200 }
+                    ]
+                }
+            ],
+            Source = new SPlayerNextLyricsClient.SPlayerLyricSource { Format = "lrc" }
+        };
+
+        Assert.True(SPlayerNextLyricsClient.IsLineLyricsOnly(snapshot));
+    }
+
+    [Fact]
+    public void IsLineLyricsOnly_ReturnsTrue_WhenEveryLineHasSingleWord()
+    {
+        var snapshot = new SPlayerNextLyricsClient.SPlayerLyricsSnapshot
+        {
+            Lyric =
+            [
+                new SPlayerNextLyricsClient.SPlayerLyricLine
+                {
+                    Words =
+                    [
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "A", StartTime = 0, EndTime = 100 }
+                    ]
+                },
+                new SPlayerNextLyricsClient.SPlayerLyricLine
+                {
+                    Words =
+                    [
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "B", StartTime = 100, EndTime = 200 }
+                    ]
+                }
+            ],
+            Source = new SPlayerNextLyricsClient.SPlayerLyricSource { Format = null }
+        };
+
+        Assert.True(SPlayerNextLyricsClient.IsLineLyricsOnly(snapshot));
+    }
+
+    [Fact]
+    public void IsLineLyricsOnly_ReturnsTrue_WhenEmptyWordLinesPresent()
+    {
+        var snapshot = new SPlayerNextLyricsClient.SPlayerLyricsSnapshot
+        {
+            Lyric =
+            [
+                new SPlayerNextLyricsClient.SPlayerLyricLine
+                {
+                    TranslatedLyric = "纯翻译行",
+                    Words = null
+                },
+                new SPlayerNextLyricsClient.SPlayerLyricLine
+                {
+                    Words =
+                    [
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "A", StartTime = 0, EndTime = 100 }
+                    ]
+                }
+            ]
+        };
+
+        Assert.True(SPlayerNextLyricsClient.IsLineLyricsOnly(snapshot));
+    }
+
+    [Fact]
+    public void IsLineLyricsOnly_ReturnsFalse_WhenSomeLineHasMultipleWords()
+    {
+        var snapshot = new SPlayerNextLyricsClient.SPlayerLyricsSnapshot
+        {
+            Lyric =
+            [
+                new SPlayerNextLyricsClient.SPlayerLyricLine
+                {
+                    Words =
+                    [
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "A", StartTime = 0, EndTime = 100 }
+                    ]
+                },
+                new SPlayerNextLyricsClient.SPlayerLyricLine
+                {
+                    Words =
+                    [
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "B", StartTime = 100, EndTime = 150 },
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "C", StartTime = 150, EndTime = 200 }
+                    ]
+                }
+            ],
+            Source = new SPlayerNextLyricsClient.SPlayerLyricSource { Format = null }
+        };
+
+        Assert.False(SPlayerNextLyricsClient.IsLineLyricsOnly(snapshot));
+    }
+
+    [Fact]
+    public void IsLineLyricsOnly_ReturnsFalse_ForWordSyncedYrcSource()
+    {
+        // YRC 是逐字格式（MapFormat 映射为 Lrc），按原始 format 字符串不应误判为逐行。
+        var snapshot = new SPlayerNextLyricsClient.SPlayerLyricsSnapshot
+        {
+            Lyric =
+            [
+                new SPlayerNextLyricsClient.SPlayerLyricLine
+                {
+                    Words =
+                    [
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "A", StartTime = 0, EndTime = 100 },
+                        new SPlayerNextLyricsClient.SPlayerLyricWord { Word = "B", StartTime = 100, EndTime = 200 }
+                    ]
+                }
+            ],
+            Source = new SPlayerNextLyricsClient.SPlayerLyricSource { Format = "yrc" }
+        };
+
+        Assert.False(SPlayerNextLyricsClient.IsLineLyricsOnly(snapshot));
+    }
+
+    [Fact]
     public void IsSameTrack_MatchesTitleAndOverlappingArtists()
     {
         var media = new MediaInfo(
