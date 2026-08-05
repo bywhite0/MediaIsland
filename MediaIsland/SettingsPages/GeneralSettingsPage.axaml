@@ -556,7 +556,7 @@
             <ci:IconText Glyph="&#xEABB;" Text="Link-Like MediaLink" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE111;}"
                                        Header="从另一台设备接收"
-                                       Description="显示同一局域网内另一台设备正在播放的歌曲与歌词。对方需要先开启上面的「把播放信息共享给其它程序」。">
+                                       Description="显示同一局域网内另一台设备正在播放的歌曲与歌词。对方需要先开启「通过 WebSocket 共享媒体信息」。">
                 <controls:SettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUpstreamIsEnabled, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
