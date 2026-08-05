@@ -27,6 +27,12 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
     private const int MaxFetchAttempts = 5;
     private static readonly TimeSpan FetchRetryDelay = TimeSpan.FromSeconds(1);
 
+    /// <summary>
+    /// 切歌后 SPlayer-Next 可能仍在解析更佳歌词，默认先等待 2 秒再获取，
+    /// 避免 MediaIsland 抢先拿到过渡歌词。
+    /// </summary>
+    private static readonly TimeSpan InitialFetchDelay = TimeSpan.FromSeconds(2);
+
     private static readonly HttpClient HttpClient = LyricsHttp.CreateClient("splayer-next");
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -48,6 +54,9 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
         {
             return null;
         }
+
+        // 默认延迟后再首次获取，给 SPlayer-Next 时间解析出更佳歌词。
+        await Task.Delay(InitialFetchDelay, cancellationToken).ConfigureAwait(false);
 
         for (var attempt = 1; attempt <= MaxFetchAttempts; attempt++)
         {
@@ -126,8 +135,8 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
                 : media.Duration;
             var trackId = FirstNonEmpty(snapshot.TrackId, track?.Id) ?? title;
             var offsetMs = snapshot.LyricOffsetMs;
-            // 保留 API 解析出的逐字信息；组件侧再按全局开关折叠显示。
-            const bool preferWordSync = true;
+            // LRC 来源或每行仅一个词片段时是逐行歌词，不启用逐字同步。
+            var preferWordSync = !IsLineLyricsOnly(snapshot);
 
             var lines = ConvertLines(snapshot.Lyric, offsetMs);
             if (lines.Count == 0)
@@ -253,6 +262,22 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
                 left.Equals(right, StringComparison.OrdinalIgnoreCase) ||
                 left.Contains(right, StringComparison.OrdinalIgnoreCase) ||
                 right.Contains(left, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    /// <summary>
+    /// 判断外部 API 返回的歌词是否为逐行歌词（非逐字）：
+    /// 1) source.format 为 lrc；2) 所有行的词片段数均不超过 1。
+    /// 这两种情况不具备逐字信息，不应启用逐字同步。
+    /// </summary>
+    internal static bool IsLineLyricsOnly(SPlayerLyricsSnapshot snapshot)
+    {
+        if (string.Equals(snapshot.Source?.Format, "lrc", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return snapshot.Lyric is { Count: > 0 } &&
+               snapshot.Lyric.All(line => (line.Words?.Count ?? 0) <= 1);
     }
 
     internal static IReadOnlyList<LyricsLine> ConvertLines(
