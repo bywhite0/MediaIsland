@@ -163,6 +163,49 @@ public class MediaSourceProcessMatcherTests
     }
 
     [Fact]
+    public void ScoreProcessName_MatchesWithoutTouchingPath()
+    {
+        const string sourceApp = "cn.toside.music.desktop";
+        var variants = MediaSourceProcessMatcher.GetIdentifierVariants(sourceApp);
+
+        Assert.True(MediaSourceProcessMatcher.ScoreProcessName(
+            sourceApp, "lx-music-desktop", hasMainWindow: true, variants) > 0);
+    }
+
+    [Fact]
+    public void ScoreProcessName_UnrelatedProcessName_ReturnsZero()
+    {
+        const string sourceApp = "cn.toside.music.desktop";
+        var variants = MediaSourceProcessMatcher.GetIdentifierVariants(sourceApp);
+
+        Assert.Equal(0, MediaSourceProcessMatcher.ScoreProcessName(
+            sourceApp, "svchost", hasMainWindow: false, variants));
+    }
+
+    [Fact]
+    public void ScoreProcessName_ExactProcessName_OutranksPartialMatch()
+    {
+        const string sourceApp = "cloudmusic.exe";
+        var variants = MediaSourceProcessMatcher.GetIdentifierVariants(sourceApp);
+
+        var exact = MediaSourceProcessMatcher.ScoreProcessName(
+            sourceApp, "cloudmusic", hasMainWindow: false, variants);
+        var partial = MediaSourceProcessMatcher.ScoreProcessName(
+            sourceApp, "cloudmusic_helper", hasMainWindow: true, variants);
+
+        Assert.True(exact > partial);
+    }
+
+    [Fact]
+    public void ScoreProcessName_EmptyName_ReturnsZero()
+    {
+        var variants = MediaSourceProcessMatcher.GetIdentifierVariants("cloudmusic.exe");
+
+        Assert.Equal(0, MediaSourceProcessMatcher.ScoreProcessName(
+            "cloudmusic.exe", string.Empty, hasMainWindow: true, variants));
+    }
+
+    [Fact]
     public void ScoreCandidate_NoVariants_ReturnsZero()
     {
         Assert.Equal(0, MediaSourceProcessMatcher.ScoreCandidate(

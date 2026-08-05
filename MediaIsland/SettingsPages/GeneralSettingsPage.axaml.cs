@@ -760,10 +760,10 @@ namespace MediaIsland.SettingsPages
 
         private async void RefreshMediaSourceDisplayInfos()
         {
-            foreach (var source in Settings.MediaSourceList.Where(source => source != null).ToArray())
-            {
-                await RefreshMediaSourceDisplayInfoAsync(source);
-            }
+            // 每个播放源的解析都可能触发一次进程扫描，串行 await 会让首次打开设置页
+            // 的等待时间随播放源数量线性增长，这里并发解析。
+            var sources = Settings.MediaSourceList.Where(source => source != null).ToArray();
+            await Task.WhenAll(sources.Select(RefreshMediaSourceDisplayInfoAsync));
         }
 
         private async Task RefreshMediaSourceDisplayInfoAsync(MediaSource item)

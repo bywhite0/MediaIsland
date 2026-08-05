@@ -78,4 +78,56 @@ internal static class WindowsProcessPathHelper
         uint flags,
         StringBuilder exeName,
         ref int size);
+
+    /// <summary>
+    /// 一次性收集拥有可见顶层窗口的进程 ID。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Process.MainWindowHandle"/> 每次访问都会全量 <c>EnumWindows</c>，
+    /// 对几百个进程逐个访问会重复遍历几百遍窗口树。这里只遍历一次。
+    /// </remarks>
+    internal static HashSet<int> GetProcessIdsWithVisibleWindow()
+    {
+        var processIds = new HashSet<int>();
+        try
+        {
+            EnumWindows(
+                (window, _) =>
+                {
+                    if (IsWindowVisible(window) && GetWindow(window, GwOwner) == IntPtr.Zero)
+                    {
+                        GetWindowThreadProcessId(window, out var processId);
+                        if (processId != 0)
+                        {
+                            processIds.Add(processId);
+                        }
+                    }
+
+                    return true;
+                },
+                IntPtr.Zero);
+        }
+        catch
+        {
+            // 拿不到窗口信息时退化为空集合，仅影响打分权重。
+        }
+
+        return processIds;
+    }
+
+    private const uint GwOwner = 4;
+
+    private delegate bool EnumWindowsProc(IntPtr window, IntPtr param);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr param);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool IsWindowVisible(IntPtr window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetWindow(IntPtr window, uint command);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern int GetWindowThreadProcessId(IntPtr window, out int processId);
 }

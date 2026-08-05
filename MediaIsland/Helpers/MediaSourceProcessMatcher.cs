@@ -66,6 +66,18 @@ public static class MediaSourceProcessMatcher
     }
 
     /// <summary>
+    /// 只按进程名打分，不触碰进程路径。用于在昂贵的路径解析前廉价筛选候选。
+    /// </summary>
+    public static int ScoreProcessName(
+        string sourceApp,
+        string processName,
+        bool hasMainWindow,
+        IReadOnlyList<string> variants)
+    {
+        return ScoreText(sourceApp, processName, processName, hasMainWindow, variants);
+    }
+
+    /// <summary>
     /// 为候选进程打分，0 表示不匹配。分数越高越可能是播放器本体。
     /// </summary>
     public static int ScoreCandidate(
@@ -74,13 +86,23 @@ public static class MediaSourceProcessMatcher
         bool hasMainWindow,
         IReadOnlyList<string> variants)
     {
-        if (string.IsNullOrWhiteSpace(processPath) || variants.Count == 0)
+        return ScoreText(sourceApp, processPath, processPath, hasMainWindow, variants);
+    }
+
+    private static int ScoreText(
+        string sourceApp,
+        string haystack,
+        string nameSource,
+        bool hasMainWindow,
+        IReadOnlyList<string> variants)
+    {
+        if (string.IsNullOrWhiteSpace(haystack) || variants.Count == 0)
         {
             return 0;
         }
 
         var matchedLength = variants
-            .Where(variant => processPath.Contains(variant, StringComparison.OrdinalIgnoreCase))
+            .Where(variant => haystack.Contains(variant, StringComparison.OrdinalIgnoreCase))
             .Select(variant => variant.Length)
             .DefaultIfEmpty(0)
             .Max();
@@ -95,7 +117,7 @@ public static class MediaSourceProcessMatcher
             score += MainWindowScore;
         }
 
-        if (IsExactNameMatch(sourceApp, processPath))
+        if (IsExactNameMatch(sourceApp, nameSource))
         {
             score += ExactNameScore;
         }
