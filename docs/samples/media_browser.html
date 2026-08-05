@@ -3,100 +3,145 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MediaLink 示例客户端</title>
+<title>MediaLink × AMLL 示例客户端</title>
+
+<!-- AMLL 组件自带样式。官方文档称「不存在 CDN 模式，必须使用打包器」，
+     但 esm.sh 会把 peer 依赖（PixiJS 等）一并解析成浏览器可用的 ESM，
+     因此这里得以保持单文件、免构建。要接入现有工程时请按官方文档走 npm。 -->
+<link rel="stylesheet" href="https://esm.sh/@applemusic-like-lyrics/core@0.5.2/dist/style.css">
+
 <style>
   :root {
-    --bg: #1a1a2e;
-    --panel: #22223c;
-    --fg: #eee;
-    --dim: #8a8aa3;
-    --accent: #4fc3f7;
-    --sung: #ffd166;
+    --fg: #fff;
+    --dim: rgba(255, 255, 255, 0.6);
+    --panel: rgba(255, 255, 255, 0.12);
+    --accent: #fff;
   }
   * { box-sizing: border-box; }
   /* UA 的 [hidden]{display:none} 优先级低于下面按 id 写的 display，必须显式压过去。 */
   [hidden] { display: none !important; }
+
+  html, body { height: 100%; }
   body {
-    font-family: system-ui, sans-serif; background: var(--bg); color: var(--fg);
-    margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
-    padding: 16px; gap: 16px;
+    margin: 0; font-family: system-ui, sans-serif; color: var(--fg);
+    background: #000; overflow: hidden;
   }
-  #connect { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; max-width: 100%; }
-  input { padding: 8px; background: var(--panel); color: var(--fg); border: 1px solid #3a3a5c; border-radius: 4px; min-width: 0; }
+
+  /* 背景由 AMLL 的 MeshGradientRenderer 按封面取色绘制，铺满视口垫在最底层。 */
+  #bg { position: fixed; inset: 0; z-index: 0; }
+  #bg canvas { width: 100%; height: 100%; display: block; }
+
+  #shell {
+    position: relative; z-index: 1; height: 100%;
+    display: flex; flex-direction: column; padding: 16px; gap: 16px;
+  }
+
+  #connect { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  input {
+    padding: 8px; background: var(--panel); color: var(--fg);
+    border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px;
+    min-width: 0; backdrop-filter: blur(16px);
+  }
+  input::placeholder { color: var(--dim); }
   #url { flex: 1 1 280px; }
   #token { flex: 1 1 200px; }
-  button { padding: 8px 16px; background: var(--accent); color: #06202b; border: 0; border-radius: 4px; cursor: pointer; font-weight: 600; }
-  button:disabled { background: #3a3a5c; color: var(--dim); cursor: default; }
+  button {
+    padding: 8px 16px; background: var(--accent); color: #000; border: 0;
+    border-radius: 6px; cursor: pointer; font-weight: 600;
+  }
+  button:disabled { background: var(--panel); color: var(--dim); cursor: default; }
 
-  #app { display: flex; gap: 24px; width: 100%; max-width: 960px; flex: 1; flex-wrap: wrap; }
-  #left { flex: 0 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  #stage {
+    flex: 1; display: flex; gap: 32px; align-items: center;
+    width: 100%; max-width: 1200px; margin: 0 auto; min-height: 0;
+  }
+
+  #left { flex: 0 1 340px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   #cover, #cover-empty {
-    width: 100%; aspect-ratio: 1; border-radius: 8px; background: var(--panel);
+    width: 100%; aspect-ratio: 1; border-radius: 12px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
   }
   #cover { object-fit: cover; display: block; }
   #cover-empty {
-    display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 0.9em;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--panel); color: var(--dim); font-size: 0.9em;
   }
-  #title { font-size: 1.4em; font-weight: 700; line-height: 1.3; }
+  #title { font-size: 1.5em; font-weight: 700; line-height: 1.3; }
   #artist { color: var(--dim); }
   #album { color: var(--dim); font-size: 0.85em; }
-  #progress { height: 4px; background: #3a3a5c; border-radius: 2px; overflow: hidden; }
-  #bar { height: 100%; width: 0; background: var(--accent); }
-  #time { display: flex; justify-content: space-between; font-size: 0.8em; color: var(--dim); font-variant-numeric: tabular-nums; }
-
-  /* 基准 280px 让窄屏换行到封面下方，min-width:0 允许它在放不下时继续收缩而不撑破视口。 */
-  #lyrics { flex: 1 1 280px; min-width: 0; overflow-y: auto; max-height: 70vh; padding: 8px 0; scrollbar-width: thin; }
-  .line { padding: 8px 4px; color: var(--dim); transition: color 0.2s; }
-  .line.active { color: var(--fg); }
-  .line .sub { display: block; font-size: 0.8em; color: var(--dim); margin-top: 4px; }
-  .line.active .sub { color: #b9b9cc; }
-  .word { color: inherit; }
-  .line.active .word.sung { color: var(--sung); }
-  .line.active .word.singing {
-    background: linear-gradient(90deg, var(--sung) var(--p, 0%), var(--fg) var(--p, 0%));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
+  #progress { height: 4px; background: rgba(255, 255, 255, 0.25); border-radius: 2px; overflow: hidden; }
+  #bar { height: 100%; width: 0; background: var(--fg); }
+  #time {
+    display: flex; justify-content: space-between; font-size: 0.8em;
+    color: var(--dim); font-variant-numeric: tabular-nums;
   }
-  #placeholder { color: var(--dim); padding: 8px 4px; }
 
-  #status { font-size: 0.8em; color: var(--dim); text-align: center; max-width: 720px; }
-  #status b { color: var(--accent); font-weight: 600; }
+  /* AMLL 播放器必须有显式高度，否则内部布局算不出行位置。 */
+  #player { flex: 1 1 480px; min-width: 0; height: 100%; max-height: 78vh; position: relative; }
+  #player > * { width: 100%; height: 100%; }
+
+  /* 歌词为空时 AMLL 只渲染一片空白，缺少「正在搜索」这类反馈，故自行叠一层。 */
+  #lyric-hint {
+    position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center;
+    color: var(--dim); pointer-events: none;
+  }
+
+  #status { font-size: 0.8em; color: var(--dim); text-align: center; }
+  #status b { color: var(--fg); font-weight: 600; }
   code { background: var(--panel); padding: 2px 4px; border-radius: 4px; }
+
+  @media (max-width: 900px) {
+    #stage { flex-direction: column; gap: 16px; overflow-y: auto; }
+    #left { flex: 0 0 auto; width: min(280px, 70%); }
+    #player { flex: 1 1 auto; width: 100%; min-height: 45vh; }
+  }
 </style>
 </head>
 <body>
 
-<div id="connect">
-  <input id="url" value="ws://127.0.0.1:21757/v1/ws" aria-label="服务地址">
-  <input id="token" type="password" placeholder="Token" aria-label="Token">
-  <button id="go" type="button">连接</button>
-</div>
+<div id="bg"></div>
 
-<div id="app">
-  <div id="left">
-    <img id="cover" alt="封面" hidden>
-    <div id="cover-empty">无封面</div>
-    <div id="title">未连接</div>
-    <div id="artist"></div>
-    <div id="album"></div>
-    <div id="progress"><div id="bar"></div></div>
-    <div id="time"><span id="t-now">0:00</span><span id="t-total">0:00</span></div>
+<div id="shell">
+  <div id="connect">
+    <input id="url" value="ws://127.0.0.1:21757/v1/ws" aria-label="服务地址，也可直接粘贴配置码">
+    <input id="token" type="password" placeholder="Token" aria-label="Token">
+    <button id="go" type="button">连接</button>
   </div>
-  <div id="lyrics"><div id="placeholder">连接后显示歌词</div></div>
-</div>
 
-<div id="status">
-  <b id="state-line"></b>
-  <div>
-    浏览器一律发送 <code>Origin</code> 请求头，服务端会按白名单校验。用 <code>file://</code> 打开本页时 Origin 为
-    <code>null</code>，需要先在 ClassIsland 设置页把它加入「允许的 Origin」，否则握手会被 403 拒绝。
+  <div id="stage">
+    <div id="left">
+      <img id="cover" alt="封面" hidden>
+      <div id="cover-empty">无封面</div>
+      <div id="title">未连接</div>
+      <div id="artist"></div>
+      <div id="album"></div>
+      <div id="progress"><div id="bar"></div></div>
+      <div id="time"><span id="t-now">0:00</span><span id="t-total">0:00</span></div>
+    </div>
+    <div id="player"><div id="lyric-hint">连接后显示歌词</div></div>
+  </div>
+
+  <div id="status">
+    <b id="state-line"></b>
+    <div>
+      浏览器一律发送 <code>Origin</code> 请求头，服务端会按白名单校验。用 <code>file://</code> 打开本页时 Origin 为
+      <code>null</code>，从本地 HTTP 服务打开则是 <code>http://localhost:端口</code>；两者都需要先在 ClassIsland
+      设置页加入「允许的 Origin」，否则握手会被 403 拒绝。
+    </div>
   </div>
 </div>
 
-<script>
+<script type="module">
 'use strict';
 
+import {
+  DomLyricPlayer,
+  BackgroundRender,
+  MeshGradientRenderer
+} from 'https://esm.sh/@applemusic-like-lyrics/core@0.5.2';
+
 const $ = (id) => document.getElementById(id);
-const PLACEHOLDER = '连接后显示歌词';
 
 const state = {
   ws: null,
@@ -109,13 +154,78 @@ const state = {
   hasThumbnail: false,
   coverToken: null,     // 当前封面所属曲目
   pendingCover: null,   // 正在请求封面的曲目
-  lines: [],            // 当前歌词行
-  lineNodes: [],
-  activeLine: -1,
   futureLyrics: null,   // trackToken 领先于 media.updated 的歌词，暂存待配
   reconnect: null,
   closedByUser: false
 };
+
+// ---------- AMLL ----------
+
+const player = new DomLyricPlayer();
+$('player').appendChild(player.getElement());
+player.pause();   // 未连接时不要空转动画
+
+const background = BackgroundRender.new(MeshGradientRenderer);
+background.setFPS(60);
+background.setHasLyric(false);
+$('bg').appendChild(background.getElement());
+
+// MediaLink 的歌词模型 → AMLL 的 LyricLine。字段名不同，但语义一一对应。
+function toAmllLines(doc) {
+  return (doc.lines || []).map((line) => {
+    // 逐字歌词直接映射；只有整行时间的（LRC 类）按 AMLL 的约定退化成
+    // 单个「单词」，其始末时间与行一致。
+    const words = (line.words || []).length
+      ? line.words.map((w) => ({ startTime: w.startMs, endTime: w.endMs, word: w.text }))
+      : [{ startTime: line.startMs, endTime: line.endMs, word: line.text || '' }];
+
+    attachRuby(line, words);
+
+    return {
+      words,
+      translatedLyric: line.translation || '',
+      romanLyric: line.romanization || '',
+      startTime: line.startMs,
+      endTime: line.endMs,
+      isBG: !!line.isBackground,
+      isDuet: !!line.isDuet
+    };
+  });
+}
+
+// rubySpans 以「整行文本的字符区间」定位，而 AMLL 的 ruby 挂在单词上。
+// 按单词累加字符偏移还原出各自的区间，再把注音投给与之重叠的单词。
+function attachRuby(line, words) {
+  const spans = line.rubySpans || [];
+  if (!spans.length) return;
+
+  let offset = 0;
+  const ranges = words.map((w) => {
+    const start = offset;
+    offset += w.word.length;
+    return { start, end: offset, word: w };
+  });
+
+  for (const span of spans) {
+    const spanEnd = span.baseStart + span.baseLength;
+    const hit = ranges.find((r) => r.start < spanEnd && span.baseStart < r.end);
+    if (!hit) continue;
+    (hit.word.ruby ??= []).push({
+      startTime: hit.word.startTime,
+      endTime: hit.word.endTime,
+      word: span.reading
+    });
+  }
+}
+
+function setLyrics(lines, seekTo, hint = '无歌词') {
+  player.setLyricLines(lines, seekTo);
+  player.setCurrentTime(seekTo, true);   // 第二参数 isSeek：跳转而非顺放，抑制补间
+  background.setHasLyric(lines.length > 0);
+  const el = $('lyric-hint');
+  el.textContent = hint;
+  el.hidden = lines.length > 0;
+}
 
 // ---------- 连接 ----------
 
@@ -127,6 +237,28 @@ $('go').addEventListener('click', () => {
   }
   connect();
 });
+
+// 粘贴配置码到地址栏时自动拆成地址与 Token，省去手抄 32 字节密钥。
+$('url').addEventListener('input', () => {
+  const parsed = parseConfigCode($('url').value);
+  if (!parsed) return;
+  $('url').value = `ws://${parsed.endpoint}/v1/ws`;
+  $('token').value = parsed.token;
+  setStatus('已从配置码填入地址与 Token');
+});
+
+// 配置码只是 base64url 编码的明文 JSON，不是加密。
+function parseConfigCode(raw) {
+  const text = (raw || '').replace(/\s/g, '');
+  if (!/^medialink:/i.test(text)) return null;
+  try {
+    const b64 = text.slice('medialink:'.length).replace(/-/g, '+').replace(/_/g, '/');
+    const json = JSON.parse(atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, '=')));
+    return json.e && json.t ? { endpoint: json.e, token: json.t } : null;
+  } catch {
+    return null;
+  }
+}
 
 function connect() {
   clearTimeout(state.reconnect);
@@ -152,12 +284,16 @@ function connect() {
   ws.onerror = () => setStatus('连接出错（多半是 Origin 未加入白名单，或 Token 错误）');
   ws.onclose = (e) => {
     state.ws = null;
+    state.media = null;
+    player.pause();
     $('go').textContent = '连接';
     if (state.closedByUser) {
       setStatus('已断开');
       return;
     }
-    setStatus(`连接关闭（code ${e.code}），3 秒后重连…`);
+    // 1001 GoingAway 是服务端有序下线（插件禁用、设置变更、宿主退出），等它回来即可。
+    const why = e.code === 1001 ? '服务端已下线' : `连接关闭（code ${e.code}）`;
+    setStatus(`${why}，3 秒后重连…`);
     state.reconnect = setTimeout(connect, 3000);
   };
 }
@@ -232,6 +368,8 @@ function onMedia(p) {
     state.trackToken = null;
     render(null);
     setCover(null);
+    setLyrics([], 0, '无播放中的媒体');
+    player.pause();
     return;
   }
 
@@ -249,14 +387,18 @@ function onMedia(p) {
   state.recvAt = performance.now();
   render(p);
 
+  // 暂停时让 AMLL 停下补间动画，否则歌词会继续往前滚。
+  if (state.media.playbackState === 'Playing') player.resume();
+  else player.pause();
+
   if (changed) {
     // 切歌后旧歌词与旧封面都作废，等新的到达。
     setCover(null);
     if (state.futureLyrics && state.futureLyrics.token === state.trackToken) {
       // 歌词比 media.updated 先到，此刻才配得上。
-      showLines(state.futureLyrics.lines, '无歌词');
+      setLyrics(state.futureLyrics.lines, positionNow());
     } else {
-      showLines([], '搜索歌词中…');
+      setLyrics([], 0, '搜索歌词中…');
     }
     state.futureLyrics = null;
   }
@@ -309,6 +451,7 @@ function setCover(src) {
     img.src = src;
     img.hidden = false;
     $('cover-empty').hidden = true;
+    background.setAlbum(src);   // 背景流体渐变按封面取色
   } else {
     img.removeAttribute('src');
     img.hidden = true;
@@ -320,104 +463,34 @@ function setCover(src) {
 
 function onLyrics(p) {
   if (!p || !p.document) {
-    showLines([], '无歌词');
+    setLyrics([], positionNow());
     return;
   }
   // 歌词到达晚于切歌时 trackToken 会对不上。此时不能直接显示，但也不能直接扔：
   // 歌词也可能反过来先于 media.updated 到达，那就暂存到对应的 media 帧到达时再配。
   if (p.trackToken && state.trackToken && p.trackToken !== state.trackToken) {
-    state.futureLyrics = { token: p.trackToken, lines: p.document.lines || [] };
+    state.futureLyrics = { token: p.trackToken, lines: toAmllLines(p.document) };
     return;
   }
-  showLines(p.document.lines || [], '无歌词');
-}
-
-function showLines(lines, emptyText) {
-  state.lines = lines;
-  state.lineNodes = [];
-  state.activeLine = -1;
-  const box = $('lyrics');
-  box.textContent = '';
-
-  if (!lines.length) {
-    const ph = document.createElement('div');
-    ph.id = 'placeholder';
-    ph.textContent = emptyText;
-    box.appendChild(ph);
-    return;
-  }
-
-  for (const line of lines) {
-    const el = document.createElement('div');
-    el.className = 'line';
-    const words = line.words || [];
-    if (words.length) {
-      for (const w of words) {
-        const span = document.createElement('span');
-        span.className = 'word';
-        span.textContent = w.text;
-        el.appendChild(span);
-      }
-    } else {
-      el.appendChild(document.createTextNode(line.text || ''));
-    }
-    for (const extra of [line.romanization, line.translation]) {
-      if (!extra) continue;
-      const sub = document.createElement('span');
-      sub.className = 'sub';
-      sub.textContent = extra;
-      el.appendChild(sub);
-    }
-    box.appendChild(el);
-    state.lineNodes.push(el);
-  }
-}
-
-function updateLyrics(pos) {
-  if (!state.lines.length) return;
-
-  let index = -1;
-  for (let i = 0; i < state.lines.length; i++) {
-    if (state.lines[i].startMs <= pos) index = i; else break;
-  }
-
-  if (index !== state.activeLine) {
-    state.lineNodes[state.activeLine]?.classList.remove('active');
-    const node = state.lineNodes[index];
-    if (node) {
-      node.classList.add('active');
-      node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    }
-    state.activeLine = index;
-  }
-
-  if (index < 0) return;
-  const words = state.lines[index].words || [];
-  if (!words.length) return;
-  const spans = state.lineNodes[index].querySelectorAll('.word');
-  for (let i = 0; i < words.length && i < spans.length; i++) {
-    const w = words[i];
-    const span = spans[i];
-    if (pos >= w.endMs) {
-      span.className = 'word sung';
-    } else if (pos >= w.startMs) {
-      const span_ms = Math.max(1, w.endMs - w.startMs);
-      span.className = 'word singing';
-      span.style.setProperty('--p', ((pos - w.startMs) / span_ms * 100).toFixed(1) + '%');
-    } else {
-      span.className = 'word';
-    }
-  }
+  setLyrics(toAmllLines(p.document), positionNow());
 }
 
 // ---------- 渲染循环 ----------
 
-function tick() {
+let lastFrame = -1;
+function tick(frameTime) {
+  const delta = lastFrame < 0 ? 0 : frameTime - lastFrame;
+  lastFrame = frameTime;
+
   const pos = positionNow();
   const total = state.media?.durationMs || 0;
   $('bar').style.width = total > 0 ? (pos / total * 100).toFixed(2) + '%' : '0';
   $('t-now').textContent = fmt(pos);
-  updateLyrics(pos);
+
+  // AMLL 要求每帧喂入时间并推进动画。
+  if (state.media) player.setCurrentTime(Math.round(pos));
+  player.update(delta);
+
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
@@ -431,6 +504,20 @@ function fmt(ms) {
 function setStatus(text) {
   $('state-line').textContent = text;
 }
+
+// 便于在没有服务端时验证渲染：控制台执行 __amllDemo(lines)，返回转换后的 AMLL 行。
+window.__amllDemo = (lines, durationMs = 240000) => {
+  state.media = {
+    positionMs: 0, durationMs, capturedAtMs: 0, serverTimeMs: 0,
+    rate: 1, playbackState: 'Playing'
+  };
+  state.recvAt = performance.now();
+  render({ title: '演示曲目', artist: 'MediaLink', durationMs });
+  player.resume();
+  const converted = toAmllLines({ lines });
+  setLyrics(converted, 0);
+  return converted;
+};
 </script>
 </body>
 </html>
