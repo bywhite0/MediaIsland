@@ -48,6 +48,8 @@ namespace MediaIsland.SettingsPages
         private string _mediaLinkStatusText = "未启用";
         private string _mediaLinkExposureWarning = string.Empty;
         private string _mediaLinkUpstreamStatusText = "未启用";
+        private string _mediaLinkConfigCodeHint = string.Empty;
+        private string _mediaLinkUpstreamCodeHint = string.Empty;
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -240,6 +242,36 @@ namespace MediaIsland.SettingsPages
             get => _mediaLinkUpstreamStatusText;
             private set => SetProperty(ref _mediaLinkUpstreamStatusText, value);
         }
+
+        /// <summary>复制配置码后的反馈；为空时不显示。</summary>
+        public string MediaLinkConfigCodeHint
+        {
+            get => _mediaLinkConfigCodeHint;
+            private set
+            {
+                if (SetProperty(ref _mediaLinkConfigCodeHint, value))
+                {
+                    OnPropertyChanged(nameof(HasMediaLinkConfigCodeHint));
+                }
+            }
+        }
+
+        public bool HasMediaLinkConfigCodeHint => !string.IsNullOrEmpty(_mediaLinkConfigCodeHint);
+
+        /// <summary>粘贴配置码后的反馈；为空时不显示。</summary>
+        public string MediaLinkUpstreamCodeHint
+        {
+            get => _mediaLinkUpstreamCodeHint;
+            private set
+            {
+                if (SetProperty(ref _mediaLinkUpstreamCodeHint, value))
+                {
+                    OnPropertyChanged(nameof(HasMediaLinkUpstreamCodeHint));
+                }
+            }
+        }
+
+        public bool HasMediaLinkUpstreamCodeHint => !string.IsNullOrEmpty(_mediaLinkUpstreamCodeHint);
 
         public int MediaLinkMediaSourceModeIndex
         {
@@ -1192,6 +1224,58 @@ namespace MediaIsland.SettingsPages
         {
             Settings.MediaLinkToken = MediaLinkAuth.GenerateToken();
             RefreshMediaLinkStatus();
+        }
+
+        /// <summary>
+        /// 复制本机的配置码，供另一台设备一键导入，免去手抄 32 字节密钥。
+        /// 配置码含密钥且**未加密**，故提示语必须说明这一点。
+        /// </summary>
+        private async void CopyMediaLinkConfigCodeOnClick(object? sender, RoutedEventArgs e)
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.Clipboard is null)
+            {
+                return;
+            }
+
+            var code = MediaLinkConfigCode.ForLocalInstance(
+                Settings.MediaLinkListenAddress,
+                Settings.MediaLinkPort,
+                Settings.MediaLinkToken);
+
+            if (code is null)
+            {
+                // 拿不到局域网地址时给出的配置码必然连不上，不如不给。
+                MediaLinkConfigCodeHint = string.IsNullOrWhiteSpace(Settings.MediaLinkToken)
+                    ? "请先开启共享以生成连接密钥"
+                    : "无法获取本机的局域网地址，请手动把地址与密钥填到对方设备";
+                return;
+            }
+
+            await top.Clipboard.SetTextAsync(code.Encode());
+            MediaLinkConfigCodeHint = "已复制。这串文本包含连接密钥，请仅发给信任的设备。";
+        }
+
+        /// <summary>从剪贴板粘贴对方的配置码，一次填好地址与密钥。</summary>
+        private async void PasteMediaLinkConfigCodeOnClick(object? sender, RoutedEventArgs e)
+        {
+            var top = TopLevel.GetTopLevel(this);
+            if (top?.Clipboard is null)
+            {
+                return;
+            }
+
+            var text = await top.Clipboard.GetTextAsync();
+            if (!MediaLinkConfigCode.TryParse(text, out var code, out var error))
+            {
+                MediaLinkUpstreamCodeHint = error ?? "配置码无法识别";
+                return;
+            }
+
+            Settings.MediaLinkUpstreamEndpoint = code!.Endpoint;
+            Settings.MediaLinkUpstreamToken = code.Token;
+            MediaLinkUpstreamCodeHint = $"已填入 {code.Endpoint}";
+            RefreshUpstreamStatus();
         }
 
         private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

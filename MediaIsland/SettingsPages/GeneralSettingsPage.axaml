@@ -505,6 +505,18 @@
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
+                                       Header="一键配置码"
+                                       Description="把本机的地址与密钥打包成一串文本，在另一台设备的「接收其它设备」中粘贴即可，无需手抄密钥。这串文本包含密钥且未加密，请仅发给信任的设备。">
+                <controls:SettingsExpander.Footer>
+                    <Button Content="复制配置码" Click="CopyMediaLinkConfigCodeOnClick" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <TextBlock Text="{Binding MediaLinkConfigCodeHint}"
+                       IsVisible="{Binding HasMediaLinkConfigCodeHint}"
+                       Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                       TextWrapping="Wrap"
+                       Margin="0 4 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0F5;}"
                                        Header="媒体信息来源"
                                        Description="决定媒体信息从哪里来。默认「本机播放器」即读取本机正在播放的媒体信息；要显示另一台电脑或外部程序发来的内容，请选后两项。">
@@ -551,19 +563,25 @@
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE109;}"
                                        Header="对方的地址与密钥"
-                                       Description="填对方设备的 IP 和端口（如 192.168.1.201:21757），以及对方设置页里的连接密钥。注意不是本机的密钥。">
+                                       Description="填对方设备的 IP 和端口（如 192.168.1.201:21757），以及对方设置页里的连接密钥。注意不是本机的密钥。若已复制对方的配置码，直接点「粘贴配置码」即可自动填好。">
                 <controls:SettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <TextBox Width="220"
+                        <TextBox Width="200"
                                  Watermark="192.168.1.201:21757"
                                  Text="{Binding Settings.MediaLinkUpstreamEndpoint, Mode=TwoWay}" />
-                        <TextBox Width="200"
+                        <TextBox Width="160"
                                  PasswordChar="•"
                                  Watermark="对方的连接密钥"
                                  Text="{Binding Settings.MediaLinkUpstreamToken, Mode=TwoWay}" />
+                        <Button Content="粘贴配置码" Click="PasteMediaLinkConfigCodeOnClick" />
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <TextBlock Text="{Binding MediaLinkUpstreamCodeHint}"
+                       IsVisible="{Binding HasMediaLinkUpstreamCodeHint}"
+                       Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                       TextWrapping="Wrap"
+                       Margin="0 4 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE157;}"
                                        Header="接收状态"
                                        Description="断开后会自动重试，无需手动重连。">
