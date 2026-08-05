@@ -2099,7 +2099,17 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         var hasText = _front.Children.Count > 0 ||
                       _exitLayer.Children.Count > 0 ||
                       (_transition != null && _back.Children.Count > 0);
-        LyricsGrid.IsVisible = !Settings.IsHideWhenEmpty || hasText;
+
+        // 状态文本（等待媒体信息、未找到歌词、来源已禁用等）不算内容：
+        // 开启「无内容时隐藏」后仅在存在歌词文档时显示，避免状态文本撑开组件。
+        // 以歌词文档而非当前帧是否有可视行为准，防止歌词行间隙误隐藏。
+        bool hasLyrics;
+        lock (_syncLock)
+        {
+            hasLyrics = _currentLyrics is { Lines.Count: > 0 };
+        }
+
+        LyricsGrid.IsVisible = !Settings.IsHideWhenEmpty || (hasText && hasLyrics);
     }
 
     private void SetInterludeAnimationActive(bool isActive)
