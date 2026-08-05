@@ -6,11 +6,15 @@
                   xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
                   xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                   xmlns:local="clr-namespace:MediaIsland.Components"
+                  xmlns:converters="using:MediaIsland.Converters"
                   mc:Ignorable="d"
                   ClipToBounds="False"
                   d:DesignHeight="80" d:DesignWidth="420"
                   Loaded="LyricsComponent_OnLoaded"
                   Unloaded="LyricsComponent_OnUnloaded">
+    <ci:ComponentBase.Resources>
+        <converters:MaxContentWidthConverter x:Key="MaxContentWidthConverter" />
+    </ci:ComponentBase.Resources>
     <!-- MarginHost receives negative margins; ClipToBounds=False so content can paint into island padding. -->
     <Border x:Name="MarginHost"
             ClipToBounds="False"
@@ -30,6 +34,7 @@
             <Grid x:Name="LyricsContentHost"
                   Grid.Column="1"
                   ClipToBounds="True"
+                  MaxWidth="{Binding Settings.MaxContentWidth, Converter={StaticResource MaxContentWidthConverter}}"
                   VerticalAlignment="Center">
                 <!-- Style probe for font size / foreground; not part of the transition layers. -->
                 <TextBlock x:Name="LyricsText"

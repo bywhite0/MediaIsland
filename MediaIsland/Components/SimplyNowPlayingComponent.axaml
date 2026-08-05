@@ -3,14 +3,19 @@
                   xmlns="https://github.com/avaloniaui"
                   xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                   xmlns:ci="http://classisland.tech/schemas/xaml/core"
-                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
-                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+                  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                  xmlns:converters="using:MediaIsland.Converters"
+                  xmlns:controls="using:MediaIsland.Controls"
+                  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                   xmlns:local="clr-namespace:MediaIsland.Components"
                   mc:Ignorable="d"
-                  ClipToBounds="False" 
+                  ClipToBounds="False"
                   d:DesignHeight="450" d:DesignWidth="800"
                   Loaded="SimplyNowPlayingComponent_OnLoaded"
                   Unloaded="SimplyNowPlayingComponent_OnUnloaded">
+    <ci:ComponentBase.Resources>
+        <converters:MaxContentWidthConverter x:Key="MaxContentWidthConverter" />
+    </ci:ComponentBase.Resources>
     <Border x:Name="MarginHost"
             ClipToBounds="False"
             Background="Transparent">
@@ -19,18 +24,30 @@
             <ci:FluentIcon x:Name="StatusIcon" Glyph="&#xEDB8;" IsVisible="{Binding Settings.IsShowPlaybackStatus}" VerticalAlignment="Center" Margin="0 0 4 0" />
             <ci:FluentIcon x:Name="NoteIcon" Glyph="&#xEBC9;" IsVisible="{Binding !Settings.IsShowPlaybackStatus}" VerticalAlignment="Center" Margin="0 0 4 0" />
         </StackPanel>
-        <StackPanel Name="InfoStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" VerticalAlignment="Center" IsVisible="{Binding !Settings.IsDualLineStyle}">
-            <Grid TextElement.FontSize="{DynamicResource MainWindowBodyFontSize}" ColumnDefinitions="Auto,Auto,Auto">
-                <TextBlock x:Name="TitleText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0" Grid.Column="0" />
-                <TextBlock x:Name="DividerText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4 0" Grid.Column="1">-</TextBlock>
-                <TextBlock x:Name="ArtistText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0" Grid.Column="2" />
-            </Grid>
-        </StackPanel>
-        <StackPanel Name="DualLineInfoStackPanel" Grid.Column="1" Margin="0" Orientation="Horizontal" VerticalAlignment="Center" IsVisible="{Binding Settings.IsDualLineStyle}">
-            <Grid RowDefinitions="Auto,Auto">
-                <TextBlock x:Name="DualTitleText" VerticalAlignment="Center" Margin="0" Grid.Row="0" FontSize="14" />
-                <TextBlock x:Name="DualArtistText" VerticalAlignment="Center" Margin="0" Grid.Row="1" FontSize="10" />
-            </Grid>
+        <!-- 每行各自裁剪与滚动；单行模式下「标题 - 艺术家」是一个整体，作为一行处理。 -->
+        <StackPanel Grid.Column="1"
+                    Orientation="Vertical"
+                    MaxWidth="{Binding Settings.MaxContentWidth, Converter={StaticResource MaxContentWidthConverter}}"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center">
+            <controls:OverflowScrollHost Name="InfoStackPanel"
+                                         HorizontalAlignment="Left"
+                                         IsScrollEnabled="{Binding Settings.IsScrollWhenOverflow}"
+                                         IsVisible="{Binding !Settings.IsDualLineStyle}">
+                <Grid TextElement.FontSize="{DynamicResource MainWindowBodyFontSize}" ColumnDefinitions="*,Auto,Auto">
+                    <TextBlock x:Name="TitleText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0" Grid.Column="0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="DividerText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="4 0" Grid.Column="1">-</TextBlock>
+                    <TextBlock x:Name="ArtistText" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0" Grid.Column="2" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                </Grid>
+            </controls:OverflowScrollHost>
+            <StackPanel Name="DualLineInfoStackPanel" Margin="0" Orientation="Vertical" VerticalAlignment="Center" IsVisible="{Binding Settings.IsDualLineStyle}">
+                <controls:OverflowScrollHost HorizontalAlignment="Left" IsScrollEnabled="{Binding Settings.IsScrollWhenOverflow}">
+                    <TextBlock x:Name="DualTitleText" VerticalAlignment="Center" Margin="0" FontSize="14" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                </controls:OverflowScrollHost>
+                <controls:OverflowScrollHost HorizontalAlignment="Left" IsScrollEnabled="{Binding Settings.IsScrollWhenOverflow}">
+                    <TextBlock x:Name="DualArtistText" VerticalAlignment="Center" Margin="0" FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                </controls:OverflowScrollHost>
+            </StackPanel>
         </StackPanel>
     </Grid>
     </Border>

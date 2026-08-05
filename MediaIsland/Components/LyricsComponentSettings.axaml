@@ -108,6 +108,25 @@
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE091;}"
+                                       Header="歌词最大宽度"
+                                       Description="限制歌词区的最大宽度，避免过长歌词溢出覆盖右侧组件。超出部分截断为省略号。拖到最左为 0，表示不限制。">
+                <controls:SettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Slider Width="160"
+                                Minimum="0"
+                                Maximum="1000"
+                                TickFrequency="20"
+                                IsSnapToTickEnabled="True"
+                                VerticalAlignment="Center"
+                                Value="{Binding Settings.MaxContentWidth, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                Classes="auto-tooltip" />
+                        <TextBlock Text="{Binding Settings.MaxContentWidth, StringFormat={}{0:0} px}"
+                                   MinWidth="44"
+                                   VerticalAlignment="Center" />
+                    </StackPanel>
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
                 Powered by MediaIsland
             </Label>

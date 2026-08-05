@@ -90,6 +90,31 @@
                     </ComboBox>
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE091;}"
+                                       Header="内容最大宽度"
+                                       Description="限制歌曲名与艺术家区域的最大宽度，避免过长内容溢出覆盖右侧组件。拖到最左为 0，表示不限制。">
+                <controls:SettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Slider Width="160"
+                                Minimum="0"
+                                Maximum="1000"
+                                Value="{Binding Settings.MaxContentWidth, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                TickFrequency="20"
+                                IsSnapToTickEnabled="True"
+                                Classes="auto-tooltip" />
+                        <Label VerticalAlignment="Center"
+                               Foreground="Gray"
+                               Content="{Binding Settings.MaxContentWidth, StringFormat={}{0:0} px}" />
+                    </StackPanel>
+                </controls:SettingsExpander.Footer>
+                <controls:SettingsExpanderItem Content="超长时滚动"
+                                               Description="内容超出最大宽度时来回滚动展示完整信息，而不是截断为省略号。"
+                                               IconSource="{ci:FluentIconSource &#xED91;}">
+                    <controls:SettingsExpanderItem.Footer>
+                        <ToggleSwitch IsChecked="{Binding Settings.IsScrollWhenOverflow, Mode=TwoWay}" />
+                    </controls:SettingsExpanderItem.Footer>
+                </controls:SettingsExpanderItem>
+            </controls:SettingsExpander>
             <controls:SettingsExpander Margin="0,0,0,6"
                                        IconSource="{ci:FluentIconSource &#xE093;}"
                                        Header="左右间距"
