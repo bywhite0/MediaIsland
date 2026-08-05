@@ -383,9 +383,23 @@ namespace MediaIsland.SettingsPages
 
         private void UpdateCurrentLyricsSource(LyricsSearchResult? result)
         {
-            CurrentLyricsSourceDisplay = result == null
-                ? "当前使用：暂无"
-                : $"当前使用：{LyricsSourceItemViewModel.GetDisplayName(result.Source)}";
+            if (result is null)
+            {
+                CurrentLyricsSourceDisplay = "当前使用：暂无";
+                return;
+            }
+
+            // 外部注入时 Source 恒为 External，看不出歌词实际来自哪；
+            // 上游标注了真实来源就一并显示，例如「其他设备（QQ 音乐）」。
+            var name = LyricsSourceItemViewModel.GetDisplayName(result.Source);
+            if (result.Source == LyricsSourceId.External &&
+                result.OriginSource is { } origin &&
+                origin != LyricsSourceId.External)
+            {
+                name = $"{name}（{LyricsSourceItemViewModel.GetDisplayName(origin)}）";
+            }
+
+            CurrentLyricsSourceDisplay = $"当前使用：{name}";
         }
 
         private async Task RefreshLyricsCandidatesAsync(MediaInfo? info)
@@ -1353,6 +1367,7 @@ namespace MediaIsland.SettingsPages
             LyricsSourceId.Kugou => "酷狗音乐",
             LyricsSourceId.Netease => "网易云音乐",
             LyricsSourceId.SPlayerNext => "SPlayer-Next",
+            LyricsSourceId.External => "外部来源",
             _ => id.ToString()
         };
 

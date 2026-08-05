@@ -51,7 +51,8 @@ public static class MediaLinkDtoMapper
             Artist = result.Artist,
             DurationMs = ToMilliseconds(result.Duration),
             Score = result.Score,
-            Source = MapLyricsSource(result.Source),
+            // 转发时报出真实来源而非本机通道，否则每经一跳来源都退化为 External。
+            Source = MapLyricsSource(result.OriginSource ?? result.Source),
             TrackToken = owningMedia is null
                 ? null
                 : ComputeTrackToken(owningMedia.SourceApp, owningMedia.Title, owningMedia.Artist, owningMedia.AlbumTitle),
@@ -160,6 +161,10 @@ public static class MediaLinkDtoMapper
         var format = ParseOrDefault(documentDto.Format, LyricsFormat.Unknown);
         var syncMode = InferSyncMode(documentDto.SyncMode, lines);
 
+        // 上游标注的真实来源，仅用于显示。通道必须保持 External：
+        // 组件按 Source == External 决定是否直接应用注入歌词，改掉会让歌词不再显示。
+        var originSource = ParseLyricsSource(FirstNonEmpty(documentDto.Source, payload.Source));
+
         var document = new LyricsDocument(
             new LyricsMetadata(title, artist, album, duration > TimeSpan.Zero ? duration : null),
             lines,
@@ -175,9 +180,26 @@ public static class MediaLinkDtoMapper
             artist,
             duration,
             payload.Score,
-            LyricsSourceId.External);
+            LyricsSourceId.External,
+            originSource);
         error = null;
         return true;
+    }
+
+    /// <summary>
+    /// 解析 wire 上的来源名。未知值（含上游新增的来源）返回 null，按"来源不详"处理，
+    /// 与协议要求的"必须容忍未知枚举值"一致。
+    /// </summary>
+    internal static LyricsSourceId? ParseLyricsSource(string? wireValue)
+    {
+        if (string.IsNullOrWhiteSpace(wireValue))
+        {
+            return null;
+        }
+
+        return Enum.TryParse<LyricsSourceId>(wireValue.Trim(), ignoreCase: true, out var parsed)
+            ? parsed
+            : null;
     }
 
     /// <summary>

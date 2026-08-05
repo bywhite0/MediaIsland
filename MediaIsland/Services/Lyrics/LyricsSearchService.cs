@@ -742,6 +742,15 @@ public sealed class LyricsSearchService
         CancellationTokenSource Cts);
 }
 
+/// <param name="Source">
+/// 本机处理该歌词所用的通道。外部注入一律为 <see cref="LyricsSourceId.External"/>——
+/// 这不只是标签，组件据此决定是否直接应用（见 LyricsComponent 的 OnExternalLyricsChanged）。
+/// </param>
+/// <param name="OriginSource">
+/// 歌词最初的来源。跨实例转发时，上游可能是 QQ 音乐等真实来源，但对本机而言通道仍是
+/// External；此字段仅用于界面显示"这份歌词来自哪里"，不参与任何路由判断。
+/// null 表示与 <paramref name="Source"/> 相同。
+/// </param>
 public sealed record LyricsSearchResult(
     LyricsDocument Document,
     string Id,
@@ -749,7 +758,8 @@ public sealed record LyricsSearchResult(
     string Artist,
     TimeSpan Duration,
     int? Score,
-    LyricsSourceId Source);
+    LyricsSourceId Source,
+    LyricsSourceId? OriginSource = null);
 
 public sealed class LyricsSearchResultChangedEventArgs(LyricsSearchResult? result) : EventArgs
 {
