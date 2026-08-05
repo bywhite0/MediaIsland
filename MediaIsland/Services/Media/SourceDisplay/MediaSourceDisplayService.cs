@@ -62,8 +62,8 @@ public sealed class MediaSourceDisplayService(
         string? customDisplayName,
         CancellationToken cancellationToken)
     {
-        var mappedDisplayName = ResolveMappedDisplayName(sourceApp);
-        var displayName = MediaSourceDisplayNameResolver.Resolve(mappedDisplayName, customDisplayName);
+        var mapping = ResolveMappedDisplayName(sourceApp);
+        var displayName = MediaSourceDisplayNameResolver.Resolve(mapping, customDisplayName);
 
         if (!string.IsNullOrWhiteSpace(iconPath))
         {
@@ -76,7 +76,7 @@ public sealed class MediaSourceDisplayService(
 
         var platformInfo = await ResolvePlatformInfoAsync(sourceApp, cancellationToken);
         displayName = MediaSourceDisplayNameResolver.Resolve(
-            mappedDisplayName,
+            mapping,
             customDisplayName,
             platformInfo?.DisplayName);
         if (platformInfo is { Icon: not null })
@@ -169,48 +169,58 @@ public sealed class MediaSourceDisplayService(
             string.Equals(source.Source, sourceApp, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static string ResolveMappedDisplayName(string sourceApp)
+    private static MappedDisplayName ResolveMappedDisplayName(string sourceApp)
     {
         if (DisplayNameMap.TryGetValue(sourceApp, out var displayName))
         {
-            return displayName;
+            return new MappedDisplayName(displayName, true);
         }
 
         if (sourceApp.Contains("cloudmusic", StringComparison.OrdinalIgnoreCase))
         {
-            return "网易云音乐";
+            return new MappedDisplayName("网易云音乐", true);
         }
 
         if (sourceApp.Contains("spotify", StringComparison.OrdinalIgnoreCase))
         {
-            return "Spotify";
+            return new MappedDisplayName("Spotify", true);
         }
 
+        // .exe 形式的 AUMID 去掉扩展名只是兜底，进程自身的描述名更准确，不算显式映射。
         if (sourceApp.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
         {
-            return Path.GetFileNameWithoutExtension(sourceApp);
+            return new MappedDisplayName(Path.GetFileNameWithoutExtension(sourceApp), false);
         }
 
-        return sourceApp;
+        return new MappedDisplayName(sourceApp, false);
     }
 
     private sealed record CacheKey(string SourceApp, string? IconPath, string? CustomDisplayName);
 }
 
+/// <param name="IsExplicit">是否命中内置映射表；命中时应覆盖平台返回的名称。</param>
+internal sealed record MappedDisplayName(string Value, bool IsExplicit);
+
 internal static class MediaSourceDisplayNameResolver
 {
     internal static string Resolve(
-        string mappedDisplayName,
+        MappedDisplayName mapping,
         string? customDisplayName,
         string? platformDisplayName = null)
     {
+        // 用户自定义 > 内置映射 > 平台解析名 > AUMID 兜底。
         if (!string.IsNullOrWhiteSpace(customDisplayName))
         {
             return customDisplayName;
         }
 
+        if (mapping.IsExplicit)
+        {
+            return mapping.Value;
+        }
+
         return string.IsNullOrWhiteSpace(platformDisplayName)
-            ? mappedDisplayName
+            ? mapping.Value
             : platformDisplayName;
     }
 }

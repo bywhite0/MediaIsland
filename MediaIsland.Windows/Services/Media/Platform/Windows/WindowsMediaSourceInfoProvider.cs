@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using Avalonia.Media.Imaging;
+using MediaIsland.Helpers;
 using MediaIsland.Windows.Helpers;
 using Microsoft.Extensions.Logging;
 using Windows.ApplicationModel;
@@ -13,6 +14,11 @@ namespace MediaIsland.Services.Media.Platform.Windows;
 public sealed class WindowsMediaSourceInfoProvider(
     ILogger<WindowsMediaSourceInfoProvider> logger) : IMediaSourceInfoProvider
 {
+    private static readonly TimeSpan ProcessCacheDuration = TimeSpan.FromSeconds(5);
+    private static readonly object ProcessCacheGate = new();
+    private static Process[]? _cachedProcesses;
+    private static DateTime _processCacheTimestamp = DateTime.MinValue;
+
     public async Task<MediaSourceInfo?> ResolveAsync(
         string sourceApp,
         CancellationToken cancellationToken = default)
@@ -183,45 +189,90 @@ public sealed class WindowsMediaSourceInfoProvider(
         return Path.GetFileNameWithoutExtension(processPath) ?? sourceApp;
     }
 
+    /// <summary>
+    /// 扫描全部进程，用 AUMID 变体模糊匹配可执行文件路径，取分数最高者。
+    /// </summary>
+    /// <remarks>
+    /// 不能只用 <see cref="Process.GetProcessesByName"/> 精确匹配进程名：
+    /// <c>cn.toside.music.desktop</c> 经 <see cref="Path.GetFileNameWithoutExtension"/> 会变成
+    /// <c>cn.toside.music</c>，永远匹配不到实际进程 <c>lx-music-desktop</c>。
+    /// </remarks>
     private static string? TryFindProcessPath(string sourceApp)
     {
-        var processNames = GetCandidateProcessNames(sourceApp);
-        foreach (var processName in processNames)
+        var variants = MediaSourceProcessMatcher.GetIdentifierVariants(sourceApp);
+        if (variants.Count == 0)
         {
-            foreach (var process in Process.GetProcessesByName(processName))
+            return null;
+        }
+
+        string? bestPath = null;
+        var bestScore = 0;
+        foreach (var process in GetCachedProcesses())
+        {
+            var candidate = TryReadProcessPath(process);
+            if (candidate == null)
             {
-                using (process)
-                {
-                    try
-                    {
-                        var fileName = process.MainModule?.FileName;
-                        if (!string.IsNullOrWhiteSpace(fileName) && File.Exists(fileName))
-                        {
-                            return fileName;
-                        }
-                    }
-                    catch
-                    {
-                        // Some processes do not allow module inspection.
-                    }
-                }
+                continue;
+            }
+
+            var score = MediaSourceProcessMatcher.ScoreCandidate(
+                sourceApp,
+                candidate.Value.Path,
+                candidate.Value.HasMainWindow,
+                variants);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestPath = candidate.Value.Path;
             }
         }
 
-        return null;
+        return bestPath;
     }
 
-    private static IEnumerable<string> GetCandidateProcessNames(string sourceApp)
+    private static (string Path, bool HasMainWindow)? TryReadProcessPath(Process process)
     {
-        var sourceName = Path.GetFileNameWithoutExtension(sourceApp);
-        if (!string.IsNullOrWhiteSpace(sourceName))
+        try
         {
-            yield return sourceName;
-        }
+            var fileName = WindowsProcessPathHelper.TryGetExecutablePath(process);
+            if (string.IsNullOrWhiteSpace(fileName) || !File.Exists(fileName))
+            {
+                return null;
+            }
 
-        if (sourceApp.Equals("MSEdge", StringComparison.OrdinalIgnoreCase))
+            return (fileName, process.MainWindowHandle != IntPtr.Zero);
+        }
+        catch
         {
-            yield return "msedge";
+            // 受保护或已退出的进程读不到信息，跳过即可。
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 缓存进程快照，避免每次切歌都全量枚举进程。
+    /// </summary>
+    private static IReadOnlyList<Process> GetCachedProcesses()
+    {
+        lock (ProcessCacheGate)
+        {
+            if (_cachedProcesses != null &&
+                DateTime.UtcNow - _processCacheTimestamp < ProcessCacheDuration)
+            {
+                return _cachedProcesses;
+            }
+
+            if (_cachedProcesses != null)
+            {
+                foreach (var process in _cachedProcesses)
+                {
+                    process.Dispose();
+                }
+            }
+
+            _cachedProcesses = Process.GetProcesses();
+            _processCacheTimestamp = DateTime.UtcNow;
+            return _cachedProcesses;
         }
     }
 
