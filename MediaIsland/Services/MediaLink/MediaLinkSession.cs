@@ -19,6 +19,14 @@ public interface IMediaLinkSocket
     Task<string?> ReceiveTextAsync(CancellationToken cancellationToken);
 
     Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 只发关闭帧，不等对端回帧。停服时对端是否回握手与「让客户端看到 1001」无关：
+    /// 帧一送达客户端就已知晓关闭原因，等待纯属浪费——而进程退出时我们没有这个时间。
+    /// 默认转发到 <see cref="CloseAsync"/>，仅真实 WebSocket 覆写为单向关闭。
+    /// </summary>
+    Task CloseOutputAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken) =>
+        CloseAsync(status, description, cancellationToken);
 }
 
 public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSocket, IDisposable
@@ -92,6 +100,23 @@ public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSo
         try
         {
             await webSocket.CloseAsync(status, description, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// 只写出关闭帧，不等待对端的关闭响应。停服路径专用：宿主随时可能结束进程，
+    /// 等待对端握手会让关闭帧根本来不及发出，客户端最终只看到 1006。
+    /// </summary>
+    public async Task CloseOutputAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
+    {
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await webSocket.CloseOutputAsync(status, description, cancellationToken);
         }
         finally
         {
@@ -270,6 +295,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private readonly HashSet<string> _channels = new(StringComparer.Ordinal);
     private bool _authenticated;
     private bool _closed;
+    private bool _goingAwaySent;
     private readonly MediaLinkOutboundQueue _outbound = new(64);
     private Task? _writerTask;
 
@@ -1024,9 +1050,38 @@ public sealed class MediaLinkSession : IAsyncDisposable
     /// <summary>
     /// 服务停止时主动告知对端，使客户端能区分「服务端正常下线」与「网络故障」，
     /// 从而决定是否重连。仅此一处对外暴露关闭能力。
+    ///
+    /// 用 CloseOutputAsync 而非 CloseAsync：只需把 1001 送到对端，不必等它回关闭帧。
+    /// 宿主（ClassIsland）不 await 停服流程，等待对端握手会让帧根本发不出去。
+    ///
+    /// 幂等：AppStopping 与 IHostedService.StopAsync 可能相继触发，第二次调用直接返回。
     /// </summary>
-    public Task CloseGoingAwayAsync(CancellationToken cancellationToken = default) =>
-        CloseAsync((WebSocketCloseStatus)1001, "server stopping", cancellationToken);
+    public async Task CloseGoingAwayAsync(CancellationToken cancellationToken = default)
+    {
+        lock (_gate)
+        {
+            if (_goingAwaySent)
+            {
+                return;
+            }
+
+            _goingAwaySent = true;
+        }
+
+        _closed = true;
+        _outbound.Complete();
+        try
+        {
+            if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+            {
+                await _socket.CloseOutputAsync((WebSocketCloseStatus)1001, "server stopping", cancellationToken);
+            }
+        }
+        catch
+        {
+            // 对端已死或写超时：停服不能因此挂住
+        }
+    }
 
     public ValueTask DisposeAsync()
     {
@@ -1141,10 +1196,14 @@ public sealed class MediaLinkSessionHub
     /// 向所有在线会话发 1001 GoingAway。必须在取消会话令牌之前调用：
     /// 一旦取消，RunAsync 立即结束并 Dispose socket，关闭帧就发不出去了。
     /// 单会话失败或超时不影响其余会话，也不阻塞停服。
+    ///
+    /// 并发而非串行：会话之间没有依赖，而串行会让超时累加——32 个卡死的会话
+    /// 按 1s/个 就要 32s，远超宿主留给停服的窗口，后面的会话根本轮不到发帧。
+    /// 并发后总耗时收敛为单会话超时。
     /// </summary>
     public async Task CloseAllGoingAwayAsync(TimeSpan perSessionTimeout, CancellationToken cancellationToken = default)
     {
-        foreach (var session in _sessions.Keys)
+        var closes = _sessions.Keys.Select(async session =>
         {
             try
             {
@@ -1156,7 +1215,9 @@ public sealed class MediaLinkSessionHub
             {
                 // 对端已死或不回关闭握手：停服不能因此挂住
             }
-        }
+        });
+
+        await Task.WhenAll(closes);
     }
 
     public async Task DisposeAllAsync()

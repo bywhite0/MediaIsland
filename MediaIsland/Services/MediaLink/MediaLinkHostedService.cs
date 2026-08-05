@@ -11,6 +11,9 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 {
     private static readonly TimeSpan DisposeStopTimeout = TimeSpan.FromSeconds(5);
 
+    /// <summary>宿主未 await StopAsync 时，在 AppStopping 里手动发 1001 的超时上限。</summary>
+    private static readonly TimeSpan AppStoppingGoingAwayTimeout = TimeSpan.FromSeconds(3);
+
     private readonly MediaLinkInjectionStore _injectionStore;
     private readonly MediaSourceCoordinator _coordinator;
     private readonly MediaPlatformProviderResolver _platformProviderResolver;
@@ -25,6 +28,17 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     private PluginSettings? _boundSettings;
     private CancellationTokenSource? _debounceCts;
     private bool _disposed;
+    private bool _appStoppingHandlerRegistered;
+
+    /// <summary>
+    /// 订阅时用的委托实例。必须缓存：Delegate.CreateDelegate 每次返回新实例，
+    /// 而事件退订按委托相等性匹配，重新构造的实例移除不掉已订阅的处理器。
+    /// </summary>
+    private Delegate? _appStoppingDelegate;
+
+    /// <summary>已解析出的 AppBase.Current 实例与 AppStopping 事件，退订时复用。</summary>
+    private object? _appStoppingTarget;
+    private System.Reflection.EventInfo? _appStoppingEvent;
 
     public MediaLinkHostedService(
         IMediaService mediaService,
@@ -66,6 +80,92 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         var settings = _settingsFactory();
         BindSettings(settings);
         await ApplySettingsAsync(settings, cancellationToken);
+
+        // ClassIsland 的 App.Stop() 不会 await IHostedService.StopAsync，导致进程退出时
+        // 关闭帧来不及发出。订阅 AppStopping 作为纵深防御：即使宿主未正确等待停服，
+        // 我们也能在 UI 线程同步拦截中主动发送 1001。
+        if (!_appStoppingHandlerRegistered)
+        {
+            _appStoppingHandlerRegistered = TrySubscribeAppStoppingViaReflection();
+        }
+    }
+
+    /// <summary>
+    /// 通过反射订阅 ClassIsland.Core.AppBase.Current.AppStopping，避免对该程序集的直接引用。
+    /// 直接引用会导致测试环境因程序集缺失而 TypeLoadException。
+    /// </summary>
+    private bool TrySubscribeAppStoppingViaReflection()
+    {
+        try
+        {
+            // 尝试加载 ClassIsland.Core 程序集
+            var coreAssembly = System.Reflection.Assembly.Load("ClassIsland.Core");
+            var appBaseType = coreAssembly.GetType("ClassIsland.Core.AppBase");
+            if (appBaseType is null)
+            {
+                return false;
+            }
+
+            var currentProperty = appBaseType.GetProperty("Current", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+            if (currentProperty is null)
+            {
+                return false;
+            }
+
+            var appInstance = currentProperty.GetValue(null);
+            if (appInstance is null)
+            {
+                return false;
+            }
+
+            var appStoppingEvent = appBaseType.GetEvent("AppStopping");
+            if (appStoppingEvent is null)
+            {
+                return false;
+            }
+
+            // 构造 EventHandler 委托并订阅
+            var handlerDelegate = Delegate.CreateDelegate(
+                typeof(EventHandler),
+                this,
+                nameof(OnHostAppStopping));
+            appStoppingEvent.AddEventHandler(appInstance, handlerDelegate);
+
+            // 缓存这些对象，退订时复用同一委托实例，否则 RemoveEventHandler 匹配不上
+            _appStoppingDelegate = handlerDelegate;
+            _appStoppingTarget = appInstance;
+            _appStoppingEvent = appStoppingEvent;
+
+            _logger?.LogDebug("MediaLink 已订阅 AppBase.AppStopping");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "MediaLink 未能订阅 AppStopping，将仅依赖 IHostedService.StopAsync");
+            return false;
+        }
+    }
+
+    /// <summary>通过反射取消 AppStopping 订阅。</summary>
+    private void UnsubscribeAppStoppingViaReflection()
+    {
+        try
+        {
+            if (_appStoppingEvent is not null && _appStoppingTarget is not null && _appStoppingDelegate is not null)
+            {
+                _appStoppingEvent.RemoveEventHandler(_appStoppingTarget, _appStoppingDelegate);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "MediaLink 取消 AppStopping 订阅失败");
+        }
+        finally
+        {
+            _appStoppingDelegate = null;
+            _appStoppingTarget = null;
+            _appStoppingEvent = null;
+        }
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -78,6 +178,41 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         finally
         {
             _lifecycleLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// ClassIsland 的 App.Stop() 不会 await IHostedService.StopAsync，导致进程在 StopAsync 异步
+    /// 流水线尚未走完时就 Shutdown()，使得 1001 GoingAway 来不及发出。此处理器订阅同步触发的
+    /// AppStopping，在 UI 线程上通过 Task.Run().Wait() 绕开 SynchronizationContext 死锁，
+    /// 强制完成 1001 的发送，避免客户端因 1006 而误判网络故障并持续重连。
+    /// </summary>
+    private void OnHostAppStopping(object? sender, EventArgs e)
+    {
+        // AppStopping 在 UI 线程同步触发，await 会因 UI 线程阻塞在后续同步代码里而死锁。
+        // Task.Run 把工作扔到线程池，Wait() 阻塞当前（UI）线程，但工作本身跑在独立线程上不会死锁。
+        var sendTask = Task.Run(async () =>
+        {
+            if (_hub is null) return;
+            try
+            {
+                await _hub.CloseAllGoingAwayAsync(AppStoppingGoingAwayTimeout, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "MediaLink AppStopping 发送 1001 失败");
+            }
+        });
+
+        // 阻塞 UI 线程最多 3 秒：宁可稍微延迟退出，也要确保关闭帧发出。
+        // 超时后放行，避免卡住主程序。
+        try
+        {
+            sendTask.Wait(AppStoppingGoingAwayTimeout);
+        }
+        catch (AggregateException)
+        {
+            // Task.Wait() 包装的异常已在上方 catch 里记录，此处吞掉包装层
         }
     }
 
@@ -264,6 +399,12 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         }
 
         _disposed = true;
+
+        if (_appStoppingHandlerRegistered)
+        {
+            UnsubscribeAppStoppingViaReflection();
+            _appStoppingHandlerRegistered = false;
+        }
 
         _debounceCts?.Cancel();
         _debounceCts?.Dispose();
