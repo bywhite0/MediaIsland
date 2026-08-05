@@ -420,14 +420,14 @@ public class KrcLyricsParserTests
     public void Parse_Kana_EmptyReading_DoesNotCreateSpanButConsumesKanji()
     {
         const string content = """
-            [kana:11ざん]
+            [kana:111ざん]
             [0,1000]<0,300,0>高<300,300,0>橋<600,400,0>残
             """;
 
         var line = Assert.Single(KrcLyricsParser.Parse(content));
         Assert.Equal("高橋残", line.Text);
         var span = Assert.Single(line.RubySpans!);
-        Assert.Equal(1, span.BaseStart);
+        Assert.Equal(2, span.BaseStart);
         Assert.Equal(1, span.BaseLength);
         Assert.Equal("ざん", span.Reading);
     }

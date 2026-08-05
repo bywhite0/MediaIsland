@@ -9,12 +9,36 @@ namespace MediaIsland.Services.Lyrics.Parsers;
 /// </summary>
 /// <remarks>
 /// The payload is a single stream for the whole lyric track: each token is a one-digit
-/// cover count (0-9) followed by a reading. Cover counts only CJK ideographs in document
-/// order; kana and ASCII in the lyric text are skipped. Optional <c>(start,duration)</c>
-/// fragments inside a reading are stripped and ignored for display.
+/// cover count (0-9) followed by a reading. Optional <c>(start,duration)</c> fragments inside
+/// a reading are stripped and ignored for display.
+/// <para>
+/// The stream carries no anchors, so it only lines up if our notion of "base character" matches
+/// the producer's exactly — a single extra or missing base character shifts every later reading.
+/// Verified against real QQ Music payloads: a base character is a CJK ideograph, or a maximal run
+/// of digits (<c>27</c> and <c>0</c> each count as one). Kana and Latin are never base characters.
+/// A base character the producer could not read still consumes a slot with an empty reading, so
+/// "unannotated" never means "unconsumed".
+/// </para>
+/// <para>
+/// Because every base character is covered exactly once, the total cover count is a checksum:
+/// it must equal the number of base characters. That lets us both pick the right base-character
+/// definition per track and refuse to render anything when none of them fits.
+/// </para>
 /// </remarks>
 internal static class LyricsKanaRubyParser
 {
+    /// <summary>
+    /// Base-character definitions to try, most likely first. The cover checksum decides which one
+    /// the producer used for a given track.
+    /// </summary>
+    private static readonly (bool DigitRuns, bool IterationMarks)[] BaseCandidates =
+    [
+        (true, false),
+        (false, false),
+        (true, true),
+        (false, true)
+    ];
+
     public static string? ExtractPayload(string line)
     {
         if (line.Length < 7 ||
@@ -48,21 +72,11 @@ internal static class LyricsKanaRubyParser
             return lines;
         }
 
-        var positions = new List<(int LineIndex, int CharIndex)>();
-        for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
+        var totalCover = tokens.Sum(static token => token.Cover > 0 ? token.Cover : 0);
+        var positions = ResolvePositions(lines, totalCover);
+        if (positions == null)
         {
-            var text = lines[lineIndex].Text ?? string.Empty;
-            for (var charIndex = 0; charIndex < text.Length; charIndex++)
-            {
-                if (IsAlignableIdeograph(text[charIndex]))
-                {
-                    positions.Add((lineIndex, charIndex));
-                }
-            }
-        }
-
-        if (positions.Count == 0)
-        {
+            // 无法判定生成侧的基字符口径，任何分配都会整体错位；宁可不显示注音。
             return lines;
         }
 
@@ -96,7 +110,7 @@ internal static class LyricsKanaRubyParser
             }
 
             var baseStart = start.CharIndex;
-            var baseLength = end.CharIndex - start.CharIndex + 1;
+            var baseLength = end.CharIndex + end.CharLength - start.CharIndex;
             if (baseLength <= 0)
             {
                 continue;
@@ -186,11 +200,84 @@ internal static class LyricsKanaRubyParser
                int.TryParse(payload.AsSpan(comma + 1, close - comma - 1), NumberStyles.None, CultureInfo.InvariantCulture, out _);
     }
 
+    /// <summary>
+    /// Picks the base-character definition whose count matches <paramref name="totalCover"/>,
+    /// or <c>null</c> when no candidate balances.
+    /// </summary>
+    private static IReadOnlyList<BasePosition>? ResolvePositions(
+        IReadOnlyList<LyricsLine> lines,
+        int totalCover)
+    {
+        if (totalCover <= 0)
+        {
+            return null;
+        }
+
+        foreach (var (digitRuns, iterationMarks) in BaseCandidates)
+        {
+            var positions = BuildPositions(lines, digitRuns, iterationMarks);
+            if (positions.Count == totalCover)
+            {
+                return positions;
+            }
+        }
+
+        return null;
+    }
+
+    private static List<BasePosition> BuildPositions(
+        IReadOnlyList<LyricsLine> lines,
+        bool digitRuns,
+        bool iterationMarks)
+    {
+        var positions = new List<BasePosition>();
+        for (var lineIndex = 0; lineIndex < lines.Count; lineIndex++)
+        {
+            var text = lines[lineIndex].Text ?? string.Empty;
+            var charIndex = 0;
+            while (charIndex < text.Length)
+            {
+                var value = text[charIndex];
+                if (IsAlignableIdeograph(value) || (iterationMarks && IsIterationMark(value)))
+                {
+                    positions.Add(new BasePosition(lineIndex, charIndex, 1));
+                    charIndex++;
+                    continue;
+                }
+
+                if (digitRuns && IsDigit(value))
+                {
+                    var runStart = charIndex;
+                    while (charIndex < text.Length && IsDigit(text[charIndex]))
+                    {
+                        charIndex++;
+                    }
+
+                    positions.Add(new BasePosition(lineIndex, runStart, charIndex - runStart));
+                    continue;
+                }
+
+                charIndex++;
+            }
+        }
+
+        return positions;
+    }
+
     internal static bool IsAlignableIdeograph(char value)
     {
         // CJK Unified Ideographs + Extension A. Kana and ASCII are intentionally excluded.
         return value is (>= '一' and <= '鿿') or (>= '㐀' and <= '䶿');
     }
+
+    /// <summary>Half-width and full-width digits; a maximal run counts as one base character.</summary>
+    private static bool IsDigit(char value) => value is (>= '0' and <= '9') or (>= '０' and <= '９');
+
+    /// <summary>Iteration/abbreviation marks that live outside the ideograph blocks.</summary>
+    private static bool IsIterationMark(char value) => value is '々' or '〇' or '〆';
+
+    /// <param name="CharLength">1 for an ideograph; the run length for a digit run.</param>
+    private readonly record struct BasePosition(int LineIndex, int CharIndex, int CharLength);
 
     internal readonly record struct KanaToken(int Cover, string Reading);
 }
