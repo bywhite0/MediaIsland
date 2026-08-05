@@ -2,7 +2,7 @@
 import asyncio, json, sys, websockets
 
 TOKEN = sys.argv[1] if len(sys.argv) > 1 else "YOUR_TOKEN"
-URL   = sys.argv[2] if len(sys.argv) > 2 else "ws://127.0.0.1:17654/v1/ws"
+URL   = sys.argv[2] if len(sys.argv) > 2 else "ws://127.0.0.1:21757/v1/ws"
 
 async def main():
     async with websockets.connect(URL) as ws:

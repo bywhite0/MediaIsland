@@ -466,14 +466,14 @@
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE625;}"
                                        Header="监听地址与端口"
-                                       Description="默认为 127.0.0.1:17654。">
+                                       Description="默认为 127.0.0.1:21757。">
                 <controls:SettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="140"
                                  Watermark="127.0.0.1"
                                  Text="{Binding Settings.MediaLinkListenAddress, Mode=TwoWay}" />
                         <TextBox Width="80"
-                                 Watermark="17654"
+                                 Watermark="21757"
                                  Text="{Binding Settings.MediaLinkPort, Mode=TwoWay}" />
                     </StackPanel>
                 </controls:SettingsExpander.Footer>
@@ -551,11 +551,11 @@
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE109;}"
                                        Header="对方的地址与密钥"
-                                       Description="填对方设备的 IP 和端口（如 192.168.1.10:17654），以及对方设置页里的连接密钥。注意不是本机的密钥。">
+                                       Description="填对方设备的 IP 和端口（如 192.168.1.201:21757），以及对方设置页里的连接密钥。注意不是本机的密钥。">
                 <controls:SettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="220"
-                                 Watermark="192.168.1.10:17654"
+                                 Watermark="192.168.1.201:21757"
                                  Text="{Binding Settings.MediaLinkUpstreamEndpoint, Mode=TwoWay}" />
                         <TextBox Width="200"
                                  PasswordChar="•"

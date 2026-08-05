@@ -303,7 +303,7 @@ namespace MediaIsland.Models
 
         private bool _mediaLinkIsEnabled;
         private string _mediaLinkListenAddress = "127.0.0.1";
-        private int _mediaLinkPort = 17654;
+        private int _mediaLinkPort = 21757;
         private string _mediaLinkToken = string.Empty;
         private string _mediaLinkAllowedOrigins = string.Empty;
         private int _mediaLinkTimelineMinIntervalMs = 200;
@@ -336,7 +336,7 @@ namespace MediaIsland.Models
             get => _mediaLinkPort;
             set
             {
-                var normalized = value is < 1 or > 65535 ? 17654 : value;
+                var normalized = value is < 1 or > 65535 ? 21757 : value;
                 if (_mediaLinkPort == normalized) return;
                 _mediaLinkPort = normalized;
                 OnPropertyChanged();
@@ -400,7 +400,7 @@ namespace MediaIsland.Models
             }
         }
 
-        /// <summary>上游实例的 WebSocket 地址，形如 <c>ws://192.168.1.10:17654/v1/ws</c>。</summary>
+        /// <summary>上游实例的 WebSocket 地址，形如 <c>ws://192.168.1.201:21757/v1/ws</c>。</summary>
         public string MediaLinkUpstreamEndpoint
         {
             get => _mediaLinkUpstreamEndpoint;

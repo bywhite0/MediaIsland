@@ -7,7 +7,7 @@
 MediaLink 是 ClassIsland 媒体信息插件提供的本地 WebSocket 推送服务。客户端通过 `ws://` 连接，经过认证与订阅后，即可接收当前播放的媒体信息和逐字歌词。
 
 - **传输**: 明文 `ws://`（无 TLS）
-- **默认地址**: `ws://127.0.0.1:17654/v1/ws`
+- **默认地址**: `ws://127.0.0.1:21757/v1/ws`
 - **协议版本**: `v: 1`（仅追加，不破坏已有客户端）
 - **认证**: Token（base64url 字符串，在 ClassIsland 设置页生成）
 
@@ -465,7 +465,7 @@ GET /v1/thumbnail?token=<token>&t=<trackToken>
 import asyncio, websockets, json
 
 async def main():
-    async with websockets.connect("ws://127.0.0.1:17654/v1/ws") as ws:
+    async with websockets.connect("ws://127.0.0.1:21757/v1/ws") as ws:
         await ws.recv()  # server.hello
         await ws.send(json.dumps({"type":"auth","id":"a1","v":1,"ts":0,"payload":{"token":"YOUR_TOKEN"}}))
         await ws.recv()  # auth_ok
