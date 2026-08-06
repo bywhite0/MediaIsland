@@ -82,7 +82,7 @@ public sealed class LyricsSearchService
         var settings = LyricsSourceSettings.Normalize(_settingsFactory().Clone());
         EnsureCacheFingerprint(settings);
 
-        var cacheKey = BuildCacheKey(info, settings, allowProviderSearch);
+        var cacheKey = BuildCacheKey(info, allowProviderSearch);
         if (_cache.TryGetValue(cacheKey, out var cached))
         {
             if (cached.ExpiresAt > DateTimeOffset.UtcNow)
@@ -344,7 +344,7 @@ public sealed class LyricsSearchService
             return null;
         }
 
-        Cache(BuildCacheKey(info, settings), result);
+        Cache(BuildCacheKey(info), result);
         PublishCurrentResult(result, searchVersion);
         if (!ReferenceEquals(CurrentResult, result))
         {
@@ -436,7 +436,7 @@ public sealed class LyricsSearchService
         CancellationToken cancellationToken,
         bool includeBelowMinimumScore = false)
     {
-        var candidateCacheKey = BuildCandidateCacheKey(info, settings, provider.Id);
+        var candidateCacheKey = BuildCandidateCacheKey(info, provider.Id);
         if (TryGetCachedCandidates(candidateCacheKey, out var cachedCandidates))
         {
             return FilterCandidates(cachedCandidates, info, includeBelowMinimumScore);
@@ -660,50 +660,34 @@ public sealed class LyricsSearchService
         }
     }
 
-    private static string BuildCacheKey(
-        MediaInfo info,
-        LyricsSourceSettings settings,
-        bool allowProviderSearch = true)
-    {
-        var durationBucket = GetDurationBucket(info);
-        var sourceFlags = string.Join(
-            ",",
-            settings.Sources.Select(source => $"{source.Id}:{(source.IsEnabled ? 1 : 0)}:{(source.UseWordSyncedLyrics ? 1 : 0)}"));
-        return string.Join(
-            "\u001f",
-            LyricsTextNormalizer.NormalizeComparableText(info.Title),
-            LyricsTextNormalizer.NormalizeComparableText(info.Artist),
-            LyricsTextNormalizer.NormalizeComparableText(info.AlbumTitle),
-            durationBucket,
-            sourceFlags,
-            settings.AmllApiBaseUrl,
-            settings.SPlayerNextApiBaseUrl,
-            info.SourceApp ?? string.Empty,
+    /// <summary>
+    /// L2（落盘）键：纯曲目标识，不含播放器与时长，使同一首歌跨播放器命中同一条目。
+    /// </summary>
+    internal static string BuildTrackKey(MediaInfo info) =>
+        LyricsTrackKey.Compute(info.Title, info.Artist, info.AlbumTitle);
+
+    /// <summary>
+    /// L1（内存）键：曲目标识 + 解析上下文。
+    /// </summary>
+    /// <remarks>
+    /// 两个上下文位都是必需的：去掉 <paramref name="allowProviderSearch"/> 会造成泄漏
+    /// ——用户关闭某来源的歌词搜索后，30 分钟内 L1 仍会返回歌词，因为设置指纹
+    /// 只覆盖 Lyrics 设置、不覆盖 MediaSourceList；去掉 isSPlayerNext 则会把直连结果
+    /// 串给普通播放源。时长不进键：播放器上报的时长有抖动，分桶边界会让缓存永久不命中。
+    /// </remarks>
+    internal static string BuildCacheKey(MediaInfo info, bool allowProviderSearch = true) =>
+        string.Join(
+            '\u001f',
+            BuildTrackKey(info),
+            SPlayerNextMediaSource.Matches(info.SourceApp) ? "1" : "0",
             allowProviderSearch ? "1" : "0");
-    }
 
-    private static string BuildCandidateCacheKey(
-        MediaInfo info,
-        LyricsSourceSettings settings,
-        LyricsSourceId providerId)
-    {
-        return string.Join(
-            "\u001f",
-            LyricsTextNormalizer.NormalizeComparableText(info.Title),
-            LyricsTextNormalizer.NormalizeComparableText(info.Artist),
-            LyricsTextNormalizer.NormalizeComparableText(info.AlbumTitle),
-            GetDurationBucket(info),
-            providerId,
-            settings.AmllApiBaseUrl,
-            settings.SPlayerNextApiBaseUrl);
-    }
-
-    private static string GetDurationBucket(MediaInfo info)
-    {
-        return info.Duration > TimeSpan.Zero
-            ? ((int)Math.Round(info.Duration.TotalSeconds / 5.0) * 5).ToString()
-            : "0";
-    }
+    internal static string BuildCandidateCacheKey(MediaInfo info, LyricsSourceId providerId) =>
+        string.Join(
+            '\u001f',
+            BuildTrackKey(info),
+            SPlayerNextMediaSource.Matches(info.SourceApp) ? "1" : "0",
+            providerId);
 
     private void Cache(string key, LyricsSearchResult result)
     {
