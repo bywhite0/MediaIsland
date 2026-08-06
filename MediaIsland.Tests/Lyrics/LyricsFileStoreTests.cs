@@ -166,6 +166,57 @@ public class LyricsFileStoreTests : IDisposable
         Assert.Single(await reopened.ListAsync(CancellationToken.None));
     }
 
+    /// <summary>
+    /// 索引是合法 JSON 但语义非法（重复 Key）时，ToDictionary 抛的是 ArgumentException——
+    /// 它不属于 JSON/IO 异常族，若不接住会持续逃逸：_index 保持 null，每次调用重新读盘重新抛，
+    /// 直到用户手工删掉 index.json。index.json 位于用户可见的配置目录，手工编辑与多机同步都会产出这种文件。
+    /// </summary>
+    [Fact]
+    public async Task SemanticallyInvalidIndex_FallsBackToDirectoryScan()
+    {
+        var store = CreateStore();
+        await store.SaveCacheAsync("key-1", CreateEntry(), CancellationToken.None);
+
+        var duplicated = """
+        [
+          {"Key":"key-1","Title":"A","Artist":"B","Album":"C","SettingsFingerprint":"fp","LastUsedAtUtc":"2026-08-06T12:00:00+00:00","IsPinned":false,"Source":"Netease"},
+          {"Key":"key-1","Title":"A","Artist":"B","Album":"C","SettingsFingerprint":"fp","LastUsedAtUtc":"2026-08-06T12:00:00+00:00","IsPinned":false,"Source":"Netease"}
+        ]
+        """;
+        await File.WriteAllTextAsync(Path.Combine(_root, "index.json"), duplicated);
+        var reopened = CreateStore();
+
+        // 六个碰索引的方法都不得抛出，且应从目录重建后正常工作。
+        Assert.Null(await Record.ExceptionAsync(() => reopened.ListAsync(CancellationToken.None)));
+        Assert.NotNull(await reopened.TryGetCacheAsync("key-1", CancellationToken.None));
+        Assert.Single(await reopened.ListAsync(CancellationToken.None));
+    }
+
+    /// <summary>
+    /// pin 与 cache 对同一首歌必然同 key（L2 键就是曲目标识），索引须按复合键区分：
+    /// 否则固定一首已缓存的歌会让 cache 条目从索引消失——不计入上限、永不被 LRU 选中，
+    /// 解除固定后更会变成「读得到却列不出」的孤儿。
+    /// </summary>
+    [Fact]
+    public async Task PinAndCache_WithSameKey_CoexistInIndex()
+    {
+        var store = CreateStore();
+
+        await store.SaveCacheAsync("same", CreateEntry("cache-content"), CancellationToken.None);
+        await store.SavePinAsync("same", CreateEntry("pin-content"), CancellationToken.None);
+
+        var entries = await store.ListAsync(CancellationToken.None);
+        Assert.Equal(2, entries.Count);
+        Assert.Contains(entries, entry => entry.Key == "same" && entry.IsPinned);
+        Assert.Contains(entries, entry => entry.Key == "same" && !entry.IsPinned);
+
+        // 解除固定后，cache 条目必须仍在索引里，而不是被一并抹掉。
+        Assert.True(await store.RemovePinAsync("same", CancellationToken.None));
+        var remaining = Assert.Single(await store.ListAsync(CancellationToken.None));
+        Assert.False(remaining.IsPinned);
+        Assert.NotNull(await store.TryGetCacheAsync("same", CancellationToken.None));
+    }
+
     /// <summary>LRU 只淘汰缓存，固定条目不计入也不被删。</summary>
     [Fact]
     public async Task Lru_TrimsOldestCacheEntries_AndNeverTouchesPins()

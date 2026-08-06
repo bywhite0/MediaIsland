@@ -79,11 +79,13 @@ internal sealed class LyricsFileStore : ILyricsStore
             {
                 if (!File.Exists(path))
                 {
+                    // 文件已不在，但索引可能还留着条目——一并清掉，否则设置页会出现删不掉的幽灵行。
+                    await RemoveFromIndexAsync(key, isPinned: true, cancellationToken).ConfigureAwait(false);
                     return false;
                 }
 
                 File.Delete(path);
-                await RemoveFromIndexAsync(key, cancellationToken).ConfigureAwait(false);
+                await RemoveFromIndexAsync(key, isPinned: true, cancellationToken).ConfigureAwait(false);
                 return true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -158,12 +160,23 @@ internal sealed class LyricsFileStore : ILyricsStore
             try
             {
                 var index = await LoadIndexNoLockAsync(cancellationToken).ConfigureAwait(false);
-                if (!index.TryGetValue(key, out var entry))
+                // 同一 key 的 pin 与 cache 是同一首歌的两份落盘，一并刷新。
+                var touched = false;
+                foreach (var isPinned in new[] { false, true })
+                {
+                    var indexKey = IndexKey(key, isPinned);
+                    if (index.TryGetValue(indexKey, out var entry))
+                    {
+                        index[indexKey] = entry with { LastUsedAtUtc = nowUtc };
+                        touched = true;
+                    }
+                }
+
+                if (!touched)
                 {
                     return;
                 }
 
-                index[key] = entry with { LastUsedAtUtc = nowUtc };
                 await WriteIndexNoLockAsync(index, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -321,7 +334,7 @@ internal sealed class LyricsFileStore : ILyricsStore
         try
         {
             var index = await LoadIndexNoLockAsync(cancellationToken).ConfigureAwait(false);
-            index[key] = new LyricsStoreIndexEntry(
+            index[IndexKey(key, isPinned)] = new LyricsStoreIndexEntry(
                 key,
                 entry.Title,
                 entry.Artist,
@@ -342,13 +355,13 @@ internal sealed class LyricsFileStore : ILyricsStore
         }
     }
 
-    private async Task RemoveFromIndexAsync(string key, CancellationToken cancellationToken)
+    private async Task RemoveFromIndexAsync(string key, bool isPinned, CancellationToken cancellationToken)
     {
         await _indexLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var index = await LoadIndexNoLockAsync(cancellationToken).ConfigureAwait(false);
-            if (index.Remove(key))
+            if (index.Remove(IndexKey(key, isPinned)))
             {
                 await WriteIndexNoLockAsync(index, cancellationToken).ConfigureAwait(false);
             }
@@ -388,7 +401,8 @@ internal sealed class LyricsFileStore : ILyricsStore
                     TryDelete(path);
                 }
 
-                index.Remove(victim.Key);
+                // victim 恒为非 pin 项（上面已按 !IsPinned 筛过），索引键需拼复合前缀。
+                index.Remove(IndexKey(victim.Key, isPinned: false));
             }
 
             await WriteIndexNoLockAsync(index, cancellationToken).ConfigureAwait(false);
@@ -422,11 +436,16 @@ internal sealed class LyricsFileStore : ILyricsStore
                     .ConfigureAwait(false);
                 if (entries is not null)
                 {
-                    _index = entries.ToDictionary(entry => entry.Key, StringComparer.Ordinal);
+                    // index.json 在用户可见的配置目录里，手工编辑与同步工具都可能产出
+                    // 元素为 null 或缺 Key 的合法 JSON，这类条目映射不到任何文件，直接跳过。
+                    _index = entries
+                        .Where(entry => entry is not null && !string.IsNullOrWhiteSpace(entry.Key))
+                        .ToDictionary(entry => IndexKey(entry.Key, entry.IsPinned), StringComparer.Ordinal);
                     return _index;
                 }
             }
-            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is JsonException or ArgumentException or IOException
+                or UnauthorizedAccessException)
             {
                 _logger?.LogWarning(ex, "[歌词] 歌词索引损坏，将从目录重建。");
             }
@@ -466,7 +485,7 @@ internal sealed class LyricsFileStore : ILyricsStore
                         continue;
                     }
 
-                    rebuilt[key] = new LyricsStoreIndexEntry(
+                    rebuilt[IndexKey(key, isPinned)] = new LyricsStoreIndexEntry(
                         key,
                         entry.Title,
                         entry.Artist,
@@ -520,6 +539,14 @@ internal sealed class LyricsFileStore : ILyricsStore
             return false;
         }
     }
+
+    /// <summary>
+    /// 内存索引的复合键：同一首歌的 pin 与 cache 落在不同目录，是两份独立条目。
+    /// 若只用曲目键寻址，固定一首已缓存的歌会让 cache 条目从索引消失——
+    /// 既不计入缓存上限、也永不被 LRU 淘汰，取消固定后更会变成读得到却列不出的孤儿。
+    /// 磁盘格式不含此前缀，仅在载入与重建时拼装。
+    /// </summary>
+    private static string IndexKey(string key, bool isPinned) => (isPinned ? "p:" : "c:") + key;
 
     private static bool TryGetEntryPath(string folder, string key, out string path)
     {
