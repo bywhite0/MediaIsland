@@ -50,7 +50,8 @@ internal static class LocalLyricsFileReader
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            return new LocalLyricsReadResult(null, $"读取歌词文件失败：{ex.Message}");
+            // 不回显 ex.Message：它含完整路径，而 ProviderItemId 特意只记文件名就是为了不泄露用户名等个人信息。
+            return new LocalLyricsReadResult(null, "读取歌词文件失败，请检查文件是否被占用或权限是否足够。");
         }
 
         if (bytes.Length == 0)
@@ -87,7 +88,9 @@ internal static class LocalLyricsFileReader
             ".lrc" => LyricsFormat.Lrc,
             ".qrc" => LyricsFormat.Qrc,
             ".krc" => LyricsFormat.Krc,
-            ".ttml" or ".xml" => LyricsFormat.Ttml,
+            // 不收 .xml：该扩展名过于宽泛，随机 XML 会被送进原生 TTML 解析器抛异常而非得到友好提示；
+            // 实践中真正的 TTML 歌词文件都用 .ttml。
+            ".ttml" => LyricsFormat.Ttml,
             _ => LyricsFormat.Unknown
         };
 
@@ -144,23 +147,31 @@ internal static class LocalLyricsFileReader
         };
     }
 
+    /// <summary>
+    /// 判断 QRC 正文是否像 hex 密文。跳过空白字符与 <see cref="QrcDecrypter"/> 的 DecodeHex 保持一致——
+    /// 密文换行分段很常见，若因内部空白判否，密文就会被当明文原样送进解析器。
+    /// 保留这层预检是为了避免对大段明文 QRC 白做一次解密分配。
+    /// </summary>
     private static bool LooksLikeHex(string value)
     {
-        if (value.Length < 16 || value.Length % 2 != 0)
-        {
-            return false;
-        }
-
+        var hexCount = 0;
         foreach (var c in value)
         {
+            if (char.IsWhiteSpace(c))
+            {
+                continue;
+            }
+
             var isHex = c is >= '0' and <= '9' or >= 'a' and <= 'f' or >= 'A' and <= 'F';
             if (!isHex)
             {
                 return false;
             }
+
+            hexCount++;
         }
 
-        return true;
+        return hexCount >= 16 && hexCount % 2 == 0;
     }
 
     private static void EnsureCodePagesRegistered()

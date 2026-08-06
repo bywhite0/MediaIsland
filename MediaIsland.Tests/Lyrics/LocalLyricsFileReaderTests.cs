@@ -110,6 +110,20 @@ public class LocalLyricsFileReaderTests : IDisposable
         Assert.Equal("[0,1000]Hello(0,500) world(500,500)", result.Payload.Content);
     }
 
+    /// <summary>QRC 密文换行分段很常见，内部空白不应让预检把密文误判成明文。</summary>
+    [Fact]
+    public void Read_EncryptedQrcFileWithLineBreaks_IsDecrypted()
+    {
+        const string encrypted =
+            "9523D140F2F5DC811B9D5061A37442A8\n2BC5E65F361C6B30D5695555DAEB969B\n38E6B8AECDA8CB04EF8AAEB13756B3F0";
+        var path = WriteFile("song.qrc", encrypted);
+
+        var result = LocalLyricsFileReader.Read(path);
+
+        Assert.Null(result.ErrorMessage);
+        Assert.Equal("[0,1000]Hello(0,500) world(500,500)", result.Payload!.Content);
+    }
+
     [Fact]
     public void Read_KrcFile_IsDecrypted()
     {
@@ -187,6 +201,20 @@ public class LocalLyricsFileReaderTests : IDisposable
     public void Read_UnsupportedExtension_ReportsError()
     {
         var path = WriteFile("song.txt", "[00:01.00]Hello");
+
+        var result = LocalLyricsFileReader.Read(path);
+
+        Assert.Null(result.Payload);
+        Assert.NotNull(result.ErrorMessage);
+    }
+
+    /// <summary>.xml 过于宽泛：随机 XML 会让原生 TTML 解析器抛异常，收窄到 .ttml 才能给出友好提示。</summary>
+    [Fact]
+    public void Read_XmlExtension_ReportsError()
+    {
+        var path = WriteFile(
+            "song.xml",
+            """<tt xmlns="http://www.w3.org/ns/ttml"><body><div><p begin="0s" end="1s">Hi</p></div></body></tt>""");
 
         var result = LocalLyricsFileReader.Read(path);
 
