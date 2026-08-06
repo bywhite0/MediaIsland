@@ -573,6 +573,191 @@ public sealed class LyricsSearchService
         return result;
     }
 
+    private string? _lastPinError;
+
+    /// <summary>最近一次固定操作的失败原因，供设置页展示；成功时为 null。</summary>
+    public string? LastPinError => Volatile.Read(ref _lastPinError);
+
+    /// <summary>
+    /// 把当前生效的歌词固定下来。用户手动改歌词通常是因为自动匹配错了，
+    /// 因此固定条目不设过期、不参与设置指纹校验，只能由用户自己解除。
+    /// </summary>
+    public async Task<LyricsSearchResult?> PinCurrentResultAsync(
+        MediaInfo info,
+        CancellationToken cancellationToken = default)
+    {
+        Volatile.Write(ref _lastPinError, null);
+        if (_store == null || string.IsNullOrWhiteSpace(info.Title))
+        {
+            Volatile.Write(ref _lastPinError, "当前没有可固定的歌词。");
+            return null;
+        }
+
+        var current = GetCurrentResultFor(info);
+        if (current?.Payload == null)
+        {
+            Volatile.Write(ref _lastPinError, "当前歌词没有可保存的原始内容，无法固定。");
+            return null;
+        }
+
+        var entry = StoredLyrics.FromPayload(
+            current.Payload,
+            info.Title,
+            info.Artist,
+            info.AlbumTitle,
+            info.Duration,
+            ComputeSettingsFingerprint(_settingsFactory()),
+            DateTimeOffset.UtcNow);
+
+        return await SavePinAsync(info, entry, current, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 从本地文件导入并固定。文件内容复制进条目、不引用外部路径，
+    /// 用户随后删除或移动源文件都不影响歌词可用。
+    /// </summary>
+    public async Task<LyricsSearchResult?> PinFromFileAsync(
+        MediaInfo info,
+        string filePath,
+        CancellationToken cancellationToken = default)
+    {
+        Volatile.Write(ref _lastPinError, null);
+        if (_store == null || string.IsNullOrWhiteSpace(info.Title))
+        {
+            Volatile.Write(ref _lastPinError, "请先播放曲目，再导入歌词文件。");
+            return null;
+        }
+
+        var read = LocalLyricsFileReader.Read(filePath);
+        if (read.Payload == null)
+        {
+            Volatile.Write(ref _lastPinError, read.ErrorMessage ?? "无法读取该歌词文件。");
+            return null;
+        }
+
+        var entry = StoredLyrics.FromPayload(
+            read.Payload,
+            info.Title,
+            info.Artist,
+            info.AlbumTitle,
+            info.Duration,
+            ComputeSettingsFingerprint(_settingsFactory()),
+            DateTimeOffset.UtcNow);
+
+        // 解析出 0 行就拒绝写入：静默接受空歌词会让用户以为导入成功了。
+        // 校验放在这里而非 LocalLyricsFileReader，是因为只有这一层能拿到
+        // 依赖注入的完整解析器链（含静态代码调用不到的 TTML 解析器）。
+        var materialized = await MaterializeAsync(entry, info, cancellationToken).ConfigureAwait(false);
+        if (materialized == null)
+        {
+            Volatile.Write(ref _lastPinError, "该歌词文件没有解析出任何歌词行，未导入。");
+            return null;
+        }
+
+        return await SavePinAsync(info, entry, materialized, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<bool> UnpinAsync(MediaInfo info, CancellationToken cancellationToken = default)
+    {
+        if (_store == null || string.IsNullOrWhiteSpace(info.Title))
+        {
+            return false;
+        }
+
+        var trackKey = BuildTrackKey(info);
+        try
+        {
+            var removed = await _store.RemovePinAsync(trackKey, cancellationToken).ConfigureAwait(false);
+            if (removed)
+            {
+                InvalidateMemoryCacheFor(trackKey);
+            }
+
+            return removed;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "[歌词] 解除固定失败。");
+            return false;
+        }
+    }
+
+    public async Task<bool> HasPinAsync(MediaInfo info, CancellationToken cancellationToken = default)
+    {
+        if (_store == null || string.IsNullOrWhiteSpace(info.Title))
+        {
+            return false;
+        }
+
+        return await TryLoadStoredAsync(BuildTrackKey(info), isPin: true, cancellationToken)
+            .ConfigureAwait(false) != null;
+    }
+
+    public async Task ClearPersistentCacheAsync(CancellationToken cancellationToken = default)
+    {
+        if (_store == null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _store.ClearCacheAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "[歌词] 清空歌词缓存失败。");
+        }
+
+        // 清缓存必须一并清 L1，否则界面还会继续显示刚被删掉的条目。
+        _cache.Clear();
+        _candidateCache.Clear();
+    }
+
+    private async Task<LyricsSearchResult?> SavePinAsync(
+        MediaInfo info,
+        StoredLyrics entry,
+        LyricsSearchResult result,
+        CancellationToken cancellationToken)
+    {
+        var trackKey = BuildTrackKey(info);
+        try
+        {
+            await _store!.SavePinAsync(trackKey, entry, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "[歌词] 保存固定歌词失败。");
+            Volatile.Write(ref _lastPinError, "保存固定歌词失败，请检查配置目录是否可写。");
+            return null;
+        }
+
+        InvalidateMemoryCacheFor(trackKey);
+        var searchVersion = BeginExclusiveSearch(info);
+        PublishCurrentResult(result, searchVersion);
+        PublishCandidateApplied(result);
+        return result;
+    }
+
+    /// <summary>
+    /// L1 排在 pin 之前只是为了省一次磁盘读，前提是二者永不冲突。
+    /// 因此固定状态一变，该曲目的全部 L1 条目（各上下文位组合）必须立刻失效。
+    /// </summary>
+    private void InvalidateMemoryCacheFor(string trackKey)
+    {
+        foreach (var key in _cache.Keys.Where(key => key.StartsWith(trackKey, StringComparison.Ordinal)).ToArray())
+        {
+            _cache.TryRemove(key, out _);
+        }
+
+        foreach (var key in _candidateCache.Keys
+                     .Where(key => key.StartsWith(trackKey, StringComparison.Ordinal))
+                     .ToArray())
+        {
+            _candidateCache.TryRemove(key, out _);
+        }
+    }
+
     private async Task<LyricsSearchResult?> SearchOnceAsync(
         IReadOnlyList<ILyricsProvider> orderedProviders,
         MediaInfo info,
