@@ -25,7 +25,9 @@ public enum LyricsSourceId
     Kugou,
     AmllTtml,
     SPlayerNext,
-    External
+    External,
+    // 新成员必须追加在末尾：该枚举会序列化进 Settings.json，插在中间会静默改变既有配置语义。
+    LocalFile
 }
 
 public sealed record LyricsMetadata(
@@ -143,8 +145,9 @@ public sealed class LyricsSourceSettings
 
         foreach (var source in (settings.Sources ?? []).OfType<LyricsSourceEntry>())
         {
-            // SPlayer-Next 不作为可排序搜索源，由播放源检测自动接入。
-            if (source.Id == LyricsSourceId.SPlayerNext ||
+            // SPlayer-Next 由播放源检测自动接入；LocalFile 由用户导入产生。
+            // 两者都不是可排序搜索源，不进入歌词源列表。
+            if (source.Id is LyricsSourceId.SPlayerNext or LyricsSourceId.LocalFile ||
                 !Enum.IsDefined(typeof(LyricsSourceId), source.Id) ||
                 !seen.Add(source.Id))
             {

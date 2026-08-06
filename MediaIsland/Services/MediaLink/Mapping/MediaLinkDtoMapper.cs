@@ -329,6 +329,7 @@ public static class MediaLinkDtoMapper
         LyricsSourceId.AmllTtml => nameof(LyricsSourceId.AmllTtml),
         LyricsSourceId.SPlayerNext => nameof(LyricsSourceId.SPlayerNext),
         LyricsSourceId.External => nameof(LyricsSourceId.External),
+        LyricsSourceId.LocalFile => nameof(LyricsSourceId.LocalFile),
         _ => "Unknown"
     };
 
