@@ -978,8 +978,14 @@ public sealed record LyricsSearchResult(
 {
     /// <summary>
     /// 产生该结果的原始载荷，仅用于落盘缓存；外部注入与本地条目还原时为 null。
-    /// 不参与相等性比较——它是同一份歌词的另一种表示，参与比较会让缓存去重失效。
     /// </summary>
+    /// <remarks>
+    /// 注意：record 的相等性是按字段生成的，本属性的后备字段同样参与 <c>Equals</c>——
+    /// 声明在体内而非主构造函数并不能把它排除在外。这对去重无实际影响：
+    /// <see cref="LyricsDocument.Lines"/> 是 <c>List</c>，两次独立解析本就不相等，
+    /// 而 L1 命中返回的是同一实例，引用相等先短路。若将来需要真正排除，
+    /// 必须手写 <c>Equals</c> 与 <c>GetHashCode</c>。
+    /// </remarks>
     [System.Text.Json.Serialization.JsonIgnore]
     public LyricsPayload? Payload { get; init; }
 }
