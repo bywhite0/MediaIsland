@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using MediaIsland.Helpers;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Lyrics.Providers;
+using MediaIsland.Services.Lyrics.Storage;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
 
@@ -23,6 +24,7 @@ public sealed class LyricsSearchService
     private readonly IReadOnlyList<ILyricsPayloadParser> _parsers;
     private readonly Func<LyricsSourceSettings> _settingsFactory;
     private readonly ISPlayerNextLyricsClient? _sPlayerNextLyricsClient;
+    private readonly ILyricsStore? _store;
     private readonly ILogger<LyricsSearchService>? _logger;
     private readonly ConcurrentDictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, CandidateCacheEntry> _candidateCache = new(StringComparer.OrdinalIgnoreCase);
@@ -57,12 +59,28 @@ public sealed class LyricsSearchService
         Func<LyricsSourceSettings> settingsFactory,
         ILogger<LyricsSearchService>? logger = null,
         ISPlayerNextLyricsClient? sPlayerNextLyricsClient = null)
+        : this(providers, parsers, settingsFactory, logger, sPlayerNextLyricsClient, store: null)
+    {
+    }
+
+    /// <summary>
+    /// 带持久化存储的构造函数。<see cref="ILyricsStore"/> 是 internal，
+    /// 故本重载不能公开——公开构造函数的参数类型不得低于其自身可访问性。
+    /// </summary>
+    internal LyricsSearchService(
+        IEnumerable<ILyricsProvider> providers,
+        IEnumerable<ILyricsPayloadParser> parsers,
+        Func<LyricsSourceSettings> settingsFactory,
+        ILogger<LyricsSearchService>? logger,
+        ISPlayerNextLyricsClient? sPlayerNextLyricsClient,
+        ILyricsStore? store)
     {
         _providers = providers.ToArray();
         _parsers = parsers.ToArray();
         _settingsFactory = settingsFactory;
         _logger = logger;
         _sPlayerNextLyricsClient = sPlayerNextLyricsClient;
+        _store = store;
     }
 
     public async Task<LyricsSearchResult?> SearchAsync(
@@ -167,7 +185,8 @@ public sealed class LyricsSearchService
     {
         try
         {
-            // 播放源为 SPlayer-Next 且外部 API 有歌词时，跳过全部在线搜索。
+            // 实时来源优先：SPlayer-Next 直连给出的是播放器此刻正在放的那份歌词，
+            // 权威性高于本机对这首歌的历史判断（pin 与缓存）。
             if (_sPlayerNextLyricsClient != null && SPlayerNextMediaSource.Matches(info.SourceApp))
             {
                 var direct = await _sPlayerNextLyricsClient
@@ -175,6 +194,7 @@ public sealed class LyricsSearchService
                     .ConfigureAwait(false);
                 if (direct != null)
                 {
+                    // 只写 L1：该歌词跟随 SPlayer-Next 的曲库，落盘后会在换源时变成静默错数据。
                     Cache(cacheKey, direct);
                     PublishCurrentResult(direct, searchVersion);
                     return direct;
@@ -195,10 +215,51 @@ public sealed class LyricsSearchService
                     info.Artist);
             }
 
+            // 来源级门禁：关闭歌词搜索意味着「这个来源不要本机解析的歌词」，
+            // pin 与落盘缓存同样是本机解析的产物，必须一并跳过。
+            // 若把 pin 放在门禁之前，用户为 VLC 关掉歌词后播放已 pin 曲目的 MV 会突然冒出歌词。
             if (!allowProviderSearch)
             {
-                _logger?.LogInformation("[歌词] 已禁用歌词搜索，跳过在线来源。");
+                _logger?.LogInformation("[歌词] 已禁用歌词搜索，跳过本机歌词解析。");
                 return null;
+            }
+
+            var trackKey = BuildTrackKey(info);
+            var fingerprint = ComputeSettingsFingerprint(settings);
+
+            var pinned = await TryLoadStoredAsync(trackKey, isPin: true, cancellationToken).ConfigureAwait(false);
+            if (pinned != null)
+            {
+                var pinnedResult = await MaterializeAsync(pinned, info, cancellationToken).ConfigureAwait(false);
+                if (pinnedResult != null)
+                {
+                    _logger?.LogInformation("[歌词] 使用已固定的歌词：{Title} - {Artist}", info.Title, info.Artist);
+                    Cache(cacheKey, pinnedResult);
+                    PublishCurrentResult(pinnedResult, searchVersion);
+                    return pinnedResult;
+                }
+            }
+
+            var cached = await TryLoadStoredAsync(trackKey, isPin: false, cancellationToken).ConfigureAwait(false);
+            LyricsSearchResult? staleFallback = null;
+            if (cached != null)
+            {
+                var cachedResult = await MaterializeAsync(cached, info, cancellationToken).ConfigureAwait(false);
+                if (cachedResult != null)
+                {
+                    if (string.Equals(cached.SettingsFingerprint, fingerprint, StringComparison.Ordinal))
+                    {
+                        _logger?.LogInformation("[歌词] 命中本地歌词缓存：{Title} - {Artist}", info.Title, info.Artist);
+                        Cache(cacheKey, cachedResult);
+                        PublishCurrentResult(cachedResult, searchVersion);
+                        TouchStoreInBackground(trackKey);
+                        return cachedResult;
+                    }
+
+                    // 指纹不匹配只说明「重搜可能更合适」，不代表旧歌词无效。
+                    // 先重搜，失败再回落——界面突然变空比歌词不合最新偏好糟糕得多。
+                    staleFallback = cachedResult;
+                }
             }
 
             var orderedProviders = settings.Sources
@@ -211,7 +272,7 @@ public sealed class LyricsSearchService
             if (orderedProviders.Length == 0)
             {
                 _logger?.LogInformation("[歌词] 没有启用的歌词来源。");
-                return null;
+                return PublishFallback(staleFallback, cacheKey, searchVersion);
             }
 
             var result = await SearchOnceAsync(orderedProviders, info, settings, cancellationToken);
@@ -219,11 +280,12 @@ public sealed class LyricsSearchService
             {
                 Cache(cacheKey, result);
                 PublishCurrentResult(result, searchVersion);
+                SaveToStoreInBackground(trackKey, result, info, fingerprint);
                 return result;
             }
 
             _logger?.LogInformation("[歌词] 未找到歌词：{Title} - {Artist}", info.Title, info.Artist);
-            return null;
+            return PublishFallback(staleFallback, cacheKey, searchVersion);
         }
         catch (OperationCanceledException)
         {
@@ -236,6 +298,158 @@ public sealed class LyricsSearchService
             return null;
         }
     }
+
+    private LyricsSearchResult? PublishFallback(
+        LyricsSearchResult? fallback,
+        string cacheKey,
+        long searchVersion)
+    {
+        if (fallback == null)
+        {
+            return null;
+        }
+
+        _logger?.LogInformation("[歌词] 重新搜索未果，回落到设置变更前的缓存歌词。");
+        Cache(cacheKey, fallback);
+        PublishCurrentResult(fallback, searchVersion);
+        return fallback;
+    }
+
+    /// <summary>持久化是纯优化：任何读取失败都当作未命中，绝不影响歌词显示。</summary>
+    private async Task<StoredLyrics?> TryLoadStoredAsync(
+        string trackKey,
+        bool isPin,
+        CancellationToken cancellationToken)
+    {
+        if (_store == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return isPin
+                ? await _store.TryGetPinAsync(trackKey, cancellationToken).ConfigureAwait(false)
+                : await _store.TryGetCacheAsync(trackKey, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "[歌词] 读取本地歌词条目失败，按未命中处理。");
+            return null;
+        }
+    }
+
+    /// <summary>把落盘的原始 payload 交给现有解析器还原成结果。</summary>
+    private async Task<LyricsSearchResult?> MaterializeAsync(
+        StoredLyrics stored,
+        MediaInfo info,
+        CancellationToken cancellationToken)
+    {
+        var payload = stored.ToPayload();
+        var parser = _parsers.FirstOrDefault(item => item.CanParse(payload.Format));
+        if (parser == null)
+        {
+            _logger?.LogWarning("[歌词] 没有适用于格式 {Format} 的解析器，跳过本地条目。", payload.Format);
+            return null;
+        }
+
+        LyricsDocument document;
+        try
+        {
+            document = await parser.ParseAsync(payload, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "[歌词] 解析本地歌词条目失败。");
+            return null;
+        }
+
+        if (document.Lines.Count == 0)
+        {
+            return null;
+        }
+
+        return new LyricsSearchResult(
+            document,
+            document.ProviderItemId,
+            stored.Title ?? info.Title ?? string.Empty,
+            stored.Artist ?? info.Artist ?? string.Empty,
+            TimeSpan.FromMilliseconds(stored.DurationMs),
+            null,
+            document.Source);
+    }
+
+    /// <summary>
+    /// 落盘 fire-and-forget：写入失败只记日志，绝不阻塞或影响歌词显示。
+    /// 只有通用在线 provider 的结果才落盘——SPlayer-Next 跟随播放器曲库、
+    /// External 是别的机器的当前状态、LocalFile 本就不经由搜索路径产生。
+    /// </summary>
+    private void SaveToStoreInBackground(
+        string trackKey,
+        LyricsSearchResult result,
+        MediaInfo info,
+        string fingerprint)
+    {
+        if (_store == null || !IsCacheableSource(result.Source) || result.Payload == null)
+        {
+            return;
+        }
+
+        var entry = StoredLyrics.FromPayload(
+            result.Payload,
+            info.Title,
+            info.Artist,
+            info.AlbumTitle,
+            info.Duration,
+            fingerprint,
+            DateTimeOffset.UtcNow);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _store.SaveCacheAsync(trackKey, entry, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[歌词] 写入本地歌词缓存失败。");
+            }
+        });
+    }
+
+    private void TouchStoreInBackground(string trackKey)
+    {
+        if (_store == null)
+        {
+            return;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _store.TouchAsync(trackKey, DateTimeOffset.UtcNow, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "[歌词] 更新歌词缓存使用时间失败。");
+            }
+        });
+    }
+
+    internal static bool IsCacheableSource(LyricsSourceId source) =>
+        source is LyricsSourceId.Netease
+            or LyricsSourceId.QqMusic
+            or LyricsSourceId.Kugou
+            or LyricsSourceId.AmllTtml;
 
     private long BeginExclusiveSearch(MediaInfo info)
     {
@@ -619,7 +833,10 @@ public sealed class LyricsSearchService
                 candidate.Artist,
                 candidate.Duration,
                 candidate.Score,
-                document.Source);
+                document.Source)
+            {
+                Payload = payload
+            };
         }
 
         return null;
@@ -645,13 +862,27 @@ public sealed class LyricsSearchService
                 line.Text.Contains(placeholder, StringComparison.Ordinal)));
     }
 
+    /// <summary>
+    /// 计算搜索偏好指纹，用于判断落盘条目是否产自当前设置。
+    /// </summary>
+    /// <remarks>
+    /// 先规范化再计算：服务始终在规范化后的设置上搜索，而调用方（如落盘时的元信息组装）
+    /// 手上可能是尚未补齐默认源的原始设置。若两者算出不同指纹，整库缓存会被静默判为过期。
+    /// 用 <c>Clone</c> 是因为 <see cref="LyricsSourceSettings.Normalize"/> 会就地修改入参。
+    /// </remarks>
+    internal static string ComputeSettingsFingerprint(LyricsSourceSettings settings)
+    {
+        var normalized = LyricsSourceSettings.Normalize(settings.Clone());
+        return string.Join(
+            "|",
+            normalized.Sources.Select(source => $"{source.Id}:{source.IsEnabled}:{source.UseWordSyncedLyrics}"))
+            + "|" + normalized.AmllApiBaseUrl
+            + "|" + normalized.SPlayerNextApiBaseUrl;
+    }
+
     private void EnsureCacheFingerprint(LyricsSourceSettings settings)
     {
-        var fingerprint = string.Join(
-            "|",
-            settings.Sources.Select(source => $"{source.Id}:{source.IsEnabled}:{source.UseWordSyncedLyrics}"))
-            + "|" + settings.AmllApiBaseUrl
-            + "|" + settings.SPlayerNextApiBaseUrl;
+        var fingerprint = ComputeSettingsFingerprint(settings);
         if (!string.Equals(fingerprint, _settingsFingerprint, StringComparison.Ordinal))
         {
             _cache.Clear();
@@ -743,7 +974,15 @@ public sealed record LyricsSearchResult(
     TimeSpan Duration,
     int? Score,
     LyricsSourceId Source,
-    LyricsSourceId? OriginSource = null);
+    LyricsSourceId? OriginSource = null)
+{
+    /// <summary>
+    /// 产生该结果的原始载荷，仅用于落盘缓存；外部注入与本地条目还原时为 null。
+    /// 不参与相等性比较——它是同一份歌词的另一种表示，参与比较会让缓存去重失效。
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public LyricsPayload? Payload { get; init; }
+}
 
 public sealed class LyricsSearchResultChangedEventArgs(LyricsSearchResult? result) : EventArgs
 {
