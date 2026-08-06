@@ -232,4 +232,25 @@ public class LyricsFileStoreTests : IDisposable
         Assert.Null(await store.TryGetCacheAsync("key-1", CancellationToken.None));
         Assert.Empty(await store.ListAsync(CancellationToken.None));
     }
+
+    /// <summary>
+    /// 取消同样不得抛出：缓存是纯优化，切歌触发的取消不应变成调用方的故障。
+    /// </summary>
+    [Fact]
+    public async Task AllOperations_WithCancelledToken_DegradeSilently()
+    {
+        var store = CreateStore();
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var entry = CreateEntry();
+
+        Assert.Null(await Record.ExceptionAsync(() => store.SaveCacheAsync("k", entry, cts.Token)));
+        Assert.Null(await Record.ExceptionAsync(() => store.SavePinAsync("k", entry, cts.Token)));
+        Assert.Null(await Record.ExceptionAsync(() => store.TryGetCacheAsync("k", cts.Token)));
+        Assert.Null(await Record.ExceptionAsync(() => store.TryGetPinAsync("k", cts.Token)));
+        Assert.Null(await Record.ExceptionAsync(() => store.RemovePinAsync("k", cts.Token)));
+        Assert.Null(await Record.ExceptionAsync(() => store.ClearCacheAsync(cts.Token)));
+        Assert.Null(await Record.ExceptionAsync(() => store.TouchAsync("k", DateTimeOffset.UtcNow, cts.Token)));
+        Assert.Null(await Record.ExceptionAsync(() => store.ListAsync(cts.Token)));
+    }
 }

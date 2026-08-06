@@ -71,27 +71,35 @@ internal sealed class LyricsFileStore : ILyricsStore
             return false;
         }
 
-        var gate = GetKeyLock(key);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (!File.Exists(path))
+            var gate = GetKeyLock(key);
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
+                if (!File.Exists(path))
+                {
+                    return false;
+                }
+
+                File.Delete(path);
+                await RemoveFromIndexAsync(key, cancellationToken).ConfigureAwait(false);
+                return true;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger?.LogWarning(ex, "[歌词] 解除固定失败：{Key}", key);
                 return false;
             }
-
-            File.Delete(path);
-            await RemoveFromIndexAsync(key, cancellationToken).ConfigureAwait(false);
-            return true;
+            finally
+            {
+                gate.Release();
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (OperationCanceledException)
         {
-            _logger?.LogWarning(ex, "[歌词] 解除固定失败：{Key}", key);
+            // 取消不抛出，退化为「未解除」。
             return false;
-        }
-        finally
-        {
-            gate.Release();
         }
     }
 
@@ -127,6 +135,10 @@ internal sealed class LyricsFileStore : ILyricsStore
                 _indexLock.Release();
             }
         }
+        catch (OperationCanceledException)
+        {
+            // 取消不抛出，退化为 no-op。
+        }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             _logger?.LogWarning(ex, "[歌词] 清空歌词缓存失败。");
@@ -140,25 +152,32 @@ internal sealed class LyricsFileStore : ILyricsStore
             return;
         }
 
-        await _indexLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var index = await LoadIndexNoLockAsync(cancellationToken).ConfigureAwait(false);
-            if (!index.TryGetValue(key, out var entry))
+            await _indexLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                return;
-            }
+                var index = await LoadIndexNoLockAsync(cancellationToken).ConfigureAwait(false);
+                if (!index.TryGetValue(key, out var entry))
+                {
+                    return;
+                }
 
-            index[key] = entry with { LastUsedAtUtc = nowUtc };
-            await WriteIndexNoLockAsync(index, cancellationToken).ConfigureAwait(false);
+                index[key] = entry with { LastUsedAtUtc = nowUtc };
+                await WriteIndexNoLockAsync(index, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger?.LogDebug(ex, "[歌词] 更新最后使用时间失败：{Key}", key);
+            }
+            finally
+            {
+                _indexLock.Release();
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (OperationCanceledException)
         {
-            _logger?.LogDebug(ex, "[歌词] 更新最后使用时间失败：{Key}", key);
-        }
-        finally
-        {
-            _indexLock.Release();
+            // 取消不抛出，退化为 no-op。
         }
     }
 
@@ -169,20 +188,28 @@ internal sealed class LyricsFileStore : ILyricsStore
             return [];
         }
 
-        await _indexLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var index = await LoadIndexNoLockAsync(cancellationToken).ConfigureAwait(false);
-            return index.Values.ToArray();
+            await _indexLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var index = await LoadIndexNoLockAsync(cancellationToken).ConfigureAwait(false);
+                return index.Values.ToArray();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger?.LogWarning(ex, "[歌词] 读取歌词索引失败。");
+                return [];
+            }
+            finally
+            {
+                _indexLock.Release();
+            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (OperationCanceledException)
         {
-            _logger?.LogWarning(ex, "[歌词] 读取歌词索引失败。");
+            // 取消不抛出，退化为空列表。
             return [];
-        }
-        finally
-        {
-            _indexLock.Release();
         }
     }
 
@@ -211,6 +238,11 @@ internal sealed class LyricsFileStore : ILyricsStore
                 .DeserializeAsync<StoredLyrics>(stream, JsonOptions, cancellationToken)
                 .ConfigureAwait(false);
         }
+        catch (OperationCanceledException)
+        {
+            // 取消不算损坏，退化为未命中，且不删除文件。
+            return null;
+        }
         catch (JsonException ex)
         {
             // 损坏条目当未命中，并顺手删除，避免每次播放都重复失败。
@@ -237,26 +269,33 @@ internal sealed class LyricsFileStore : ILyricsStore
             return;
         }
 
-        var gate = GetKeyLock(key);
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await WriteAtomicAsync(path, entry, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            _logger?.LogWarning(ex, "[歌词] 写入歌词条目失败：{Path}", path);
-            return;
-        }
-        finally
-        {
-            gate.Release();
-        }
+            var gate = GetKeyLock(key);
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await WriteAtomicAsync(path, entry, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _logger?.LogWarning(ex, "[歌词] 写入歌词条目失败：{Path}", path);
+                return;
+            }
+            finally
+            {
+                gate.Release();
+            }
 
-        await UpsertIndexAsync(key, entry, isPinned, cancellationToken).ConfigureAwait(false);
-        if (!isPinned)
+            await UpsertIndexAsync(key, entry, isPinned, cancellationToken).ConfigureAwait(false);
+            if (!isPinned)
+            {
+                await TrimCacheAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
         {
-            await TrimCacheAsync(cancellationToken).ConfigureAwait(false);
+            // 取消不抛出，退化为 no-op。写入被取消时最坏是这一条没落盘，缓存本就是纯优化。
         }
     }
 

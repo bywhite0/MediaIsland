@@ -5,6 +5,7 @@ namespace MediaIsland.Services.Lyrics.Storage;
 /// </summary>
 /// <remarks>
 /// 所有方法都不得抛出：持久化是纯优化，其失败模式必须是「退化成没有缓存的行为」。
+/// 取消同样不抛出，而是退化为 no-op：读方法返回 null 或空集合，写方法直接返回。
 /// </remarks>
 internal interface ILyricsStore
 {
