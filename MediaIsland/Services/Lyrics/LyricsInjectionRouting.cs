@@ -1,6 +1,7 @@
+
 using MediaIsland.Services.Lyrics.Models;
 
-namespace MediaIsland.Components;
+namespace MediaIsland.Services.Lyrics;
 
 /// <summary>
 /// 判断一份歌词是否应当「直接套用」——即跳过本机搜索流程，原样呈现。

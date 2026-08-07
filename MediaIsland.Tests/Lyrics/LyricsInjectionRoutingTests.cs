@@ -1,4 +1,4 @@
-using MediaIsland.Components;
+using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using Xunit;
 
