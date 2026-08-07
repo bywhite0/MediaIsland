@@ -372,6 +372,10 @@ public sealed class LyricsSearchService
             return null;
         }
 
+        // 此处刻意不调用 IsInstrumentalPlaceholder：在线路径挡占位歌词是为了让搜索继续尝试下一个源，
+        // 而落盘条目没有「下一个源」可试。pin 的占位歌词是用户拿着文件明确选定的结果，
+        // 挡掉等于替用户否决其选择，且界面无从显示否决原因。占位歌词也进不了缓存分支——
+        // 在线路径已在写入前滤除，故缓存里不存在这种条目。
         if (document.Lines.Count == 0)
         {
             return null;
