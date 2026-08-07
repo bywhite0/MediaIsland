@@ -9,6 +9,7 @@ using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Storage;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Lyrics.Native;
 using MediaIsland.Services.Lyrics.Parsers;
@@ -49,12 +50,17 @@ namespace MediaIsland
             services.AddSingleton<ISPlayerNextLyricsClient, SPlayerNextLyricsClient>();
             services.AddSingleton<ILyricsPayloadParser, ManagedLyricsPayloadParser>();
             services.AddSingleton<ILyricsPayloadParser, TtmlLyricsPayloadParser>();
+            // 落盘根目录懒创建：插件加载时不碰磁盘，首次写入歌词才建目录。
+            services.AddSingleton<ILyricsStore>(provider => new LyricsFileStore(
+                Path.Combine(PluginConfigFolder, "Lyrics"),
+                provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsFileStore>>()));
             services.AddSingleton<LyricsSearchService>(provider => new LyricsSearchService(
                 provider.GetServices<ILyricsProvider>(),
                 provider.GetServices<ILyricsPayloadParser>(),
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings.Lyrics,
                 provider.GetService<Microsoft.Extensions.Logging.ILogger<LyricsSearchService>>(),
-                provider.GetRequiredService<ISPlayerNextLyricsClient>()));
+                provider.GetRequiredService<ISPlayerNextLyricsClient>(),
+                provider.GetRequiredService<ILyricsStore>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddSingleton<MediaLinkInjectionStore>();
             services.AddSingleton<MediaSourceCoordinator>(provider => new MediaSourceCoordinator(
