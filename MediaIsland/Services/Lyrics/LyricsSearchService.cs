@@ -682,15 +682,24 @@ public sealed class LyricsSearchService
         }
     }
 
-    public async Task<bool> HasPinAsync(MediaInfo info, CancellationToken cancellationToken = default)
+    public async Task<bool> HasPinAsync(MediaInfo info, CancellationToken cancellationToken = default) =>
+        await GetPinAsync(info, cancellationToken).ConfigureAwait(false) != null;
+
+    /// <summary>
+    /// 取当前曲目的固定条目。设置页要展示「固定于哪天、来自哪个源」，
+    /// 只返回布尔值会逼调用方拿当前时间充数，显示出与事实不符的日期。
+    /// </summary>
+    internal async Task<StoredLyrics?> GetPinAsync(
+        MediaInfo info,
+        CancellationToken cancellationToken = default)
     {
         if (_store == null || string.IsNullOrWhiteSpace(info.Title))
         {
-            return false;
+            return null;
         }
 
         return await TryLoadStoredAsync(BuildTrackKey(info), isPin: true, cancellationToken)
-            .ConfigureAwait(false) != null;
+            .ConfigureAwait(false);
     }
 
     public async Task ClearPersistentCacheAsync(CancellationToken cancellationToken = default)

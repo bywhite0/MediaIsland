@@ -67,6 +67,7 @@ namespace MediaIsland.SettingsPages
         private string _sPlayerNextConnectionStatus = "默认 http://127.0.0.1:14558；播放源为 SPlayer-Next 时优先使用其外部 API 歌词。";
         private string _currentLyricsSourceDisplay = "当前使用：暂无";
         private string _currentLyricsCandidatesStatus = "播放媒体后将在此处显示已启用歌词源的搜索候选。";
+        private string _currentLyricsPinStatus = "播放媒体后将在此处显示固定状态。";
         private CancellationTokenSource? _lyricsCandidatesCancellation;
         private CancellationTokenSource? _lyricsCandidateApplyCancellation;
         private long _lyricsCandidatesSearchVersion;
@@ -214,6 +215,12 @@ namespace MediaIsland.SettingsPages
         {
             get => _currentLyricsCandidatesStatus;
             private set => SetProperty(ref _currentLyricsCandidatesStatus, value);
+        }
+
+        public string CurrentLyricsPinStatus
+        {
+            get => _currentLyricsPinStatus;
+            private set => SetProperty(ref _currentLyricsPinStatus, value);
         }
 
         public string MediaLinkStatusText
@@ -436,6 +443,8 @@ namespace MediaIsland.SettingsPages
 
         private async Task RefreshLyricsCandidatesAsync(MediaInfo? info)
         {
+            _ = RefreshLyricsPinStatusAsync(info);
+
             var searchVersion = Interlocked.Increment(ref _lyricsCandidatesSearchVersion);
             CancelLyricsCandidateSearch();
 
@@ -584,6 +593,132 @@ namespace MediaIsland.SettingsPages
                     cancellation.Dispose();
                 }
             }
+        }
+
+        private async void PinCurrentLyricsOnClick(object? sender, RoutedEventArgs e)
+        {
+            if (_mediaService.CurrentMediaInfo is not { } mediaInfo)
+            {
+                return;
+            }
+
+            CurrentLyricsPinStatus = "正在固定当前歌词...";
+            var pinned = await _lyricsSearchService.PinCurrentResultAsync(mediaInfo);
+            if (_isDetached)
+            {
+                return;
+            }
+
+            if (pinned == null)
+            {
+                CurrentLyricsPinStatus = _lyricsSearchService.LastPinError ?? "固定失败：当前没有可固定的歌词。";
+                return;
+            }
+
+            await RefreshLyricsPinStatusAsync(mediaInfo);
+        }
+
+        private async void ImportLyricsFileOnClick(object? sender, RoutedEventArgs e)
+        {
+            if (_mediaService.CurrentMediaInfo is not { } mediaInfo ||
+                TopLevel.GetTopLevel(this) is not { } topLevel)
+            {
+                return;
+            }
+
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择歌词文件",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("歌词文件")
+                    {
+                        Patterns = ["*.lrc", "*.qrc", "*.krc", "*.ttml"]
+                    }
+                ]
+            });
+
+            var filePath = files.FirstOrDefault()?.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(filePath))
+            {
+                return;
+            }
+
+            CurrentLyricsPinStatus = "正在导入歌词文件...";
+            var imported = await _lyricsSearchService.PinFromFileAsync(mediaInfo, filePath);
+            if (_isDetached)
+            {
+                return;
+            }
+
+            if (imported == null)
+            {
+                CurrentLyricsPinStatus = _lyricsSearchService.LastPinError ?? "导入失败：无法解析所选歌词文件。";
+                return;
+            }
+
+            await RefreshLyricsPinStatusAsync(mediaInfo);
+        }
+
+        private async void UnpinLyricsOnClick(object? sender, RoutedEventArgs e)
+        {
+            if (_mediaService.CurrentMediaInfo is not { } mediaInfo)
+            {
+                return;
+            }
+
+            var removed = await _lyricsSearchService.UnpinAsync(mediaInfo);
+            if (_isDetached)
+            {
+                return;
+            }
+
+            if (!removed)
+            {
+                CurrentLyricsPinStatus = "当前曲目没有固定的歌词。";
+                return;
+            }
+
+            await RefreshLyricsPinStatusAsync(mediaInfo);
+        }
+
+        private async void ClearLyricsCacheOnClick(object? sender, RoutedEventArgs e)
+        {
+            await _lyricsSearchService.ClearPersistentCacheAsync();
+            if (_isDetached)
+            {
+                return;
+            }
+
+            // 固定歌词不受清空缓存影响，说明这点免得用户以为固定也被清了。
+            CurrentLyricsPinStatus = "已清空歌词缓存（固定的歌词保留）。";
+        }
+
+        private async Task RefreshLyricsPinStatusAsync(MediaInfo? mediaInfo)
+        {
+            if (mediaInfo is not { } info || string.IsNullOrWhiteSpace(info.Title))
+            {
+                CurrentLyricsPinStatus = "播放媒体后将在此处显示固定状态。";
+                return;
+            }
+
+            var pin = await _lyricsSearchService.GetPinAsync(info);
+            if (_isDetached)
+            {
+                return;
+            }
+
+            var isSearchDisabled =
+                !MediaSourceFilter.IsLyricsSearchEnabled(info.SourceApp, Settings.MediaSourceList) &&
+                !SPlayerNextMediaSource.Matches(info.SourceApp);
+
+            CurrentLyricsPinStatus = LyricsPinStatusText.Describe(
+                pin != null,
+                pin?.Source.ToString(),
+                pin?.SavedAtUtc,
+                SPlayerNextMediaSource.Matches(info.SourceApp),
+                isSearchDisabled);
         }
 
         private void CancelLyricsCandidateSearch()

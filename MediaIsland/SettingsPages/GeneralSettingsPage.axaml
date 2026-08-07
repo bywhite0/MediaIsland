@@ -279,6 +279,26 @@
                     <TextBlock Text="{Binding SPlayerNextConnectionStatus}"
                                TextWrapping="Wrap" />
                     <Grid Margin="0,8,0,0" ColumnDefinitions="*,Auto">
+                        <TextBlock Text="固定歌词"
+                                   FontWeight="Medium"
+                                   VerticalAlignment="Center" />
+                        <StackPanel Grid.Column="1"
+                                    Orientation="Horizontal"
+                                    Spacing="4">
+                            <Button Content="固定当前"
+                                    Click="PinCurrentLyricsOnClick" />
+                            <Button Content="导入文件"
+                                    Click="ImportLyricsFileOnClick" />
+                            <Button Content="解除固定"
+                                    Click="UnpinLyricsOnClick" />
+                            <Button Content="清空缓存"
+                                    Click="ClearLyricsCacheOnClick" />
+                        </StackPanel>
+                    </Grid>
+                    <TextBlock Text="{Binding CurrentLyricsPinStatus}"
+                               FontSize="12"
+                               TextWrapping="Wrap" />
+                    <Grid Margin="0,8,0,0" ColumnDefinitions="*,Auto">
                         <TextBlock Text="当前歌词候选"
                                    FontWeight="Medium"
                                    VerticalAlignment="Center" />
