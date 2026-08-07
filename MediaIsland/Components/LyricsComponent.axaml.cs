@@ -581,8 +581,9 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
-        if (_effectiveSource?.IsExternalMediaEffective == true ||
-            e.Result?.Source == LyricsSourceId.External)
+        if (LyricsInjectionRouting.ShouldApplyDirectly(
+                _effectiveSource?.IsExternalMediaEffective == true,
+                e.Result?.Source))
         {
             ApplyExternalLyrics(e.Result);
         }
