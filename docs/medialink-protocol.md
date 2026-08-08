@@ -113,8 +113,13 @@ MediaLink 是 ClassIsland 媒体信息插件提供的本地 WebSocket 推送服�
 |------|------|
 | `media` | 媒体信息变更事件 |
 | `lyrics` | 歌词搜索结果事件 |
+| `audio` | PCM 音频帧（二进制，见「音频」一节） |
 
 服务端响应 `subscribe_ok`，随后推送快照（当前状态）和增量事件。
+
+> `subscribe` 的语义是**整体替换**而非追加：服务端以本次请求的 `channels` 取代原有订阅集合。
+> 因此追加一个频道时必须把已订阅的频道一并带上，只发新增的那一个会把其余频道顶掉。
+> 需要精确移除某个频道时用 `unsubscribe`。
 
 #### `unsubscribe`（客户端→服务端）
 
@@ -259,7 +264,9 @@ function positionNow(p, recvAt) {
   "payload": {
     "protocolVersion": 1,
     "authRequired": true,
-    "sessionEpoch": 3
+    "sessionEpoch": 3,
+    "capabilities": ["audio"],
+    "audio": { "sampleRate": 48000, "channels": 2, "format": "s16le" }
   }
 }
 ```
@@ -269,8 +276,21 @@ function positionNow(p, recvAt) {
 | `protocolVersion` | int | 服务端协议版本 |
 | `authRequired` | bool | 是否需要认证 |
 | `sessionEpoch` | long | 监听器实例代号，进程内单调递增 |
+| `capabilities` | string[]? | 服务端支持的可选能力；缺失表示只支持基础频道 |
+| `audio` | object? | 音频线格式；`capabilities` 含 `audio` 时存在 |
 
 `sessionEpoch` 用于识别服务端重启：`seq` 在监听器重建后从 0 重新开始，客户端若一律「丢弃 seq ≤ 已处理值」会永久停止更新。正确做法是**发现 `sessionEpoch` 变化时重置已处理的 seq 水位**。
+
+#### 消费 capabilities
+
+`server.hello` 并非只在握手时出现一次：**同一条连接存活期间服务端可能再次发送**，
+用于重新声明当前状态。每条 hello 都是一份完整声明，客户端应**以最新一条为准**
+覆盖已记录的能力，而不是只在握手时记一次——否则中途的能力变化无从察觉。
+
+缺 `capabilities` 字段的旧服务端应按空集合处理，即「不支持任何可选能力」。
+
+> 订阅 `audio` 前应先检查 `capabilities` 是否含 `"audio"`。旧版服务端不认识该频道，
+> 会以 `bad_request` 拒绝整个 `subscribe` 请求——包括其中的 `media` 与 `lyrics`。
 
 ## 控制指令（Phase 2）
 
@@ -283,6 +303,7 @@ function positionNow(p, recvAt) {
 | `media.clear_inject` | 清除注入 |
 | `playback.command` | 播放控制（play / pause / next / previous） |
 | `thumbnail.get` | 取当前封面（见「封面」一节） |
+| `audio.play_start` / `audio.play_stop` | 音频采集开关（见「音频」一节） |
 
 详见源码 `MediaLinkSession.cs` 中的 `HandleMediaInjectAsync` 等方法。
 
@@ -351,6 +372,114 @@ MediaIsland 自带客户端实现，可直接消费另一台实例的推送：�
 歌词的 `source` 字段在转发时保留其**最初来源**（如 `QqMusic`）而非转发通道，
 故多跳转发后仍能看出歌词实际来自哪里。
 
+
+## 音频
+
+音频帧不走 JSON 信封，使用 WebSocket **二进制帧**。一帧 20ms 的 PCM 约 3840 字节，
+base64 进 JSON 会膨胀三分之一，且每帧都要过一遍序列化器。
+
+订阅 `audio` 频道后开始接收。格式由 `server.hello` 的 `audio` 字段声明，当前恒为
+48000Hz / 2 声道 / i16 小端交错。
+
+### 帧长约定
+
+第 1 期约定每帧 **20ms**：48000Hz × 2 声道 × i16 → PCM 部分 **3840 字节**。
+
+这是**约定，不是协议强制**。帧头不携带时长字段，`server.hello` 的 `audio` 声明也只有
+`sampleRate` / `channels` / `format`，因此帧长无法从协议本身推导。接收端**不应假设固定帧长**，
+应按实际收到的 PCM 字节数计算本帧时长：
+
+```
+帧时长(ms) = PCM 字节数 / (sampleRate × channels × 每样本字节数) × 1000
+```
+
+把 20ms 写死在接收端，采集侧一旦改帧长，缓冲时长会静默漂移而不报错。
+下文「8 帧约 160ms」等时长换算都建立在这条约定之上。
+
+### 订阅 audio
+
+`subscribe` 是整体替换语义（见「订阅」一节），所以订阅音频时必须**一次带上全部需要的频道**：
+
+```json
+{"channels": ["media", "lyrics", "audio"]}
+```
+
+只发 `["audio"]` 会把 `media` 与 `lyrics` 顶掉。
+
+> 这条面向**自行实现音频订阅的客户端**。MediaIsland 自带的实例间消费客户端在第 1 期
+> 并不订阅 `audio`，订阅音频是第 3 期才引入的行为。
+
+### 帧格式
+
+定长头 34 字节，之后是变长 `trackToken` 与裸 PCM，全部小端：
+
+```
+偏移  长度  字段
+0     2    magic = 0xA1 0x01
+2     1    version = 1
+3     1    flags              bit0: 静音帧  bit1: 曲目首帧
+4     8    startPositionMs    i64  本块首采样对应的曲目位置
+12    8    capturedAtMs       i64  采样时刻（发送端时钟）
+20    8    serverTimeMs       i64  发送时刻（发送端时钟）
+28    4    seq                u32  音频帧独立序号
+32    2    trackTokenLen      u16  UTF-8 字节数
+34    N    trackToken         UTF-8
+34+N  ...  PCM                i16 交错
+```
+
+`trackToken` 变长置于末尾，使头部定长部分可按固定偏移读取。
+
+magic 或 `version` 不匹配、长度不足头部要求时，接收端**丢弃该帧但不断开连接**——未知 magic
+可能是未来版本的其他二进制帧类型，按「必须容忍未知」原则处理。
+
+### 三个时间戳
+
+- `startPositionMs` — 曲目轴上的位置，用于把音频与歌词对齐。
+- `capturedAtMs` / `serverTimeMs` — 同一时钟内求差的一对值，用法与 §进度插值
+  完全相同：`(serverTimeMs - capturedAtMs) + (本地当前时刻 - 本地收帧时刻)` 即
+  该帧的总延迟。**不要**拿 `serverTimeMs` 与本地时钟直接相减。
+
+`seq` 独立于 JSON 事件的 `seq`，因两者队列独立、丢弃策略不同。
+
+### trackToken 校验
+
+与歌词同理：帧的 `trackToken` 与当前曲目不符时应丢弃，避免切歌后把上一首的音频
+配到新曲目上。
+
+### 控制指令
+
+| 类型 | 说明 |
+|------|------|
+| `audio.play_start` | 请求开始推送音频 |
+| `audio.play_stop` | 停止推送 |
+
+均需先认证。服务端回 `ok`，携带相同的 `id`，`payload.for` 为原请求的 `type`。
+
+两者只表达**采集意愿**，不改变订阅状态——订阅仍由 `subscribe` / `unsubscribe` 管理。
+无订阅者时服务端不进行音频采集，因此必须显式发送 `audio.play_start`。
+
+> 第 1 期只冻结协议表面，**采集尚未接入**：`audio.play_start` 会正常返回 `ok`，
+> 但在采集实现（第 2 期）落地前不会有音频帧推出。入站音频帧同样会被正常解码后丢弃。
+> 客户端可据此实现并联调协议，但不要期待第 1 期服务端产生音频。
+
+### 注入（转发链路）
+
+音频的注入**没有独立消息类型**。一条连接上入站的音频二进制帧即是注入，格式与推送
+完全相同——方向已由「谁发的」确定，无需再用类型字段区分。这与 `media.inject` /
+`lyrics.inject` 需要独立类型不同：那两者的入站与出站载荷形状本就不一样。
+
+转发时**原样透传**帧，不重组、不改写时间戳。`media.inject` 需要 `positionAgeMs`
+来补偿每一跳的耗时，音频帧则因头部自带 `capturedAtMs` / `serverTimeMs` 而不需要——
+接收端用同一个公式即可算出累计延迟。
+
+### 背压
+
+音频有独立于 JSON 帧的出站队列（8 帧，按上述 20ms 约定约 160ms），**满时丢最旧，不关闭连接**。
+
+这与 §出站队列与背压 描述的 JSON 队列策略相反，是刻意的：可视化只关心「现在在
+响什么」，积压的历史帧已经过期；播放侧的连续性由接收端缓冲负责。
+
+因此音频 `seq` 跳号是正常的背压结果，不代表故障。
 
 ## 封面
 
