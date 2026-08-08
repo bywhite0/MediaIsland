@@ -193,35 +193,38 @@ public class MediaLinkAudioChannelTests
     }
 
     [Fact]
-    public async Task AudioPlayStart_InvokesCallback()
+    public async Task AudioPlayStart_RecordsIntentAndSignalsHost()
     {
-        var started = 0;
+        // 语义变更（第 2 期）：原本断言 OnAudioPlayStartAsync 被调用一次。
+        // 采集需求改为状态重算后不再有 start/stop 事件对，宿主收到的是「请重算」信号，
+        // 真正的需求由 WantsAudioCapture 表达。生命周期的完整覆盖见 MediaLinkAudioLifecycleTests。
+        var signals = 0;
         var options = new MediaLinkSessionOptions
         {
             ExpectedToken = "t",
-            OnAudioPlayStartAsync = _ => { Interlocked.Increment(ref started); return Task.CompletedTask; }
+            OnAudioCaptureDemandChangedAsync = () => { Interlocked.Increment(ref signals); return Task.CompletedTask; }
         };
-        var (_, socket, _) = await StartAuthenticatedAsync(options);
+        var (session, socket, _) = await StartAuthenticatedAsync(options);
+        await SubscribeAsync(socket, session, "\"audio\"");
 
         socket.EnqueueIncoming("""{"type":"audio.play_start","id":"p1","v":1,"ts":0}""");
 
-        await WaitUntilAsync(() => Volatile.Read(ref started) == 1);
+        await WaitUntilAsync(() => session.WantsAudioCapture);
+        Assert.True(Volatile.Read(ref signals) >= 1);
     }
 
     [Fact]
-    public async Task AudioPlayStop_InvokesCallback()
+    public async Task AudioPlayStop_RevokesIntent()
     {
-        var stopped = 0;
-        var options = new MediaLinkSessionOptions
-        {
-            ExpectedToken = "t",
-            OnAudioPlayStopAsync = _ => { Interlocked.Increment(ref stopped); return Task.CompletedTask; }
-        };
-        var (_, socket, _) = await StartAuthenticatedAsync(options);
+        // 语义变更（第 2 期）：原本断言 OnAudioPlayStopAsync 被调用一次。
+        var (session, socket, _) = await StartAuthenticatedAsync();
+        await SubscribeAsync(socket, session, "\"audio\"");
+        socket.EnqueueIncoming("""{"type":"audio.play_start","id":"p1","v":1,"ts":0}""");
+        await WaitUntilAsync(() => session.WantsAudioCapture);
 
         socket.EnqueueIncoming("""{"type":"audio.play_stop","id":"p2","v":1,"ts":0}""");
 
-        await WaitUntilAsync(() => Volatile.Read(ref stopped) == 1);
+        await WaitUntilAsync(() => !session.WantsAudioCapture);
     }
 
     [Fact]

@@ -38,6 +38,16 @@ internal sealed class FakeMediaLinkSocket : IMediaLinkSocket
         _incomingSignal.Release();
     }
 
+    /// <summary>
+    /// 模拟对端断开：Text 与 Binary 皆为 null 即 IsClosed，接收循环据此退出。
+    /// 用于验证「客户端进程被杀」这类不发关闭握手的路径。
+    /// </summary>
+    public void EnqueueClose()
+    {
+        _incoming.Enqueue(default);
+        _incomingSignal.Release();
+    }
+
     public Task SendTextAsync(string text, CancellationToken cancellationToken)
     {
         _outgoing.Enqueue(text);

@@ -221,10 +221,15 @@ public sealed class MediaLinkSessionOptions
 
     public Func<Task>? OnEffectiveLyricsMutatedAsync { get; init; }
 
-    /// <summary>客户端请求开始推音频。宿主据此启动采集——无订阅者时不应采集。</summary>
-    public Func<MediaLinkSession, Task>? OnAudioPlayStartAsync { get; init; }
-
-    public Func<MediaLinkSession, Task>? OnAudioPlayStopAsync { get; init; }
+    /// <summary>
+    /// 音频采集需求可能已变化，宿主应重算。
+    ///
+    /// 刻意是「重算信号」而非 start/stop 事件对：采集需求本质上是当前会话集合的纯函数
+    /// （见 <see cref="MediaLinkSession.WantsAudioCapture"/>），而会话有五条终结路径。
+    /// 用事件对表达就要求五条路径每条都精确补发 stop，漏一条即永久占着音频设备且无告警；
+    /// 重算则是幂等的，漏触发最多延迟一拍，不会永久错。
+    /// </summary>
+    public Func<Task>? OnAudioCaptureDemandChangedAsync { get; init; }
 
     /// <summary>收到入站音频帧（转发链路与接收端用）。</summary>
     public Func<MediaLinkAudioFrameHeader, byte[], Task>? OnAudioFrameAsync { get; init; }
@@ -381,6 +386,9 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private readonly MediaLinkAudioQueue _audioOutbound = new(8);
     private Task? _audioWriterTask;
 
+    /// <summary>客户端是否发过 audio.play_start（且未被 play_stop 撤销）。受 _gate 保护。</summary>
+    private bool _audioPlayRequested;
+
     public MediaLinkSession(IMediaLinkSocket socket, MediaLinkSessionOptions options, ILogger? logger = null)
     {
         _socket = socket;
@@ -406,7 +414,35 @@ public sealed class MediaLinkSession : IAsyncDisposable
 
     public bool IsSubscribedToAudio
     {
-        get { lock (_gate) return _channels.Contains(MediaLinkProtocol.ChannelAudio); }
+        get { lock (_gate) return _authenticated && _channels.Contains(MediaLinkProtocol.ChannelAudio); }
+    }
+
+    /// <summary>
+    /// 此刻本会话是否需要音频采集。四个条件缺一不可：未关闭、已认证、订阅了 audio、请求过 play_start。
+    ///
+    /// 这是状态量而非事件计数，是刻意的。会话有五条终结路径——RunAsync 正常退出、auth 超时、
+    /// rate_limited、CloseGoingAwayAsync、DisposeAllAsync——用「start/stop 配对」表达需求，
+    /// 就要求五条路径每条都记得补发 stop：漏一条即永久占着音频设备，且没有任何信号提示。
+    /// 状态量没有「路径」这个概念，故没有可漏的路径。
+    ///
+    /// 同理，重复的 play_start 天然幂等：读同一个状态量两次得到同一个值，无需判重代码。
+    /// </summary>
+    public bool WantsAudioCapture
+    {
+        get
+        {
+            if (_closed)
+            {
+                return false;
+            }
+
+            lock (_gate)
+            {
+                return _authenticated
+                    && _audioPlayRequested
+                    && _channels.Contains(MediaLinkProtocol.ChannelAudio);
+            }
+        }
     }
 
     public long AudioDroppedCount => _audioOutbound.DroppedCount;
@@ -464,6 +500,31 @@ public sealed class MediaLinkSession : IAsyncDisposable
             _closed = true;
             _outbound.Complete();
             _audioOutbound.Complete();
+
+            // 会话消失即撤销它的采集需求。这里不判断本会话是否曾 play_start——
+            // 宿主重算的是「当前还活着的会话」，已关闭的会话 WantsAudioCapture 恒假。
+            await NotifyAudioCaptureDemandChangedAsync();
+        }
+    }
+
+    /// <summary>
+    /// 通知宿主重算采集需求。吞掉异常：宿主重算失败不该拖垮会话，
+    /// 且下一次任意会话事件会再次触发重算，错过一拍可自愈。
+    /// </summary>
+    private async Task NotifyAudioCaptureDemandChangedAsync()
+    {
+        if (_options.OnAudioCaptureDemandChangedAsync is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _options.OnAudioCaptureDemandChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "MediaLink 音频采集需求重算失败");
         }
     }
 
@@ -548,6 +609,14 @@ public sealed class MediaLinkSession : IAsyncDisposable
             }
         }
         catch (OperationCanceledException) { }
+        finally
+        {
+            // 与 JSON 写者对称。两者共用同一个 socket 与 _sendLock，音频发送失败意味着 socket
+            // 已坏，JSON 也发不出去；静默退出而会话自认存活，会让音频永久停摆、服务端持续
+            // 向一条死连接入队，直到 JSON 侧自己也撞上失败才被发现。
+            _closed = true;
+            _audioOutbound.Complete();
+        }
     }
 
     /// <summary>
@@ -825,6 +894,9 @@ public sealed class MediaLinkSession : IAsyncDisposable
             }
         }
 
+        // 订阅是整体替换语义，重发不含 audio 的频道列表会把 audio 顶掉，需求随之消失。
+        await NotifyAudioCaptureDemandChangedAsync();
+
         await SendAsync(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeSubscribeOk,
             new MediaLinkSubscribePayload { Channels = requested.ToList() },
@@ -870,6 +942,8 @@ public sealed class MediaLinkSession : IAsyncDisposable
             return;
         }
 
+        await NotifyAudioCaptureDemandChangedAsync();
+
         await SendAsync(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeUnsubscribeOk,
             new MediaLinkUnsubscribePayload { Channels = removed.ToList() },
@@ -877,8 +951,11 @@ public sealed class MediaLinkSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// 音频采集的开关。宿主据此启动/停止采集：无人订阅时不该白白占用音频设备。
-    /// 只表达意愿，不改订阅状态——订阅仍由 subscribe/unsubscribe 管理。
+    /// 音频采集的开关。只表达意愿，不改订阅状态——订阅仍由 subscribe/unsubscribe 管理。
+    ///
+    /// 无论是否订阅了 audio 都回 ok：协议已冻结「两者只表达采集意愿」这一语义
+    /// （docs/medialink-protocol.md），客户端先 play_start 再 subscribe 是合法顺序。
+    /// 防「未订阅却白占音频设备」的门禁落在 <see cref="WantsAudioCapture"/>，不在此处。
     /// </summary>
     private async Task HandleAudioPlayAsync(MediaLinkMessage message, bool start, CancellationToken cancellationToken)
     {
@@ -889,11 +966,12 @@ public sealed class MediaLinkSession : IAsyncDisposable
             return;
         }
 
-        var callback = start ? _options.OnAudioPlayStartAsync : _options.OnAudioPlayStopAsync;
-        if (callback is not null)
+        lock (_gate)
         {
-            await callback(this);
+            _audioPlayRequested = start;
         }
+
+        await NotifyAudioCaptureDemandChangedAsync();
 
         await SendAsync(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeOk,
@@ -1341,6 +1419,38 @@ public sealed class MediaLinkSessionHub
     }
 
     public IReadOnlyCollection<MediaLinkSession> Sessions => _sessions.Keys.ToArray();
+
+    /// <summary>
+    /// 是否有任一在线会话需要音频采集。宿主据此重算采集开关。
+    ///
+    /// 重算而非增减引用计数：会话以任何方式消失（含客户端进程被杀这类不发关闭握手的路径）
+    /// 都不会留下悬空的需求，因为这里读的始终是「当前还在集合里且仍想要」的会话。
+    /// </summary>
+    public bool HasAudioCaptureDemand => _sessions.Keys.Any(session => session.WantsAudioCapture);
+
+    /// <summary>
+    /// 广播音频二进制帧。未订阅 audio 的会话由 <see cref="MediaLinkSession.EnqueueAudioAsync"/>
+    /// 自行丢弃，故此处只需遍历；单会话失败不影响其余会话，与 JSON 广播同构。
+    /// </summary>
+    public async Task BroadcastAudioFrameAsync(byte[] frame, CancellationToken cancellationToken = default)
+    {
+        foreach (var session in _sessions.Keys)
+        {
+            if (!session.IsSubscribedToAudio)
+            {
+                continue;
+            }
+
+            try
+            {
+                await session.EnqueueAudioAsync(frame, cancellationToken);
+            }
+            catch
+            {
+                // drop broken sessions on next cleanup
+            }
+        }
+    }
 
     public async Task BroadcastEventAsync(string channel, string eventName, object? payload, CancellationToken cancellationToken = default)
     {

@@ -42,6 +42,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private readonly Func<MediaInfoChangeKind, Task>? _onEffectiveMediaMutatedAsync;
     private readonly Func<Task>? _onEffectiveLyricsMutatedAsync;
     private readonly Func<MediaLinkAudioFrameHeader, byte[], Task>? _onAudioFrameAsync;
+    private readonly Func<Task>? _onAudioCaptureDemandChangedAsync;
     private readonly ILogger<MediaLinkServer>? _logger;
     private TcpListener? _listener;
     private CancellationTokenSource? _acceptCts;
@@ -63,6 +64,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         Func<MediaInfoChangeKind, Task>? onEffectiveMediaMutatedAsync = null,
         Func<Task>? onEffectiveLyricsMutatedAsync = null,
         Func<MediaLinkAudioFrameHeader, byte[], Task>? onAudioFrameAsync = null,
+        Func<Task>? onAudioCaptureDemandChangedAsync = null,
         ILogger<MediaLinkServer>? logger = null)
     {
         _hub = hub;
@@ -75,6 +77,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         _onEffectiveMediaMutatedAsync = onEffectiveMediaMutatedAsync;
         _onEffectiveLyricsMutatedAsync = onEffectiveLyricsMutatedAsync;
         _onAudioFrameAsync = onAudioFrameAsync;
+        _onAudioCaptureDemandChangedAsync = onAudioCaptureDemandChangedAsync;
         _logger = logger;
     }
 
@@ -286,7 +289,8 @@ public sealed class MediaLinkServer : IAsyncDisposable
                         PlaybackControllerAccessor = _playbackControllerAccessor,
                         OnEffectiveMediaMutatedAsync = _onEffectiveMediaMutatedAsync,
                         OnEffectiveLyricsMutatedAsync = _onEffectiveLyricsMutatedAsync,
-                        OnAudioFrameAsync = _onAudioFrameAsync
+                        OnAudioFrameAsync = _onAudioFrameAsync,
+                        OnAudioCaptureDemandChangedAsync = _onAudioCaptureDemandChangedAsync
                     },
                     _logger);
                 _hub.Add(session);
