@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MediaIsland.Services.MediaLink;
 using MediaIsland.Services.MediaLink.Protocol;
 using Xunit;
 
@@ -101,4 +102,137 @@ public class MediaLinkCapabilitiesTests
         Assert.Equal("audio.play_start", MediaLinkProtocol.TypeAudioPlayStart);
         Assert.Equal("audio.play_stop", MediaLinkProtocol.TypeAudioPlayStop);
     }
+}
+
+/// <summary>
+/// 客户端对服务端能力的感知。订阅是一次性的整体请求：向老服务端请求
+/// ["media","lyrics","audio"] 会被整体拒绝，media 和 lyrics 也一起失效。
+/// 因此第 3 期订阅音频前，必须先有这里存下来的能力信息。
+/// </summary>
+public class MediaLinkClientCapabilityTests
+{
+    [Fact]
+    public void ParseHello_WithAudioCapability_YieldsCapabilityList()
+    {
+        const string hello = """
+            {"protocolVersion":1,"authRequired":true,"sessionEpoch":1,
+             "capabilities":["audio"],
+             "audio":{"sampleRate":48000,"channels":2,"format":"s16le"}}
+            """;
+
+        var payload = JsonSerializer.Deserialize<MediaLinkServerHelloPayload>(hello);
+
+        Assert.NotNull(payload!.Capabilities);
+        Assert.Contains(MediaLinkProtocol.CapabilityAudio, payload.Capabilities);
+    }
+
+    [Fact]
+    public async Task Client_CapableServer_ReportsSupportsAudio()
+    {
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: ""","capabilities":["audio"]""");
+
+        Assert.True(harness.Client.SupportsAudio);
+        Assert.Contains(MediaLinkProtocol.CapabilityAudio, harness.Client.ServerCapabilities);
+    }
+
+    [Fact]
+    public async Task Client_LegacyServer_ReportsNoAudioSupport()
+    {
+        // 老服务端的 hello 没有 capabilities 字段：必须是空集合而非 null，
+        // 且不得让连接流程抛异常。
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: "");
+
+        Assert.False(harness.Client.SupportsAudio);
+        Assert.Empty(harness.Client.ServerCapabilities);
+    }
+
+    [Fact]
+    public async Task Client_UnknownCapability_IgnoredWithoutError()
+    {
+        // 未来服务端可能声明本客户端不认识的能力，收下但不误判为支持音频。
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: ""","capabilities":["quantum-teleport"]""");
+
+        Assert.False(harness.Client.SupportsAudio);
+        Assert.Contains("quantum-teleport", harness.Client.ServerCapabilities);
+    }
+
+    [Fact]
+    public async Task Client_HelloDuringSession_RefreshesCapabilities()
+    {
+        // 服务端重建会话后会再 hello 一次，此时能力可能已经变了（如采集设备掉了）。
+        // 只在握手记一次，客户端会拿过期能力去订阅 audio，而 subscribe 是整体替换，
+        // 被拒时 media 与 lyrics 一起失效。
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: ""","capabilities":["audio"]""");
+        Assert.True(harness.Client.SupportsAudio);
+
+        harness.QueueServerHello(epoch: 2, capabilitiesJson: "");
+        await harness.WaitUntilAsync(() => !harness.Client.SupportsAudio);
+
+        Assert.False(harness.Client.SupportsAudio);
+        Assert.Empty(harness.Client.ServerCapabilities);
+    }
+}
+
+/// <summary>
+/// 驱动 MediaLinkClient 走完一次握手的夹具。复用 MediaLinkClientTests 的
+/// ScriptedClientSocket——能力感知只关心 hello 里的字段，不需要真实网络时序。
+/// </summary>
+internal sealed class MediaLinkClientCapabilityHarness(ScriptedClientSocket socket, MediaLinkClient client)
+    : IAsyncDisposable
+{
+    /// <summary>
+    /// 手写 hello 而非序列化 payload 对象：只有原始 JSON 能表达「capabilities 字段
+    /// 根本不存在」以及本客户端不认识的能力取值这两种情形。
+    /// </summary>
+    private const string HelloPrefix = """
+        {"type":"event","name":"server.hello","v":1,"ts":0,"payload":{"protocolVersion":1,"authRequired":true,"sessionEpoch":
+        """;
+
+    public MediaLinkClient Client { get; } = client;
+
+    /// <param name="capabilitiesJson">拼进 hello payload 的原始片段，需自带前导逗号；
+    /// 空串即模拟不声明任何能力的老服务端。</param>
+    public static async Task<MediaLinkClientCapabilityHarness> ConnectAsync(string capabilitiesJson)
+    {
+        var socket = new ScriptedClientSocket();
+        socket.QueueRaw(BuildHello(epoch: 1, capabilitiesJson));
+        socket.QueueMessage(MediaLinkProtocol.TypeAuthOk);
+        socket.QueueMessage(MediaLinkProtocol.TypeSubscribeOk);
+
+        var client = new MediaLinkClient(new MediaLinkClientOptions
+        {
+            Endpoint = new Uri("ws://127.0.0.1:1/v1/ws"),
+            Token = "tok",
+            InitialRetryDelay = TimeSpan.FromMilliseconds(50),
+            MaxRetryDelay = TimeSpan.FromMilliseconds(200),
+            SocketFactory = () => socket
+        });
+
+        client.Start();
+        // auth 与 subscribe 都发出即说明 hello 已被解析——记录能力发生在 auth 之前。
+        await socket.WaitForSendsAsync(2);
+        return new MediaLinkClientCapabilityHarness(socket, client);
+    }
+
+    /// <summary>会话中途再投一条 hello，模拟服务端重建会话后的重新声明。</summary>
+    public void QueueServerHello(long epoch, string capabilitiesJson) =>
+        socket.QueueRaw(BuildHello(epoch, capabilitiesJson));
+
+    public async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (!condition() && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+    }
+
+    private static string BuildHello(long epoch, string capabilitiesJson) =>
+        HelloPrefix + epoch + capabilitiesJson + "}}";
+
+    public async ValueTask DisposeAsync() => await Client.DisposeAsync();
 }

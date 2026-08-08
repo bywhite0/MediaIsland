@@ -161,6 +161,15 @@ public sealed class MediaLinkClient : IAsyncDisposable
 
     private long _sessionEpoch = -1;
     private long _lastSeq;
+    private IReadOnlyCollection<string> _serverCapabilities = [];
+
+    /// <summary>
+    /// 服务端在 server.hello 声明的可选能力。第 3 期据此决定是否订阅 audio——
+    /// subscribe 是整体请求，向不支持的服务端请求 audio 会让 media 与 lyrics 一起被拒。
+    /// </summary>
+    public IReadOnlyCollection<string> ServerCapabilities => _serverCapabilities;
+
+    public bool SupportsAudio => _serverCapabilities.Contains(MediaLinkProtocol.CapabilityAudio);
 
     public MediaLinkClient(MediaLinkClientOptions options, ILogger? logger = null, Func<long>? tickProvider = null)
     {
@@ -301,7 +310,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
         }
 
         var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkServerHelloPayload>(message.Payload);
-        HandleEpoch(payload?.SessionEpoch ?? 0);
+        ApplyServerHello(payload);
     }
 
     private async Task ExpectAuthResultAsync(IMediaLinkClientSocket socket, CancellationToken cancellationToken)
@@ -317,6 +326,19 @@ public sealed class MediaLinkClient : IAsyncDisposable
         // Token 错误不是暂时性故障，但仍走重连：用户可能正在设置页改 Token。
         throw new InvalidOperationException(
             message.Type == MediaLinkProtocol.TypeAuthFail ? "Token 不正确" : $"认证期间收到意外消息：{message.Type}");
+    }
+
+    /// <summary>
+    /// 每条 server.hello 都是对端对自身当前状态的完整声明，握手时与会话中途收到的一律同等对待：
+    /// 只在握手记一次，服务端重建会话后能力若有变化就无从察觉。
+    /// 缺 capabilities 字段的老服务端落到空集合，即「不支持任何可选能力」。
+    /// </summary>
+    private void ApplyServerHello(MediaLinkServerHelloPayload? payload)
+    {
+        _serverCapabilities = payload?.Capabilities is { } capabilities
+            ? new HashSet<string>(capabilities, StringComparer.Ordinal)
+            : [];
+        HandleEpoch(payload?.SessionEpoch ?? 0);
     }
 
     /// <summary>
@@ -356,7 +378,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
             message.Name == MediaLinkProtocol.EventServerHello)
         {
             var hello = MediaLinkMessageSerializer.DeserializePayload<MediaLinkServerHelloPayload>(message.Payload);
-            HandleEpoch(hello?.SessionEpoch ?? 0);
+            ApplyServerHello(hello);
             return;
         }
 
