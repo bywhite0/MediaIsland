@@ -382,7 +382,13 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private readonly MediaLinkOutboundQueue _outbound = new(64);
     private Task? _writerTask;
 
-    /// <summary>音频容量 8 帧约 160ms：足够吸收网络抖动，又不至于让积压变成可感知的滞后。</summary>
+    /// <summary>
+    /// 音频出站队列，按**帧数**而非时长计量——帧长由音频设备决定，服务端选不了
+    /// （WASAPI 共享模式下实测约 10ms/帧，8 帧即约 80ms）。
+    ///
+    /// 丢最旧的前提下，队列深度决定的只是「发送暂时卡顿时保留多少最新帧」，
+    /// 而过期帧对可视化本就无价值，故容量不需要随帧长调整。
+    /// </summary>
     private readonly MediaLinkAudioQueue _audioOutbound = new(8);
     private Task? _audioWriterTask;
 
