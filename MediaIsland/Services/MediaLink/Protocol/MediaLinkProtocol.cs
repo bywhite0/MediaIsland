@@ -25,6 +25,8 @@ public static class MediaLinkProtocol
     public const string TypePlaybackCommand = "playback.command";
     public const string TypeThumbnailGet = "thumbnail.get";
     public const string TypeThumbnail = "thumbnail";
+    public const string TypeAudioPlayStart = "audio.play_start";
+    public const string TypeAudioPlayStop = "audio.play_stop";
 
     public const string EventMediaUpdated = "media.updated";
     public const string EventLyricsUpdated = "lyrics.updated";
@@ -32,6 +34,7 @@ public static class MediaLinkProtocol
 
     public const string ChannelMedia = "media";
     public const string ChannelLyrics = "lyrics";
+    public const string ChannelAudio = "audio";
 
     public const string ErrorUnauthorized = "unauthorized";
     public const string ErrorBadRequest = "bad_request";
@@ -42,9 +45,21 @@ public static class MediaLinkProtocol
     public const string ErrorNotSupported = "not_supported";
     public const string ErrorNoSession = "no_session";
 
+    /// <summary>server.hello 的 capabilities 取值。</summary>
+    public const string CapabilityAudio = "audio";
+
+    /// <summary>
+    /// 音频线格式。显式声明而非双方硬编码约定——AMLL 的做法是把 48000/2/i16
+    /// 写死在两端代码里，换采样率就要改协议。
+    /// </summary>
+    public const int AudioSampleRate = 48000;
+    public const int AudioChannels = 2;
+    public const string AudioFormat = "s16le";
+
     public static readonly HashSet<string> KnownChannels = new(StringComparer.Ordinal)
     {
         ChannelMedia,
-        ChannelLyrics
+        ChannelLyrics,
+        ChannelAudio
     };
 }

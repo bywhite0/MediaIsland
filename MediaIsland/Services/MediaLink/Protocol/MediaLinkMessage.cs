@@ -235,6 +235,31 @@ public sealed class MediaLinkServerHelloPayload
     /// </summary>
     [JsonPropertyName("sessionEpoch")]
     public long SessionEpoch { get; set; }
+
+    /// <summary>
+    /// 服务端支持的可选能力。老客户端忽略未知字段；新客户端据此决定是否订阅 audio，
+    /// 避免向不支持的服务端发订阅请求换来 bad_request。
+    /// </summary>
+    [JsonPropertyName("capabilities")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Capabilities { get; set; }
+
+    [JsonPropertyName("audio")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MediaLinkAudioFormatPayload? Audio { get; set; }
+}
+
+/// <summary>音频线格式声明。取值恒为协议常量，作为字段传出使其可被客户端读取而非猜测。</summary>
+public sealed class MediaLinkAudioFormatPayload
+{
+    [JsonPropertyName("sampleRate")]
+    public int SampleRate { get; set; } = MediaLinkProtocol.AudioSampleRate;
+
+    [JsonPropertyName("channels")]
+    public int Channels { get; set; } = MediaLinkProtocol.AudioChannels;
+
+    [JsonPropertyName("format")]
+    public string Format { get; set; } = MediaLinkProtocol.AudioFormat;
 }
 
 public sealed class MediaLinkOkPayload

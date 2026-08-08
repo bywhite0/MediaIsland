@@ -295,7 +295,9 @@ public sealed class MediaLinkServer : IAsyncDisposable
                         {
                             ProtocolVersion = MediaLinkProtocol.Version,
                             AuthRequired = true,
-                            SessionEpoch = SessionEpoch
+                            SessionEpoch = SessionEpoch,
+                            Capabilities = [MediaLinkProtocol.CapabilityAudio],
+                            Audio = new MediaLinkAudioFormatPayload()
                         },
                         name: MediaLinkProtocol.EventServerHello);
                     await session.SendAsync(hello, cancellationToken);
