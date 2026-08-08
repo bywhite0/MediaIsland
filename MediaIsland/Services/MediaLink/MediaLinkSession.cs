@@ -66,8 +66,20 @@ public interface IMediaLinkSocket
 
 public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSocket, IDisposable
 {
-    /// <summary>单条消息组装上限（2 MiB），文本与二进制同限。</summary>
+    /// <summary>单条文本消息的组装上限（2 MiB）。</summary>
     public const int MaxMessageBytes = 2 * 1024 * 1024;
+
+    /// <summary>
+    /// 单条二进制消息的组装上限，与文本分开。二进制必须更严，是因为认证判定在会话层的
+    /// <c>HandleBinaryAsync</c> 才发生，而字节在这里就已全部落进托管堆并被 <c>ToArray()</c>
+    /// 再复制一份——未认证连接可以在 AuthTimeout 窗口内反复让服务端为它缓冲满额。
+    /// 合法音频帧 20ms 约 3.9 KB（3840 字节 PCM + 34 字节定长头 + trackToken），
+    /// 文本那 2 MiB 的额度对二进制路径没有任何正当用途。
+    ///
+    /// 取 128 KiB 而不更小：接收缓冲本身是 64 KiB，上限若不高于它，入站二进制就再也
+    /// 无法跨分片组装，而分片组装正是这条路径上拷贝时机唯一验得到的地方。
+    /// </summary>
+    public const int MaxBinaryMessageBytes = 128 * 1024;
 
     private readonly byte[] _buffer = new byte[64 * 1024];
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -121,7 +133,10 @@ public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSo
                 started = true;
             }
 
-            if (message.Length + result.Count > MaxMessageBytes)
+            // 阈值按帧类型取。isBinary 在上面的首分片分支里已经定下，故此处不会拿文本上限
+            // 去量二进制，也不会反过来收紧文本。
+            var maxBytes = isBinary ? MaxBinaryMessageBytes : MaxMessageBytes;
+            if (message.Length + result.Count > maxBytes)
             {
                 try
                 {
