@@ -269,7 +269,7 @@ public class AudioFrameHubTests
             get { lock (_frames) return _frames.ToArray(); }
         }
 
-        public ValueTask OnFrameAsync(in AudioFrame frame, CancellationToken cancellationToken)
+        public ValueTask OnFrameAsync(AudioFrame frame, CancellationToken cancellationToken)
         {
             lock (_frames) _frames.Add(frame);
             return ValueTask.CompletedTask;
@@ -280,7 +280,7 @@ public class AudioFrameHubTests
     {
         public int Attempts { get; private set; }
 
-        public ValueTask OnFrameAsync(in AudioFrame frame, CancellationToken cancellationToken)
+        public ValueTask OnFrameAsync(AudioFrame frame, CancellationToken cancellationToken)
         {
             Attempts++;
             throw new InvalidOperationException("sink 内部错误");

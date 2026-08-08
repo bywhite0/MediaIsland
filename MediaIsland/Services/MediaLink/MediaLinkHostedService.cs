@@ -1,4 +1,6 @@
 using MediaIsland.Models;
+using MediaIsland.Services.Audio;
+using MediaIsland.Services.Audio.Native;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
@@ -25,6 +27,9 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     private MediaLinkSessionHub? _hub;
     private MediaLinkStatePublisher? _publisher;
     private MediaLinkServer? _server;
+    private AudioFrameHub? _audioHub;
+    private WasapiLoopbackFrameSource? _audioSource;
+    private IDisposable? _audioSinkSubscription;
     private PluginSettings? _boundSettings;
     private CancellationTokenSource? _debounceCts;
     private bool _disposed;
@@ -314,6 +319,22 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                 logger: _loggerFactory?.CreateLogger<MediaLinkStatePublisher>());
             _publisher.Start();
 
+            // 音频采集链路：native 源 → AudioFrameHub（按需启停）→ 广播器 → 订阅 audio 的会话。
+            // native 不可用时全链路照常构建，只是永远采不到帧——接收、转发与其余频道不受影响。
+            _audioSource = new WasapiLoopbackFrameSource(_loggerFactory?.CreateLogger<WasapiLoopbackFrameSource>());
+            _audioHub = new AudioFrameHub(_audioSource, _loggerFactory?.CreateLogger<AudioFrameHub>());
+            _audioSinkSubscription = _audioHub.AddSink(new MediaLinkAudioBroadcaster(
+                _hub,
+                () => _coordinator.GetMediaForPush(),
+                logger: _loggerFactory?.CreateLogger<MediaLinkAudioBroadcaster>()));
+
+            if (!_audioSource.IsAvailable)
+            {
+                _logger?.LogInformation(
+                    "[音频] 采集不可用（{Reason}），MediaLink 其余频道不受影响。",
+                    _audioSource.FailureReason);
+            }
+
             _server = new MediaLinkServer(
                 _hub,
                 session => _publisher.PublishSnapshotAsync(session),
@@ -343,6 +364,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                     _coordinator.Recompute(MediaInfoChangeKind.CurrentSession);
                     return Task.CompletedTask;
                 },
+                onAudioCaptureDemandChangedAsync: RecomputeAudioCaptureDemandAsync,
                 logger: _loggerFactory?.CreateLogger<MediaLinkServer>());
 
             await _server.StartAsync(settings.MediaLinkListenAddress, settings.MediaLinkPort, cancellationToken);
@@ -373,6 +395,22 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(nameof(ActiveSessionCount)));
     }
 
+    /// <summary>
+    /// 重算音频采集需求。**重算而非增减**：需求是「当前所有会话状态」的纯函数，
+    /// 故任何会话以任何方式消失（含客户端进程被杀）都不会留下悬空的需求，
+    /// 也不需要为五条会话终结路径各写一次补偿。
+    /// </summary>
+    private async Task RecomputeAudioCaptureDemandAsync()
+    {
+        var audioHub = _audioHub;
+        if (audioHub is null)
+        {
+            return;
+        }
+
+        await audioHub.SetCaptureDemandAsync(_hub?.HasAudioCaptureDemand ?? false, CancellationToken.None);
+    }
+
     private async Task StopCoreAsync(CancellationToken cancellationToken)
     {
         if (_server is not null)
@@ -381,6 +419,15 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             await _server.DisposeAsync();
             _server = null;
         }
+
+        // 无条件停采集：插件禁用或重载后音频端点不该继续被占着。
+        // Dispose 内含同步等待采集线程退出，故必须在此完成而非 fire-and-forget。
+        _audioSinkSubscription?.Dispose();
+        _audioSinkSubscription = null;
+        _audioHub?.Dispose();
+        _audioHub = null;
+        _audioSource?.Dispose();
+        _audioSource = null;
 
         _publisher?.Dispose();
         _publisher = null;

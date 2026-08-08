@@ -131,7 +131,7 @@ public sealed class AudioFrameHub : IDisposable
         {
             try
             {
-                var pending = sink.OnFrameAsync(in frame, CancellationToken.None);
+                var pending = sink.OnFrameAsync(frame, CancellationToken.None);
                 if (!pending.IsCompletedSuccessfully)
                 {
                     // 同步完成是常态（入队而非发送）。异步路径不等待，否则会阻塞采集线程。
