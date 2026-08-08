@@ -118,6 +118,34 @@ public class MediaLinkAudioQueueTests
         Assert.False(queue.TryDequeue(out _));
     }
 
+    [Fact]
+    public async Task AudioQueue_EnqueueWakesWaitingDequeue()
+    {
+        // 变异测试证明：没有这条，注释掉 Enqueue 里的 _signal.Release() 也不会有测试失败，
+        // 而音频发送泵正是靠它被唤醒——缺了它整条推送链路会静默停摆。
+        var queue = new MediaLinkAudioQueue(4);
+        var pending = queue.DequeueAsync(CancellationToken.None);
+        Assert.False(pending.IsCompleted);
+
+        queue.Enqueue([42]);
+
+        var frame = await pending.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal([42], frame);
+    }
+
+    [Fact]
+    public async Task AudioQueue_DequeueAsync_HonorsCancellation()
+    {
+        // 会话结束时写者任务靠取消令牌退出；不响应取消会让任务泄漏。
+        var queue = new MediaLinkAudioQueue(4);
+        using var cts = new CancellationTokenSource();
+        var pending = queue.DequeueAsync(cts.Token);
+
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
+
     private static List<byte> Drain(MediaLinkAudioQueue queue)
     {
         var result = new List<byte>();

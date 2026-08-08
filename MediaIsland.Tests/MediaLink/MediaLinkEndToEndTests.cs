@@ -403,6 +403,166 @@ public class MediaLinkEndToEndTests
     }
 
     [Fact]
+    public async Task AudioFrame_OverRealWebSocket_ArrivesByteIdentical()
+    {
+        // 用真实回环连接而非 fake：这条路径上的分片组装、ToArray() 副本语义与编解码
+        // 往返一致性都只有真 socket 才验得到。fake 直接传引用，会掩盖共享缓冲被覆写的问题。
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok");
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        using var client = new ClientWebSocket();
+        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ReceiveJsonAsync(client); // hello
+        await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
+        await ReceiveJsonAsync(client); // auth_ok
+        await SendJsonAsync(client, new { type = "subscribe", id = "s1", v = 1, ts = NowMs(), payload = new { channels = new[] { "audio" } } });
+        await ReceiveJsonAsync(client); // subscribe_ok
+
+        // 帧大小刻意远低于 MaxMessageBytes（2 MiB），同时足以跨越 64 KiB 接收缓冲触发分片组装。
+        var pcm = new byte[96 * 1024];
+        Random.Shared.NextBytes(pcm);
+        var original = MediaLinkAudioFrame.Encode(
+            new MediaLinkAudioFrameHeader(1234, 5678, 9012, 99, "e2e-track", MediaLinkAudioFrameFlags.TrackStart),
+            pcm);
+
+        MediaLinkSession session = null!;
+        await WaitUntilAsync(() => hub.Sessions.Count == 1);
+        session = hub.Sessions.First();
+        await WaitUntilAsync(() => session.IsSubscribedToAudio);
+        await session.EnqueueAudioAsync(original, CancellationToken.None);
+
+        var arrived = await ReceiveBinaryAsync(client);
+        Assert.Equal(original, arrived);
+
+        // 解码在同步局部函数内完成：ReadOnlySpan 是 ref struct，C# 12 不允许它出现在 async 方法体中。
+        static (MediaLinkAudioFrameHeader Header, byte[] Pcm) Decode(byte[] frame)
+        {
+            Assert.True(MediaLinkAudioFrame.TryDecode(frame, out var header, out var pcm, out _));
+            return (header, pcm.ToArray());
+        }
+
+        var (decodedHeader, decodedPcm) = Decode(arrived);
+        Assert.Equal("e2e-track", decodedHeader.TrackToken);
+        Assert.Equal(99u, decodedHeader.Seq);
+        Assert.Equal(1234, decodedHeader.StartPositionMs);
+        Assert.Equal(MediaLinkAudioFrameFlags.TrackStart, decodedHeader.Flags);
+        Assert.Equal(pcm, decodedPcm);
+
+        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task InboundAudioFrame_OverRealWebSocket_ReachesCallbackByteIdentical()
+    {
+        // 反向：客户端注入音频帧。服务端接收循环把 message.Binary 交给解码器，
+        // 而解码出的 PCM 是入参的零拷贝切片——若拷出时机不对，这里会读到被覆写的数据。
+        var hub = new MediaLinkSessionHub();
+        byte[]? receivedPcm = null;
+        MediaLinkAudioFrameHeader? receivedHeader = null;
+        var server = new MediaLinkServer(
+            hub,
+            _ => Task.CompletedTask,
+            () => "tok",
+            onAudioFrameAsync: (header, pcm) =>
+            {
+                receivedHeader = header;
+                receivedPcm = pcm;
+                return Task.CompletedTask;
+            });
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        using var client = new ClientWebSocket();
+        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ReceiveJsonAsync(client); // hello
+        await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
+        await ReceiveJsonAsync(client); // auth_ok
+
+        var pcm = new byte[96 * 1024];
+        Random.Shared.NextBytes(pcm);
+        var frame = MediaLinkAudioFrame.Encode(
+            new MediaLinkAudioFrameHeader(11, 22, 33, 44, "inbound-track", MediaLinkAudioFrameFlags.Silent),
+            pcm);
+
+        await client.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
+
+        await WaitUntilAsync(() => receivedPcm is not null);
+        Assert.NotNull(receivedPcm);
+        Assert.Equal("inbound-track", receivedHeader!.Value.TrackToken);
+        Assert.Equal(44u, receivedHeader.Value.Seq);
+        Assert.Equal(pcm, receivedPcm);
+
+        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task MediaLinkClientSocket_ReceivesBinaryFrame_NotSilentlyDropped()
+    {
+        // 客户端侧此前遇非 Text 就 continue，服务端发出的音频帧到了客户端会被直接丢掉。
+        // 音频发出去等于没发——故接收链路必须一并验通。
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok");
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        await using var socket = new ClientWebSocketAdapter();
+        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await socket.ReceiveAsync(CancellationToken.None); // hello
+        await socket.SendTextAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeAuth, new MediaLinkAuthPayload { Token = "tok" }, id: "a1")),
+            CancellationToken.None);
+        await socket.ReceiveAsync(CancellationToken.None); // auth_ok
+        await socket.SendTextAsync(
+            MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeSubscribe,
+                new MediaLinkSubscribePayload { Channels = [MediaLinkProtocol.ChannelAudio] },
+                id: "s1")),
+            CancellationToken.None);
+        await socket.ReceiveAsync(CancellationToken.None); // subscribe_ok
+
+        await WaitUntilAsync(() => hub.Sessions.Count == 1);
+        var session = hub.Sessions.First();
+        await WaitUntilAsync(() => session.IsSubscribedToAudio);
+
+        var frame = MediaLinkAudioFrame.Encode(
+            new MediaLinkAudioFrameHeader(0, 0, 0, 5, "client-track", MediaLinkAudioFrameFlags.None),
+            [1, 2, 3, 4]);
+        await session.EnqueueAudioAsync(frame, CancellationToken.None);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var message = await socket.ReceiveAsync(cts.Token);
+
+        Assert.NotNull(message.Binary);
+        Assert.Equal(frame, message.Binary);
+
+        await server.StopAsync();
+    }
+
+    private static async Task<byte[]> ReceiveBinaryAsync(WebSocket ws, int timeoutMs = 5000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        var buffer = new byte[64 * 1024];
+        using var ms = new MemoryStream();
+        WebSocketReceiveResult result;
+        do
+        {
+            result = await ws.ReceiveAsync(buffer, cts.Token);
+            if (result.MessageType == WebSocketMessageType.Close)
+                throw new InvalidOperationException("WebSocket closed unexpectedly");
+            if (result.MessageType != WebSocketMessageType.Binary)
+                throw new InvalidOperationException($"期望二进制帧，实际为 {result.MessageType}");
+            ms.Write(buffer, 0, result.Count);
+        } while (!result.EndOfMessage);
+
+        return ms.ToArray();
+    }
+
+    [Fact]
     public async Task RapidTrackChanges_TrackTokenMatchesSourceApp()
     {
         var hub = new MediaLinkSessionHub();

@@ -15,8 +15,29 @@ public interface IMediaLinkClientSocket : IAsyncDisposable
 
     Task SendTextAsync(string text, CancellationToken cancellationToken);
 
-    /// <summary>取下一条文本消息；连接关闭时返回 null。</summary>
-    Task<string?> ReceiveTextAsync(CancellationToken cancellationToken);
+    /// <summary>收下一条消息，文本与二进制均可；连接关闭时 Text 与 Binary 皆为 null。</summary>
+    Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 只收文本，跳过二进制帧。与服务端侧同构：既有调用方不消费音频，
+    /// 收到二进制返回 null 会被误判为连接关闭。
+    /// </summary>
+    async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var message = await ReceiveAsync(cancellationToken);
+            if (message.IsClosed)
+            {
+                return null;
+            }
+
+            if (message.Text is { } text)
+            {
+                return text;
+            }
+        }
+    }
 }
 
 public sealed class ClientWebSocketAdapter : IMediaLinkClientSocket
@@ -35,31 +56,42 @@ public sealed class ClientWebSocketAdapter : IMediaLinkClientSocket
     public Task SendTextAsync(string text, CancellationToken cancellationToken) =>
         _socket.SendAsync(Encoding.UTF8.GetBytes(text), WebSocketMessageType.Text, true, cancellationToken);
 
-    public async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// 组装一条完整消息，文本与二进制同等对待。此前遇非 Text 就 continue，
+    /// 服务端推来的音频帧会被静默丢弃——发出去等于没发。
+    /// </summary>
+    public async Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken)
     {
         using var message = new MemoryStream();
+        var isBinary = false;
+        var started = false;
+
         while (true)
         {
             var result = await _socket.ReceiveAsync(_buffer, cancellationToken);
             if (result.MessageType == WebSocketMessageType.Close)
             {
-                return null;
+                return default;
             }
 
-            if (result.MessageType != WebSocketMessageType.Text)
+            if (!started)
             {
-                continue;
+                isBinary = result.MessageType == WebSocketMessageType.Binary;
+                started = true;
             }
 
             if (message.Length + result.Count > MaxMessageBytes)
             {
-                return null; // 服务端不该发这么大的帧，视同协议故障
+                return default; // 服务端不该发这么大的帧，视同协议故障
             }
 
             message.Write(_buffer, 0, result.Count);
             if (result.EndOfMessage)
             {
-                return Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
+                return isBinary
+                    ? new MediaLinkSocketMessage(null, message.ToArray())
+                    : new MediaLinkSocketMessage(
+                        Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length), null);
             }
         }
     }

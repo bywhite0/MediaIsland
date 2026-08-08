@@ -263,13 +263,14 @@ internal sealed class ScriptedClientSocket : IMediaLinkClientSocket
         return Task.CompletedTask;
     }
 
-    public async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
+    public async Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken)
     {
         while (true)
         {
             if (_inbound.TryDequeue(out var text))
             {
-                return text; // null 表示对端关闭
+                // null 表示对端关闭：文本与二进制皆为 null 即 IsClosed。
+                return new MediaLinkSocketMessage(text, null);
             }
 
             await _inboundSignal.WaitAsync(cancellationToken);

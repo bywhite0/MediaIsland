@@ -205,6 +205,14 @@ public sealed class MediaLinkSessionOptions
     public Func<MediaInfoChangeKind, Task>? OnEffectiveMediaMutatedAsync { get; init; }
 
     public Func<Task>? OnEffectiveLyricsMutatedAsync { get; init; }
+
+    /// <summary>客户端请求开始推音频。宿主据此启动采集——无订阅者时不应采集。</summary>
+    public Func<MediaLinkSession, Task>? OnAudioPlayStartAsync { get; init; }
+
+    public Func<MediaLinkSession, Task>? OnAudioPlayStopAsync { get; init; }
+
+    /// <summary>收到入站音频帧（转发链路与接收端用）。</summary>
+    public Func<MediaLinkAudioFrameHeader, byte[], Task>? OnAudioFrameAsync { get; init; }
 }
 
 /// <summary>出站帧。<paramref name="Droppable"/> 决定队列满时它能否被牺牲。</summary>
@@ -354,6 +362,10 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private readonly MediaLinkOutboundQueue _outbound = new(64);
     private Task? _writerTask;
 
+    /// <summary>音频容量 8 帧约 160ms：足够吸收网络抖动，又不至于让积压变成可感知的滞后。</summary>
+    private readonly MediaLinkAudioQueue _audioOutbound = new(8);
+    private Task? _audioWriterTask;
+
     public MediaLinkSession(IMediaLinkSocket socket, MediaLinkSessionOptions options, ILogger? logger = null)
     {
         _socket = socket;
@@ -377,6 +389,13 @@ public sealed class MediaLinkSession : IAsyncDisposable
         get { lock (_gate) return _channels.ToArray(); }
     }
 
+    public bool IsSubscribedToAudio
+    {
+        get { lock (_gate) return _channels.Contains(MediaLinkProtocol.ChannelAudio); }
+    }
+
+    public long AudioDroppedCount => _audioOutbound.DroppedCount;
+
     public bool IsSubscribedTo(string channel)
     {
         lock (_gate)
@@ -395,10 +414,10 @@ public sealed class MediaLinkSession : IAsyncDisposable
             while (!_closed && _socket.State == WebSocketState.Open)
             {
                 var token = _authenticated ? cancellationToken : authCts.Token;
-                string? text;
+                MediaLinkSocketMessage received;
                 try
                 {
-                    text = await _socket.ReceiveTextAsync(token);
+                    received = await _socket.ReceiveAsync(token);
                 }
                 catch (OperationCanceledException) when (!_authenticated && !cancellationToken.IsCancellationRequested)
                 {
@@ -407,12 +426,18 @@ public sealed class MediaLinkSession : IAsyncDisposable
                     return;
                 }
 
-                if (text is null)
+                if (received.IsClosed)
                 {
                     break;
                 }
 
-                await HandleMessageAsync(text, cancellationToken);
+                if (received.Binary is { } binary)
+                {
+                    await HandleBinaryAsync(binary, cancellationToken);
+                    continue;
+                }
+
+                await HandleMessageAsync(received.Text!, cancellationToken);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -423,6 +448,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
         {
             _closed = true;
             _outbound.Complete();
+            _audioOutbound.Complete();
         }
     }
 
@@ -433,6 +459,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
     {
         if (_writerTask is not null) return;
         _writerTask = Task.Run(() => WriteLoopAsync(cancellationToken), CancellationToken.None);
+        _audioWriterTask = Task.Run(() => AudioWriteLoopAsync(cancellationToken), CancellationToken.None);
     }
 
     private async Task WriteLoopAsync(CancellationToken cancellationToken)
@@ -472,6 +499,58 @@ public sealed class MediaLinkSession : IAsyncDisposable
     }
 
     /// <summary>
+    /// 音频独立写者。与 JSON 写者分开是因为两者的背压策略相反：
+    /// JSON 队列满且无可丢帧时要以 rate_limited 关闭会话，音频队列满则静默丢最旧。
+    /// 两者共用 socket 的 _sendLock，写入仍然串行。
+    /// </summary>
+    private async Task AudioWriteLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (true)
+            {
+                var frame = await _audioOutbound.DequeueAsync(cancellationToken);
+                if (frame is null)
+                {
+                    break;
+                }
+
+                if (_closed || _socket.State != WebSocketState.Open)
+                {
+                    break;
+                }
+
+                try
+                {
+                    using var sendCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    sendCts.CancelAfter(SendTimeout);
+                    await _socket.SendBinaryAsync(frame, sendCts.Token);
+                }
+                catch
+                {
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    /// <summary>
+    /// 入队音频帧。未订阅 audio 的会话直接丢弃——这保证了老客户端零影响。
+    /// 无失败路径：队列满时丢最旧，不关闭会话。
+    /// </summary>
+    public Task EnqueueAudioAsync(byte[] frame, CancellationToken cancellationToken = default)
+    {
+        if (_closed || !IsSubscribedToAudio)
+        {
+            return Task.CompletedTask;
+        }
+
+        _audioOutbound.Enqueue(frame);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
     /// 所有出站帧统一走队列，由单写者串行发出。控制帧不得绕过队列直发 socket：
     /// 那样会与队列中待发的事件帧交错，破坏 seq 单调性，且没有发送超时保护。
     /// </summary>
@@ -491,12 +570,54 @@ public sealed class MediaLinkSession : IAsyncDisposable
     {
         _closed = true;
         _outbound.Complete();
+        _audioOutbound.Complete();
         try
         {
             if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
                 await _socket.CloseAsync((WebSocketCloseStatus)1011, "rate_limited", cancellationToken);
         }
         catch { }
+    }
+
+    /// <summary>
+    /// 入站二进制帧。解码失败不断连：未知 magic 可能是未来版本的其他二进制帧类型，
+    /// 按协议的"必须容忍未知"原则丢弃即可。
+    ///
+    /// 入站二进制帧本身即是 spec 的 audio.inject——它与推送帧线格式相同、方向相反，
+    /// 一条连接上入站的音频帧无需再用类型字段区分，故不另设 JSON 消息类型。
+    /// </summary>
+    private async Task HandleBinaryAsync(byte[] data, CancellationToken cancellationToken)
+    {
+        if (!IsAuthenticated)
+        {
+            return;
+        }
+
+        // 解码放在同步局部函数里有两重原因：ReadOnlySpan 是 ref struct，C# 12 不允许它出现在
+        // async 方法体内；而 pcm 又是指向 data 的零拷贝切片，WebSocketMediaLinkSocket 复用固定
+        // 接收缓冲，必须在跨 await 之前拷出，否则回调读到的是被下一帧覆写的数据。
+        static (MediaLinkAudioFrameHeader Header, byte[] Pcm)? TryDecodeCopy(
+            byte[] data, out MediaLinkAudioFrameDecodeError error)
+        {
+            if (!MediaLinkAudioFrame.TryDecode(data, out var header, out var pcm, out error))
+            {
+                return null;
+            }
+
+            return (header, pcm.ToArray());
+        }
+
+        var decoded = TryDecodeCopy(data, out var decodeError);
+        if (decoded is null)
+        {
+            _logger?.LogDebug("丢弃无法解码的二进制帧：{Error}", decodeError);
+            return;
+        }
+
+        if (_options.OnAudioFrameAsync is not null)
+        {
+            await _options.OnAudioFrameAsync(decoded.Value.Header, decoded.Value.Pcm);
+        }
     }
 
     public async Task HandleMessageAsync(string text, CancellationToken cancellationToken)
@@ -561,6 +682,12 @@ public sealed class MediaLinkSession : IAsyncDisposable
             case MediaLinkProtocol.TypeThumbnailGet:
                 await HandleThumbnailGetAsync(message, cancellationToken);
                 break;
+            case MediaLinkProtocol.TypeAudioPlayStart:
+                await HandleAudioPlayAsync(message, start: true, cancellationToken);
+                break;
+            case MediaLinkProtocol.TypeAudioPlayStop:
+                await HandleAudioPlayAsync(message, start: false, cancellationToken);
+                break;
             default:
                 await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, $"unknown type: {message.Type}", cancellationToken);
                 break;
@@ -614,6 +741,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
                 // 写超时：对端已不可达，标记会话故障让接收循环退出。
                 _closed = true;
                 _outbound.Complete();
+                _audioOutbound.Complete();
                 _logger?.LogDebug("MediaLink 出站写超时，终止会话");
             }
         }
@@ -730,6 +858,31 @@ public sealed class MediaLinkSession : IAsyncDisposable
         await SendAsync(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeUnsubscribeOk,
             new MediaLinkUnsubscribePayload { Channels = removed.ToList() },
+            id: message.Id), cancellationToken);
+    }
+
+    /// <summary>
+    /// 音频采集的开关。宿主据此启动/停止采集：无人订阅时不该白白占用音频设备。
+    /// 只表达意愿，不改订阅状态——订阅仍由 subscribe/unsubscribe 管理。
+    /// </summary>
+    private async Task HandleAudioPlayAsync(MediaLinkMessage message, bool start, CancellationToken cancellationToken)
+    {
+        if (!IsAuthenticated)
+        {
+            await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorUnauthorized, "authenticate first", cancellationToken);
+            await CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized", cancellationToken);
+            return;
+        }
+
+        var callback = start ? _options.OnAudioPlayStartAsync : _options.OnAudioPlayStopAsync;
+        if (callback is not null)
+        {
+            await callback(this);
+        }
+
+        await SendAsync(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeOk,
+            new MediaLinkOkPayload { For = message.Type },
             id: message.Id), cancellationToken);
     }
     /// <summary>
@@ -1089,6 +1242,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
     {
         _closed = true;
         _outbound.Complete();
+        _audioOutbound.Complete();
         try
         {
             if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -1125,6 +1279,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
 
         _closed = true;
         _outbound.Complete();
+        _audioOutbound.Complete();
         try
         {
             if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
@@ -1144,6 +1299,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
         // 只 Complete，不 Dispose：写者任务可能仍在 await 信号量、发送方仍在 await _sendLock，
         // 此刻释放它们会让对方拿到 ObjectDisposedException。Complete 足以让写者退出。
         _outbound.Complete();
+        _audioOutbound.Complete();
         return ValueTask.CompletedTask;
     }
 }
