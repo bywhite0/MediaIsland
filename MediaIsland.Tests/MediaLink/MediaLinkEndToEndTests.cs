@@ -67,6 +67,18 @@ public class MediaLinkEndToEndTests
         Assert.Equal(MediaLinkProtocol.TypeEvent, hello.GetProperty("type").GetString());
         Assert.Equal(MediaLinkProtocol.EventServerHello, hello.GetProperty("name").GetString());
 
+        // 能力声明必须真的出现在线上报文里：客户端据此决定是否订阅 audio，
+        // 服务端漏填不会报错，只会让音频功能静默失效。
+        var helloPayload = hello.GetProperty("payload");
+        Assert.True(helloPayload.TryGetProperty("capabilities", out var capabilities), "server.hello 未声明 capabilities");
+        Assert.Contains(
+            MediaLinkProtocol.CapabilityAudio,
+            capabilities.EnumerateArray().Select(item => item.GetString()));
+        Assert.True(helloPayload.TryGetProperty("audio", out var audioFormat), "server.hello 未声明 audio 线格式");
+        Assert.Equal(48000, audioFormat.GetProperty("sampleRate").GetInt32());
+        Assert.Equal(2, audioFormat.GetProperty("channels").GetInt32());
+        Assert.Equal("s16le", audioFormat.GetProperty("format").GetString());
+
         // Send auth
         await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token } });
         var authOk = await ReceiveJsonAsync(client);
