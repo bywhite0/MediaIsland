@@ -8,23 +8,33 @@ namespace MediaIsland.Tests.MediaLink;
 
 internal sealed class FakeMediaLinkSocket : IMediaLinkSocket
 {
-    private readonly ConcurrentQueue<string> _incoming = new();
+    private readonly ConcurrentQueue<MediaLinkSocketMessage> _incoming = new();
     private readonly SemaphoreSlim _incomingSignal = new(0);
     private readonly ConcurrentQueue<string> _outgoing = new();
+    private readonly ConcurrentQueue<byte[]> _outgoingBinary = new();
     private int _closed;
 
     public WebSocketState State => Volatile.Read(ref _closed) == 0 ? WebSocketState.Open : WebSocketState.Closed;
 
     public IReadOnlyCollection<string> Outgoing => _outgoing.ToArray();
 
+    public IReadOnlyCollection<byte[]> OutgoingBinary => _outgoingBinary.ToArray();
+
     public void ClearOutgoing()
     {
         while (_outgoing.TryDequeue(out _)) { }
+        while (_outgoingBinary.TryDequeue(out _)) { }
     }
 
     public void EnqueueIncoming(string text)
     {
-        _incoming.Enqueue(text);
+        _incoming.Enqueue(new MediaLinkSocketMessage(text, null));
+        _incomingSignal.Release();
+    }
+
+    public void EnqueueIncomingBinary(byte[] data)
+    {
+        _incoming.Enqueue(new MediaLinkSocketMessage(null, data));
         _incomingSignal.Release();
     }
 
@@ -34,13 +44,19 @@ internal sealed class FakeMediaLinkSocket : IMediaLinkSocket
         return Task.CompletedTask;
     }
 
-    public async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
+    public Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
+    {
+        _outgoingBinary.Enqueue(data.ToArray());
+        return Task.CompletedTask;
+    }
+
+    public async Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken)
     {
         while (true)
         {
-            if (_incoming.TryDequeue(out var text))
+            if (_incoming.TryDequeue(out var message))
             {
-                return text;
+                return message;
             }
 
             await _incomingSignal.WaitAsync(cancellationToken);

@@ -82,8 +82,11 @@ public class MediaLinkGoingAwayTests
         public Task SendTextAsync(string text, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
-        public Task<string?> ReceiveTextAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<string?>(null);
+        public Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(default(MediaLinkSocketMessage));
 
         public Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
         {
@@ -113,8 +116,11 @@ public class MediaLinkGoingAwayTests
         public Task SendTextAsync(string text, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
-        public Task<string?> ReceiveTextAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<string?>(null);
+        public Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(default(MediaLinkSocketMessage));
 
         public Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken) =>
             Task.Delay(delay, cancellationToken);

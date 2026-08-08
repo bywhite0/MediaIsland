@@ -177,8 +177,11 @@ public class MediaLinkSendTimeoutTests
         public Task SendTextAsync(string text, CancellationToken cancellationToken) =>
             Task.Delay(Timeout.Infinite, cancellationToken);
 
-        public Task<string?> ReceiveTextAsync(CancellationToken cancellationToken) =>
-            Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(_ => (string?)null, cancellationToken);
+        public Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
+            Task.Delay(Timeout.Infinite, cancellationToken);
+
+        public Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken) =>
+            Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(_ => default(MediaLinkSocketMessage), cancellationToken);
 
         public Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
         {

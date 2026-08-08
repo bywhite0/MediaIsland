@@ -10,13 +10,48 @@ using Microsoft.Extensions.Logging;
 
 namespace MediaIsland.Services.MediaLink;
 
+/// <summary>
+/// 一条收到的 WebSocket 消息。<see cref="Text"/> 与 <see cref="Binary"/> 恰有一个非 null；
+/// 两者皆 null 表示连接已关闭。用单一结构而非两个方法，是因为文本与二进制共用一条
+/// 接收流，分成两个方法会让调用方无法保持它们的到达顺序。
+/// </summary>
+public readonly record struct MediaLinkSocketMessage(string? Text, byte[]? Binary)
+{
+    public bool IsClosed => Text is null && Binary is null;
+}
+
 public interface IMediaLinkSocket
 {
     WebSocketState State { get; }
 
     Task SendTextAsync(string text, CancellationToken cancellationToken);
 
-    Task<string?> ReceiveTextAsync(CancellationToken cancellationToken);
+    /// <summary>发送二进制帧。音频帧专用，不走 JSON 信封。</summary>
+    Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken);
+
+    /// <summary>收下一条消息，文本与二进制均可。</summary>
+    Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// 只收文本，跳过二进制帧。保留此方法是为了既有调用方无需改写——
+    /// 它们不消费音频，收到二进制返回 null 会被误判为连接关闭。
+    /// </summary>
+    async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            var message = await ReceiveAsync(cancellationToken);
+            if (message.IsClosed)
+            {
+                return null;
+            }
+
+            if (message.Text is { } text)
+            {
+                return text;
+            }
+        }
+    }
 
     Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken);
 
@@ -31,7 +66,7 @@ public interface IMediaLinkSocket
 
 public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSocket, IDisposable
 {
-    /// <summary>单条文本消息组装上限（2 MiB）。</summary>
+    /// <summary>单条消息组装上限（2 MiB），文本与二进制同限。</summary>
     public const int MaxMessageBytes = 2 * 1024 * 1024;
 
     private readonly byte[] _buffer = new byte[64 * 1024];
@@ -53,20 +88,37 @@ public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSo
         }
     }
 
-    public async Task<string?> ReceiveTextAsync(CancellationToken cancellationToken)
+    public async Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
+    {
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            await webSocket.SendAsync(data, WebSocketMessageType.Binary, endOfMessage: true, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    public async Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken)
     {
         using var message = new MemoryStream();
+        var isBinary = false;
+        var started = false;
+
         while (true)
         {
             var result = await webSocket.ReceiveAsync(_buffer, cancellationToken);
             if (result.MessageType == WebSocketMessageType.Close)
             {
-                return null;
+                return default;
             }
 
-            if (result.MessageType != WebSocketMessageType.Text)
+            if (!started)
             {
-                continue;
+                isBinary = result.MessageType == WebSocketMessageType.Binary;
+                started = true;
             }
 
             if (message.Length + result.Count > MaxMessageBytes)
@@ -83,13 +135,16 @@ public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSo
                     // ignore close races
                 }
 
-                return null;
+                return default;
             }
 
             message.Write(_buffer, 0, result.Count);
             if (result.EndOfMessage)
             {
-                return Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
+                return isBinary
+                    ? new MediaLinkSocketMessage(null, message.ToArray())
+                    : new MediaLinkSocketMessage(
+                        Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length), null);
             }
         }
     }

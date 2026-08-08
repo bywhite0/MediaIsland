@@ -517,7 +517,10 @@ public class MediaLinkSessionConcurrencyAndAuthTests
             Interlocked.Decrement(ref _inFlight);
         }
 
-        public Task<string?> ReceiveTextAsync(CancellationToken cancellationToken) =>
+        public Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken) =>
             throw new NotSupportedException();
 
         public Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken) =>
