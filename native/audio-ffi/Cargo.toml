@@ -1,0 +1,27 @@
+[package]
+name = "mediaisland_audio"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Cargo crate/lib names cannot contain '.'; MSBuild renames the built DLL to MediaIsland.Audio.dll for packaging.
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "mediaisland_audio"
+
+[dependencies]
+rubato = "0.16"
+
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+]

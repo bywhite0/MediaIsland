@@ -5,6 +5,7 @@ on:
     paths:
       - 'MediaIsland/**'
       - 'native/ttml-ffi/**'
+      - 'native/audio-ffi/**'
       - '.github/workflows/build.yml'
   workflow_dispatch: 
 
@@ -30,7 +31,9 @@ jobs:
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: native/ttml-ffi -> target
+          workspaces: |
+            native/ttml-ffi -> target
+            native/audio-ffi -> target
 
       - name: Cache NuGet Packages
         uses: actions/cache@v4
