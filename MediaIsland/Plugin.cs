@@ -8,6 +8,7 @@ using ClassIsland.Core.Extensions.Registry;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
+using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Storage;
 using MediaIsland.Services.Lyrics.Models;
@@ -63,6 +64,11 @@ namespace MediaIsland
                 provider.GetRequiredService<ILyricsStore>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
             services.AddSingleton<MediaLinkInjectionStore>();
+            // 分析层三件套：需求计数、共享分析器、门面。全是单例——FFT 贵且与观察者无关，
+            // N 个频谱组件共用一次计算。
+            services.AddSingleton<AudioVisualizationDemand>();
+            services.AddSingleton<AudioSpectrumAnalyzer>();
+            services.AddSingleton<AudioVisualizationService>();
             services.AddSingleton<MediaSourceCoordinator>(provider => new MediaSourceCoordinator(
                 provider.GetRequiredService<IMediaService>(),
                 provider.GetRequiredService<LyricsSearchService>(),
@@ -77,15 +83,30 @@ namespace MediaIsland
                 provider.GetRequiredService<MediaSourceCoordinator>(),
                 provider.GetRequiredService<MediaPlatformProviderResolver>(),
                 () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
-                provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()));
+                provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(),
+                provider.GetRequiredService<AudioVisualizationDemand>(),
+                provider.GetRequiredService<AudioVisualizationService>(),
+                // 用 lambda 延迟解析：两个宿主服务互相引用，直接注入会形成构造期循环依赖。
+                () => provider.GetRequiredService<MediaLinkUpstreamHostedService>().IsConsumingUpstreamAudio));
             services.AddSingleton<IMediaLinkGateway>(provider => provider.GetRequiredService<MediaLinkHostedService>());
             services.AddHostedService(provider => provider.GetRequiredService<MediaLinkHostedService>());
             // 上游消费与服务端相互独立：一台实例可以只推、只收，或两者同时（转发中继）。
-            services.AddSingleton<MediaLinkUpstreamHostedService>(provider => new MediaLinkUpstreamHostedService(
-                provider.GetRequiredService<MediaLinkInjectionStore>(),
-                provider.GetRequiredService<MediaSourceCoordinator>(),
-                () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
-                provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()));
+            services.AddSingleton<MediaLinkUpstreamHostedService>(provider =>
+            {
+                var upstream = new MediaLinkUpstreamHostedService(
+                    provider.GetRequiredService<MediaLinkInjectionStore>(),
+                    provider.GetRequiredService<MediaSourceCoordinator>(),
+                    () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
+                    provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(),
+                    visualization: provider.GetRequiredService<AudioVisualizationService>(),
+                    visualizationDemand: provider.GetRequiredService<AudioVisualizationDemand>());
+
+                // 音源仲裁变了就让服务端重算本机采集需求。在这里接线而不是让两个服务
+                // 互相注入——后者是构造期循环依赖。
+                upstream.AudioSourceChanged += (_, _) =>
+                    _ = provider.GetRequiredService<MediaLinkHostedService>().RecomputeAudioCaptureDemandAsync();
+                return upstream;
+            });
             services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();

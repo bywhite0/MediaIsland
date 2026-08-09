@@ -1,4 +1,5 @@
 using MediaIsland.Models;
+using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink.Mapping;
 using Microsoft.Extensions.Hosting;
@@ -22,10 +23,14 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     private readonly ILogger<MediaLinkUpstreamHostedService>? _logger;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly Func<long> _tickProvider;
+    private readonly AudioVisualizationService? _visualization;
+    private readonly AudioVisualizationDemand? _demand;
 
     private MediaLinkClient? _client;
+    private MediaLinkAudioReceiver? _audioReceiver;
     private PluginSettings? _boundSettings;
     private CancellationTokenSource? _debounceCts;
+    private bool _upstreamAudioEnabled;
     private bool _disposed;
 
     public MediaLinkUpstreamHostedService(
@@ -33,7 +38,9 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         MediaSourceCoordinator coordinator,
         Func<PluginSettings> settingsFactory,
         ILoggerFactory? loggerFactory = null,
-        Func<long>? tickProvider = null)
+        Func<long>? tickProvider = null,
+        AudioVisualizationService? visualization = null,
+        AudioVisualizationDemand? visualizationDemand = null)
     {
         _injectionStore = injectionStore ?? throw new ArgumentNullException(nameof(injectionStore));
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -41,19 +48,52 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         _loggerFactory = loggerFactory;
         _logger = loggerFactory?.CreateLogger<MediaLinkUpstreamHostedService>();
         _tickProvider = tickProvider ?? (() => Environment.TickCount64);
+        _visualization = visualization;
+        _demand = visualizationDemand;
     }
 
     public bool IsConnected => _client?.IsConnected == true;
+
+    /// <summary>
+    /// 是否正在消费上游音频。用连接态判断，不用帧流量判断——
+    /// 按「最近 N 毫秒有没有收到帧」来定，上游断续时采集会反复启停，
+    /// 得加迟滞、加时间窗，是一串补丁。
+    ///
+    /// 上游连着但对方暂停时收到的是静音帧（第 2 期保证暂停不断流），
+    /// 频谱归零正是正确表现，不该回落本机——回落会让用户看到本机的声音
+    /// 却以为那是远端的。
+    /// </summary>
+    public bool IsConsumingUpstreamAudio => ShouldConsumeUpstreamAudio(
+        _upstreamAudioEnabled, IsConnected, _client?.SupportsAudio == true, _demand?.IsDemanded == true);
+
+    /// <summary>
+    /// 仲裁本身。抽成静态纯函数，让这四个条件的组合可以被真值表逐格锁死——
+    /// 端到端驱动它需要真实 listener、真实 socket 与真实音频设备，而它的全部内容
+    /// 就是四个布尔量。
+    /// </summary>
+    internal static bool ShouldConsumeUpstreamAudio(
+        bool upstreamEnabled, bool connected, bool supportsAudio, bool visualizationDemanded) =>
+        upstreamEnabled && connected && supportsAudio && visualizationDemanded;
 
     public string? LastError { get; private set; }
 
     /// <summary>连接状态或配置变化时触发，供设置页刷新，避免轮询。</summary>
     public event EventHandler? StateChanged;
 
+    /// <summary>音源仲裁结果可能已变。服务端据此重算本机采集需求。</summary>
+    public event EventHandler? AudioSourceChanged;
+
     private void RaiseStateChanged() => StateChanged?.Invoke(this, EventArgs.Empty);
+
+    private void RaiseAudioSourceChanged() => AudioSourceChanged?.Invoke(this, EventArgs.Empty);
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        if (_demand is not null)
+        {
+            _demand.DemandChanged += OnVisualizationDemandChanged;
+        }
+
         var settings = _settingsFactory();
         BindSettings(settings);
         await ApplySettingsAsync(settings, cancellationToken);
@@ -166,10 +206,33 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             client.MediaReceived += OnMediaReceived;
             client.LyricsReceived += OnLyricsReceived;
             client.ConnectionStateChanged += OnClientConnectionStateChanged;
+
+            if (_visualization is not null)
+            {
+                // trackToken 与歌词同源：切歌后过期曲目的 PCM 由接收侧丢弃。
+                _audioReceiver = new MediaLinkAudioReceiver(
+                    _visualization,
+                    () => _injectionStore.GetMediaSnapshot() is { } media
+                        ? MediaLinkDtoMapper.ComputeTrackToken(
+                            media.SourceApp, media.Title, media.Artist, media.AlbumTitle)
+                        : null,
+                    _loggerFactory?.CreateLogger<MediaLinkAudioReceiver>());
+                client.AudioFrameReceived += OnAudioFrameReceived;
+            }
+
             _client = client;
+            _upstreamAudioEnabled = true;
             client.Start();
+
+            // 连上之后按当前需求补一次订阅意愿：组件可能在断线期间就挂载好了。
+            if (_demand?.IsDemanded == true)
+            {
+                await client.SetAudioSubscribedAsync(true);
+            }
+
             LastError = null;
             RaiseStateChanged();
+            RaiseAudioSourceChanged();
         }
         catch (Exception ex)
         {
@@ -263,20 +326,74 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         }
     }
 
-    private void OnClientConnectionStateChanged(object? sender, EventArgs e) => RaiseStateChanged();
+    private void OnClientConnectionStateChanged(object? sender, EventArgs e)
+    {
+        RaiseStateChanged();
+        // 连接态是仲裁的入参之一：断连必须让服务端重算，否则本机采集不会自动接上。
+        RaiseAudioSourceChanged();
+    }
+
+    private void OnAudioFrameReceived(object? sender, MediaLinkAudioFrameReceivedEventArgs e)
+    {
+        try
+        {
+            _audioReceiver?.Handle(e.Frame);
+        }
+        catch (Exception ex)
+        {
+            // 单帧处理失败不该拖垮收循环——那会把一次数据问题升级成一次断连。
+            _logger?.LogDebug(ex, "处理上游音频帧失败");
+        }
+    }
+
+    /// <summary>
+    /// 可视化需求变化：重算而非增减。订阅与本机采集同构——都是「有消费者才占资源」，
+    /// 无消费者时订阅 audio 会让上游白采集、白传约 192KB/s。
+    /// </summary>
+    private void OnVisualizationDemandChanged()
+    {
+        var client = _client;
+        if (client is null)
+        {
+            RaiseAudioSourceChanged();
+            return;
+        }
+
+        // 不在事件线程上 await：需求变化由组件的 Loaded/Unloaded 触发，那是 UI 线程。
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await client.SetAudioSubscribedAsync(_demand?.IsDemanded == true);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "切换上游音频订阅失败");
+            }
+            finally
+            {
+                RaiseAudioSourceChanged();
+            }
+        });
+    }
 
     private async Task StopClientAsync()
     {
         if (_client is null)
         {
+            _upstreamAudioEnabled = false;
             return;
         }
 
         _client.MediaReceived -= OnMediaReceived;
         _client.LyricsReceived -= OnLyricsReceived;
         _client.ConnectionStateChanged -= OnClientConnectionStateChanged;
+        _client.AudioFrameReceived -= OnAudioFrameReceived;
         await _client.StopAsync();
         _client = null;
+        _audioReceiver = null;
+        _upstreamAudioEnabled = false;
+        RaiseAudioSourceChanged();
     }
 
     public void Dispose()
@@ -289,6 +406,11 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         _disposed = true;
         _debounceCts?.Cancel();
         _debounceCts?.Dispose();
+
+        if (_demand is not null)
+        {
+            _demand.DemandChanged -= OnVisualizationDemandChanged;
+        }
 
         if (_boundSettings is not null)
         {
