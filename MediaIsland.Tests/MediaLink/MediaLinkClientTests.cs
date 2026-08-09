@@ -238,7 +238,7 @@ public class MediaLinkClientTests
 /// </summary>
 internal sealed class ScriptedClientSocket : IMediaLinkClientSocket
 {
-    private readonly ConcurrentQueue<string?> _inbound = new();
+    private readonly ConcurrentQueue<MediaLinkSocketMessage> _inbound = new();
     private readonly ConcurrentQueue<string> _sent = new();
     private readonly SemaphoreSlim _inboundSignal = new(0);
     private readonly SemaphoreSlim _sentSignal = new(0);
@@ -267,10 +267,9 @@ internal sealed class ScriptedClientSocket : IMediaLinkClientSocket
     {
         while (true)
         {
-            if (_inbound.TryDequeue(out var text))
+            if (_inbound.TryDequeue(out var message))
             {
-                // null 表示对端关闭：文本与二进制皆为 null 即 IsClosed。
-                return new MediaLinkSocketMessage(text, null);
+                return message;
             }
 
             await _inboundSignal.WaitAsync(cancellationToken);
@@ -285,16 +284,21 @@ internal sealed class ScriptedClientSocket : IMediaLinkClientSocket
         }
     }
 
-    public void QueueRaw(string text)
-    {
-        _inbound.Enqueue(text);
-        _inboundSignal.Release();
-    }
+    public void QueueRaw(string text) => Enqueue(new MediaLinkSocketMessage(text, null));
 
-    /// <summary>入队关闭信号，使 ReceiveTextAsync 返回 null。</summary>
-    public void QueueClose()
+    /// <summary>
+    /// 入队一个二进制帧。队列存的是完整的 <see cref="MediaLinkSocketMessage"/> 而非裸文本，
+    /// 因为音频走的是二进制帧——只存文本就没法表达「这一条是二进制」，
+    /// 而客户端对两者的处理路径完全不同。
+    /// </summary>
+    public void QueueBinary(byte[] frame) => Enqueue(new MediaLinkSocketMessage(null, frame));
+
+    /// <summary>入队关闭信号：文本与二进制皆为 null 即 IsClosed。</summary>
+    public void QueueClose() => Enqueue(default);
+
+    private void Enqueue(MediaLinkSocketMessage message)
     {
-        _inbound.Enqueue(null);
+        _inbound.Enqueue(message);
         _inboundSignal.Release();
     }
 

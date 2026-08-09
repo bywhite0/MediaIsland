@@ -147,6 +147,13 @@ public sealed class MediaLinkLyricsReceivedEventArgs(MediaLinkLyricsDto lyrics) 
     public MediaLinkLyricsDto Lyrics { get; } = lyrics;
 }
 
+public sealed class MediaLinkAudioFrameReceivedEventArgs(byte[] frame) : EventArgs
+{
+    /// <summary>完整的协议二进制帧（含帧头）。解码由 MediaLinkAudioReceiver 负责——
+    /// 客户端只认「这是一条二进制消息」，不认它的内部结构。</summary>
+    public byte[] Frame { get; } = frame;
+}
+
 /// <summary>
 /// 消费另一台实例 MediaLink 服务的客户端。负责连接、认证、订阅与重连，
 /// 并按协议处理 sessionEpoch 与 seq；不决定收到的数据如何使用。
@@ -162,14 +169,19 @@ public sealed class MediaLinkClient : IAsyncDisposable
     private long _sessionEpoch = -1;
     private long _lastSeq;
     private IReadOnlyCollection<string> _serverCapabilities = [];
+    private volatile bool _audioSubscriptionWanted;
+    private IMediaLinkClientSocket? _activeSocket;
 
     /// <summary>
     /// 服务端在 server.hello 声明的可选能力。第 3 期据此决定是否订阅 audio——
     /// subscribe 是整体请求，向不支持的服务端请求 audio 会让 media 与 lyrics 一起被拒。
+    ///
+    /// 用 Volatile 读写：写入发生在握手线程，而本属性会被需求变化线程读取来决定订阅内容。
+    /// 第 1 期判定「当前无消费者，暂不加屏障」，本期那两条线程真实存在了。
     /// </summary>
-    public IReadOnlyCollection<string> ServerCapabilities => _serverCapabilities;
+    public IReadOnlyCollection<string> ServerCapabilities => Volatile.Read(ref _serverCapabilities);
 
-    public bool SupportsAudio => _serverCapabilities.Contains(MediaLinkProtocol.CapabilityAudio);
+    public bool SupportsAudio => ServerCapabilities.Contains(MediaLinkProtocol.CapabilityAudio);
 
     public MediaLinkClient(MediaLinkClientOptions options, ILogger? logger = null, Func<long>? tickProvider = null)
     {
@@ -185,6 +197,9 @@ public sealed class MediaLinkClient : IAsyncDisposable
     public event EventHandler<MediaLinkMediaReceivedEventArgs>? MediaReceived;
 
     public event EventHandler<MediaLinkLyricsReceivedEventArgs>? LyricsReceived;
+
+    /// <summary>收到一条二进制消息。本期只有音频帧走二进制通道。</summary>
+    public event EventHandler<MediaLinkAudioFrameReceivedEventArgs>? AudioFrameReceived;
 
     /// <summary>连接状态变化（含重连中断），供 UI 显示。</summary>
     public event EventHandler? ConnectionStateChanged;
@@ -280,21 +295,109 @@ public sealed class MediaLinkClient : IAsyncDisposable
         await ExpectAuthResultAsync(socket, handshakeCts.Token);
         await SendAsync(socket, MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeSubscribe,
-            new MediaLinkSubscribePayload { Channels = _options.Channels.ToList() },
+            new MediaLinkSubscribePayload { Channels = BuildChannels() },
             id: "sub"), handshakeCts.Token);
 
         SetConnected(true);
         LastError = null;
 
-        while (!cancellationToken.IsCancellationRequested)
+        // 记下活动 socket，供运行中切换订阅时复用。握手完成前不记：那时发控制帧没有意义。
+        _activeSocket = socket;
+        try
         {
-            var text = await socket.ReceiveTextAsync(cancellationToken);
-            if (text is null)
+            if (_audioSubscriptionWanted && SupportsAudio)
             {
-                return; // 对端关闭，交给重连逻辑
+                await SendAsync(socket, MediaLinkMessageSerializer.Create(
+                    MediaLinkProtocol.TypeAudioPlayStart, payload: null, id: "audio-start"), cancellationToken);
             }
 
-            Dispatch(text);
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var received = await socket.ReceiveAsync(cancellationToken);
+                if (received.IsClosed)
+                {
+                    return; // 对端关闭，交给重连逻辑
+                }
+
+                if (received.Binary is { } binary)
+                {
+                    AudioFrameReceived?.Invoke(this, new MediaLinkAudioFrameReceivedEventArgs(binary));
+                    continue;
+                }
+
+                if (received.Text is { } text)
+                {
+                    Dispatch(text);
+                }
+            }
+        }
+        finally
+        {
+            _activeSocket = null;
+        }
+    }
+
+    /// <summary>
+    /// subscribe 是整体替换语义，且向不支持 audio 的老服务端请求 audio 会让
+    /// media 与 lyrics 一起被拒。故 audio 只在对端声明支持时才加入，
+    /// 且每次都发全量频道列表而非增量。
+    /// </summary>
+    private List<string> BuildChannels()
+    {
+        var channels = _options.Channels.ToList();
+        var wantsAudio = _audioSubscriptionWanted && SupportsAudio;
+        var hasAudio = channels.Contains(MediaLinkProtocol.ChannelAudio, StringComparer.Ordinal);
+
+        if (wantsAudio && !hasAudio)
+        {
+            channels.Add(MediaLinkProtocol.ChannelAudio);
+        }
+        else if (!wantsAudio && hasAudio)
+        {
+            channels.RemoveAll(c => string.Equals(c, MediaLinkProtocol.ChannelAudio, StringComparison.Ordinal));
+        }
+
+        return channels;
+    }
+
+    /// <summary>
+    /// 切换音频订阅意愿。意愿与连接解耦：未连接时只记下，下次连上自动带上——
+    /// 否则组件在断线期间挂载，需求就永久丢失，得等用户手动重开组件才恢复。
+    ///
+    /// 重复传相同值是 no-op：需求侧的取向是「状态变了就无脑重算并调用」，
+    /// 不去重会让每次需求事件都多一轮 subscribe 往返。
+    /// </summary>
+    public async Task SetAudioSubscribedAsync(bool subscribed)
+    {
+        if (_audioSubscriptionWanted == subscribed)
+        {
+            return;
+        }
+
+        _audioSubscriptionWanted = subscribed;
+
+        var socket = _activeSocket;
+        if (socket is null || !IsConnected || !SupportsAudio)
+        {
+            return;
+        }
+
+        try
+        {
+            await SendAsync(socket, MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeSubscribe,
+                new MediaLinkSubscribePayload { Channels = BuildChannels() },
+                id: "sub-audio"), CancellationToken.None);
+
+            await SendAsync(socket, MediaLinkMessageSerializer.Create(
+                subscribed ? MediaLinkProtocol.TypeAudioPlayStart : MediaLinkProtocol.TypeAudioPlayStop,
+                payload: null,
+                id: subscribed ? "audio-start" : "audio-stop"), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 发送失败即连接已坏，重连逻辑会带着新意愿重新握手，不必在此重试。
+            _logger?.LogDebug(ex, "切换音频订阅失败");
         }
     }
 
@@ -335,9 +438,9 @@ public sealed class MediaLinkClient : IAsyncDisposable
     /// </summary>
     private void ApplyServerHello(MediaLinkServerHelloPayload? payload)
     {
-        _serverCapabilities = payload?.Capabilities is { } capabilities
+        Volatile.Write(ref _serverCapabilities, payload?.Capabilities is { } capabilities
             ? new HashSet<string>(capabilities, StringComparer.Ordinal)
-            : [];
+            : []);
         HandleEpoch(payload?.SessionEpoch ?? 0);
     }
 
