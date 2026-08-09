@@ -4,7 +4,7 @@ namespace MediaIsland.Services.Audio;
 /// 一块采集到的 PCM。恒为 48000Hz / 2 声道 / i16 小端交错——这是 MediaLink 声明的线格式，
 /// 归一化在 native 侧完成，托管侧不再处理设备原始格式。
 ///
-/// 刻意**不带曲目位置**：本层不知晓「曲目」这个概念，那是 MediaLink 的领域。
+/// 刻意不带曲目位置：本层不知晓「曲目」这个概念，那是 MediaLink 的领域。
 /// 这里只给出采样时刻的 QPC 读数，由上层结合 SMTC 插值位置推出曲目位置。
 /// 边界切在「PCM 帧源」而非「loopback 实现」，故换平台（PipeWire / CoreAudio）时本类型不变。
 /// </summary>

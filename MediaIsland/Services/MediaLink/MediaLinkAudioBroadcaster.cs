@@ -10,7 +10,7 @@ namespace MediaIsland.Services.MediaLink;
 /// <summary>
 /// 把采集到的 PCM 盖上曲目标识与时间戳，编码为协议帧并广播给订阅 <c>audio</c> 的会话。
 ///
-/// 这是 <c>Services/Audio</c> 与 <c>Services/MediaLink</c> 的**唯一接缝**：它同时知道
+/// 这是 <c>Services/Audio</c> 与 <c>Services/MediaLink</c> 的唯一接缝：它同时知道
 /// 曲目（问 <see cref="MediaSourceCoordinator"/>）与协议（调 <see cref="MediaLinkAudioFrame"/>），
 /// 而那两层都不知道对方存在。
 /// </summary>

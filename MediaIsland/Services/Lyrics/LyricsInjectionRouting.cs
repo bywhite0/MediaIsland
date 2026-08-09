@@ -14,7 +14,7 @@ namespace MediaIsland.Services.Lyrics;
 internal static class LyricsInjectionRouting
 {
     /// <param name="isExternalMediaEffective">
-    /// 当前生效的**媒体**来自 MediaLink 注入。此时歌词无论来自哪里都应直接套用：
+    /// 当前生效的媒体来自 MediaLink 注入。此时歌词无论来自哪里都应直接套用：
     /// 本机没有这首曲目的播放上下文，搜索也无从谈起。
     /// </param>
     /// <param name="lyricsSource">

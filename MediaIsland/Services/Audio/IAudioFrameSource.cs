@@ -15,7 +15,7 @@ public interface IAudioFrameSource
     string? FailureReason { get; }
 
     /// <summary>
-    /// 采集到一块 PCM。**在采集线程上同步触发**，处理器不得阻塞——
+    /// 采集到一块 PCM。在采集线程上同步触发，处理器不得阻塞——
     /// 阻塞会让 WASAPI 缓冲溢出并产生丢帧。
     /// </summary>
     event Action<AudioFrame>? FrameAvailable;

@@ -9,7 +9,7 @@ namespace MediaIsland.Services.Audio.Native;
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeAudioFrame
 {
-    /// <summary>交错 i16。**仅在回调期间有效**，返回后立即失效。</summary>
+    /// <summary>交错 i16。仅在回调期间有效，返回后立即失效。</summary>
     public nint Samples;
 
     public nuint FrameCount;
@@ -24,7 +24,7 @@ internal struct NativeAudioFrame
 /// <c>MediaIsland.Audio</c> 的 P/Invoke 绑定。
 ///
 /// 降级模式沿用 <c>TtmlNativeParser</c>：首次访问时探 ABI 版本，DLL 缺失或版本不匹配则
-/// <see cref="IsAvailable"/> 转假并记下 <see cref="FailureReason"/>，**不抛给调用方**。
+/// <see cref="IsAvailable"/> 转假并记下 <see cref="FailureReason"/>，不抛给调用方。
 /// 采集因此成为可选能力——接收、转发、可视化都是纯托管的，在没有 native 库的平台上照常工作。
 /// </summary>
 internal static partial class AudioCaptureNative

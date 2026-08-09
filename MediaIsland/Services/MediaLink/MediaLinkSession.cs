@@ -239,7 +239,7 @@ public sealed class MediaLinkSessionOptions
 internal readonly record struct MediaLinkOutboundFrame(string Json, bool Droppable);
 
 /// <summary>
-/// 每会话出站有界队列。相比 <c>Channel</c> 的 DropOldest，这里的丢弃是**按可丢标记选择**的：
+/// 每会话出站有界队列。相比 <c>Channel</c> 的 DropOldest，这里的丢弃是按可丢标记选择的：
 /// 队列满时只挤掉最旧的可丢帧（<c>media.updated</c>，客户端有插值兜底），
 /// 歌词与控制帧永不被挤掉。队头恰好是不可丢帧时 Channel 的 DropOldest 会丢错对象。
 /// </summary>
@@ -383,7 +383,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
     private Task? _writerTask;
 
     /// <summary>
-    /// 音频出站队列，按**帧数**而非时长计量——帧长由音频设备决定，服务端选不了
+    /// 音频出站队列，按帧数而非时长计量——帧长由音频设备决定，服务端选不了
     /// （WASAPI 共享模式下实测约 10ms/帧，8 帧即约 80ms）。
     ///
     /// 丢最旧的前提下，队列深度决定的只是「发送暂时卡顿时保留多少最新帧」，

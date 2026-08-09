@@ -9,7 +9,7 @@ namespace MediaIsland.Tests.MediaLink;
 /// <summary>
 /// 注入歌词的来源标注。
 ///
-/// 关键约束：Source 恒为 External 是**路由要求**而非标签——LyricsComponent 按
+/// 关键约束：Source 恒为 External 是路由要求而非标签——LyricsComponent 按
 /// Source == External 决定是否直接应用注入歌词。真实来源另存于 OriginSource，
 /// 只用于显示。
 /// </summary>

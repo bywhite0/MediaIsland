@@ -8,7 +8,7 @@ namespace MediaIsland.Services.Lyrics;
 /// 跨播放器稳定的曲目标识，用作歌词缓存与固定歌词的键。
 /// </summary>
 /// <remarks>
-/// 与 <c>MediaLinkDtoMapper.ComputeTrackToken</c> 算法相同但**语义不同**，故不共用代码：
+/// 与 <c>MediaLinkDtoMapper.ComputeTrackToken</c> 算法相同但语义不同，故不共用代码：
 /// 后者把 SourceApp 计入哈希、且不归一化文本，用于让客户端把 media 与 lyrics 两帧配对；
 /// 本类要求同一首歌在任何播放器下都得到同一个键，因此归一化文本且不含 SourceApp。
 /// 时长同样不参与——播放器上报的时长有零点几秒的抖动，计入会让缓存永久不命中。

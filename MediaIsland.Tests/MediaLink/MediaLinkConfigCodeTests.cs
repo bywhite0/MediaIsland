@@ -4,7 +4,7 @@ using Xunit;
 namespace MediaIsland.Tests.MediaLink;
 
 /// <summary>
-/// 连接配置码。它承载密钥且**未加密**，所以这里既验证可用性，
+/// 连接配置码。它承载密钥且未加密，所以这里既验证可用性，
 /// 也把"不该给出一个连不上的配置码"这类判断固定下来。
 /// </summary>
 public class MediaLinkConfigCodeTests

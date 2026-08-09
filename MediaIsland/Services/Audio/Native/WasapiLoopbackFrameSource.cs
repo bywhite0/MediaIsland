@@ -156,7 +156,7 @@ internal sealed class WasapiLoopbackFrameSource : IAudioFrameSource, IDisposable
     }
 
     /// <summary>
-    /// native 采集线程的入口。**不得抛出**——异常穿过 FFI 边界是未定义行为，
+    /// native 采集线程的入口。不得抛出——异常穿过 FFI 边界是未定义行为，
     /// 在 .NET 上表现为进程直接终止，且崩溃现场看不出真正的错误。
     /// </summary>
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]

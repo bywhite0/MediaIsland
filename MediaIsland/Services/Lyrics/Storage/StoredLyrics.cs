@@ -3,7 +3,7 @@ using MediaIsland.Services.Lyrics.Models;
 namespace MediaIsland.Services.Lyrics.Storage;
 
 /// <summary>
-/// 落盘的歌词条目。存**原始 payload** 而非解析后的 <see cref="LyricsDocument"/>：
+/// 落盘的歌词条目。存原始 payload 而非解析后的 <see cref="LyricsDocument"/>：
 /// 昂贵的是 HTTP 往返而非解析，且解析器改进后老条目自动受益、逐字偏好变更无需清库。
 /// </summary>
 internal sealed record StoredLyrics(

@@ -8,7 +8,7 @@ namespace MediaIsland.Services.MediaLink;
 /// 可视化只关心"现在在响什么"，积压的历史帧已经过期，保留最新帧才对；
 /// 播放侧的连续性由接收端的环形缓冲负责，不由发送队列负责。
 ///
-/// 因此音频队列满**不触发** rate_limited 关闭会话——那是 JSON 队列面对
+/// 因此音频队列满不触发 rate_limited 关闭会话——那是 JSON 队列面对
 /// 不可丢帧时才需要的处置。
 /// </summary>
 internal sealed class MediaLinkAudioQueue

@@ -7,7 +7,7 @@ using Xunit.Abstractions;
 namespace MediaIsland.Tests.Audio;
 
 /// <summary>
-/// 真机 WASAPI loopback 采集验证。**默认跳过**——它需要真实音频设备且正在放音，
+/// 真机 WASAPI loopback 采集验证。默认跳过——它需要真实音频设备且正在放音，
 /// 在 CI 上必然失败。手工验证时把 Skip 去掉再跑。
 ///
 /// 这是本期唯一无法自动化的一环：WASAPI 依赖真机，其余全部由单测覆盖。

@@ -10,11 +10,11 @@ namespace MediaIsland.Tests.MediaLink;
 /// <summary>
 /// 采集帧到 MediaLink 音频帧的转换与广播。
 ///
-/// 广播器是 Services/Audio 与 Services/MediaLink 的**唯一接缝**：它知道曲目
+/// 广播器是 Services/Audio 与 Services/MediaLink 的唯一接缝：它知道曲目
 /// （问 MediaSourceCoordinator）也知道协议（调 MediaLinkAudioFrame.Encode），
 /// 而两边都不知道对方。
 ///
-/// 这里锁定的最关键一条是 trackToken 与 media.updated **同源**——不同源会让客户端
+/// 这里锁定的最关键一条是 trackToken 与 media.updated 同源——不同源会让客户端
 /// 按协议规则比对后丢弃全部音频，且失败是完全静默的。
 /// </summary>
 public class MediaLinkAudioBroadcasterTests

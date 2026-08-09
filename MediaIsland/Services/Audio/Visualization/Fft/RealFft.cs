@@ -14,7 +14,7 @@ public static class RealFft
     /// 就地变换：<paramref name="real"/> 与 <paramref name="imaginary"/> 同时被结果覆写，
     /// 纯实信号把虚部传全零即可。零分配、不碰共享状态，可每帧调用。
     ///
-    /// 结果**不做归一化**，量级随长度线性增长（全 1.0 的 N 点输入，bin 0 == N）。
+    /// 结果不做归一化，量级随长度线性增长（全 1.0 的 N 点输入，bin 0 == N）。
     /// 归一化留给调用方：加窗与否、显示如何标定各有不同系数，塞进这里会绑死一种策略。
     /// </summary>
     /// <exception cref="ArgumentException">
@@ -77,7 +77,7 @@ public static class RealFft
     /// 由 <see cref="Transform"/> 的输出算幅度谱，写入 <paramref name="magnitudes"/>。
     ///
     /// 只输出前 N/2 个 bin：实信号的谱共轭对称，后半是镜像。下标 i 对应
-    /// <c>i * sampleRate / N</c> Hz，**不含** Nyquist bin，即频率轴是半开区间 [0, sampleRate/2)。
+    /// <c>i * sampleRate / N</c> Hz，不含 Nyquist bin，即频率轴是半开区间 [0, sampleRate/2)。
     /// 标度承接 <see cref="Transform"/>，同样未归一化。
     /// </summary>
     /// <exception cref="ArgumentException">

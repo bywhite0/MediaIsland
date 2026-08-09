@@ -13,7 +13,7 @@ namespace MediaIsland.Tests.Audio;
 ///
 /// 沿用 TtmlNativeParser 的 IsAvailable / FailureReason 模式。
 ///
-/// 注意：这些测试**不触发真实采集**（需要真机音频设备），只覆盖降级判定与
+/// 注意：这些测试不触发真实采集（需要真机音频设备），只覆盖降级判定与
 /// 生命周期的安全性。真实 loopback 由 AGENTS.md 的手工清单验证。
 /// </summary>
 [Collection(nameof(AudioNativeCollection))]

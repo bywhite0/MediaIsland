@@ -1363,7 +1363,7 @@ namespace MediaIsland.SettingsPages
 
         /// <summary>
         /// 复制本机的配置码，供另一台设备一键导入，免去手抄 32 字节密钥。
-        /// 配置码含密钥且**未加密**，故提示语必须说明这一点。
+        /// 配置码含密钥且未加密，故提示语必须说明这一点。
         /// </summary>
         private async void CopyMediaLinkConfigCodeOnClick(object? sender, RoutedEventArgs e)
         {

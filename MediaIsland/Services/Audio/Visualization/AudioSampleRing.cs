@@ -5,11 +5,11 @@ namespace MediaIsland.Services.Audio.Visualization;
 /// <summary>
 /// 单写单读的环形缓冲，存混单声道后的 float 采样。
 ///
-/// 采集帧约 480 采样/声道（实测 10ms），而 FFT 需 2048 点——**不存在「一帧一次 FFT」**，
+/// 采集帧约 480 采样/声道（实测 10ms），而 FFT 需 2048 点——不存在「一帧一次 FFT」，
 /// 必须累积。容量取 2 窗，保证任何时刻都能凑出一整窗。
 ///
 /// 写者是音频线程（唯一写者），读者是 UI 线程。写位置用 <see cref="Volatile"/> 读写，
-/// **不加锁**：极端情况下读到跨越写指针的撕裂数据，后果是一帧频谱有噪声、下一帧即恢复，
+/// 不加锁：极端情况下读到跨越写指针的撕裂数据，后果是一帧频谱有噪声、下一帧即恢复，
 /// 不值得为它阻塞音频线程——阻塞会让 WASAPI 缓冲溢出并真的丢帧。
 /// </summary>
 public sealed class AudioSampleRing
@@ -43,7 +43,7 @@ public sealed class AudioSampleRing
 
     /// <summary>
     /// 已写入的总采样数（每声道），单调递增。UI 侧据此判断有没有新数据。
-    /// **不随回绕归零**——归零会让「写位置变了吗」的判断在回绕点误判为没变，频谱恰好卡那一帧。
+    /// 不随回绕归零——归零会让「写位置变了吗」的判断在回绕点误判为没变，频谱恰好卡那一帧。
     /// </summary>
     public long WrittenCount => Volatile.Read(ref _written);
 
@@ -94,7 +94,7 @@ public sealed class AudioSampleRing
     }
 
     /// <summary>
-    /// 取最近 <c>destination.Length</c> 个采样，最旧在前。不足则返回 false 且**不写**
+    /// 取最近 <c>destination.Length</c> 个采样，最旧在前。不足则返回 false 且不写
     /// <paramref name="destination"/>——补零会在频谱上表现为一个真实存在的低频分量，
     /// 调用方无从区分「真的静音」与「还没攒够」。
     /// </summary>

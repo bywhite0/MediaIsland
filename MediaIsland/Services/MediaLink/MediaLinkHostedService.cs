@@ -396,7 +396,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     }
 
     /// <summary>
-    /// 重算音频采集需求。**重算而非增减**：需求是「当前所有会话状态」的纯函数，
+    /// 重算音频采集需求。重算而非增减：需求是「当前所有会话状态」的纯函数，
     /// 故任何会话以任何方式消失（含客户端进程被杀）都不会留下悬空的需求，
     /// 也不需要为五条会话终结路径各写一次补偿。
     /// </summary>

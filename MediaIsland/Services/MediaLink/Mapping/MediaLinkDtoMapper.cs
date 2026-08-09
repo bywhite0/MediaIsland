@@ -33,7 +33,7 @@ public static class MediaLinkDtoMapper
     }
 
     /// <summary>
-    /// 映射歌词 DTO。<paramref name="owningMedia"/> 是这份歌词**所属的**媒体，
+    /// 映射歌词 DTO。<paramref name="owningMedia"/> 是这份歌词所属的媒体，
     /// 其 trackToken 必须与 <c>media.updated.trackToken</c> 同源计算，否则客户端
     /// 按协议规则比对后会丢弃全部歌词。无法确定归属时传 null。
     /// </summary>

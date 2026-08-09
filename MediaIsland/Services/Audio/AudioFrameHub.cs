@@ -7,11 +7,11 @@ namespace MediaIsland.Services.Audio;
 /// 把一个 <see cref="IAudioFrameSource"/> 的帧分发给若干 <see cref="IAudioFrameSink"/>，
 /// 并按外部给定的需求启停采集。
 ///
-/// **采集启停由需求状态驱动，不由 sink 数量驱动。** 这两者容易混淆但语义不同：
+/// 采集启停由需求状态驱动，不由 sink 数量驱动。这两者容易混淆但语义不同：
 /// 采集需求来自协议层（谁订阅了 audio、谁发过 play_start），而 sink 是本地消费者——
 /// 第 3 期的可视化 sink 会常驻，它不该让麦克风/扬声器端点永远被占着。
 ///
-/// <see cref="SetCaptureDemandAsync"/> 接受一个布尔**状态**而非 start/stop 指令，
+/// <see cref="SetCaptureDemandAsync"/> 接受一个布尔状态而非 start/stop 指令，
 /// 故调用方可以无脑重算并调用，重复传相同值是 no-op。这与
 /// <c>MediaLinkSessionHub.HasAudioCaptureDemand</c> 的重算取向一致：
 /// 状态函数没有需要精确配对的「路径」。
@@ -114,7 +114,7 @@ public sealed class AudioFrameHub : IDisposable
     /// 分发。在采集线程上同步执行，故不得阻塞——单个 sink 抛异常只记日志，
     /// 绝不打断其余 sink：它们之间没有任何依赖，一个崩掉不该让全部停摆。
     ///
-    /// 异常的 sink **不自动摘除**：瞬时异常不等价于注销，自动摘除会把一次偶发失败
+    /// 异常的 sink 不自动摘除：瞬时异常不等价于注销，自动摘除会把一次偶发失败
     /// 变成永久静默，且 sink 无从得知自己已被摘除。
     /// </summary>
     private void OnFrameAvailable(AudioFrame frame)
