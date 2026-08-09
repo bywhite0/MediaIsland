@@ -304,4 +304,25 @@ public class RealFftTests
             $"加窗后远端本底 = {tapered[QuietBin]}, 未加窗 = {raw[QuietBin]}");
         Assert.InRange(PeakBin(tapered), ExpectedBin(1000f) - 1, ExpectedBin(1000f) + 1);
     }
+
+    // ---- 测试辅助自身 ----
+
+    [Fact]
+    public void PeakBinNear_WithCenterBelowRadius_SearchesTheClampedWindow()
+    {
+        // 辅助函数出错不以异常暴露，只会让上面那些 InRange 落在错误的 bin 上——
+        // 红或绿都不再可信，比产品代码的缺陷更难查。故对唯一含分支的辅助函数直接取证，
+        // 而不是指望某条频率测试恰好路过这个分支：当前两个调用点的 center 是 21 与 171，
+        // 都远大于 radius，窗口越界这条路径在整个文件里没有任何测试会走到。
+        //
+        // 构造同时钉住两侧：下标 1 是期望峰值，下标 5 更高但落在 center + radius = 4 之外。
+        // 左边界不夹紧（from = -2）时，from + IndexOf 会把结果整体左移；
+        // 窗口长度写成 2 * radius + 1 而不减去夹紧量时，右边界外移会把 5 号误当成峰值。
+        // 两种写法都返回不等于 1 的值。
+        var magnitudes = new float[16];
+        magnitudes[1] = 1f;
+        magnitudes[5] = 2f;
+
+        Assert.Equal(1, PeakBinNear(magnitudes, center: 1));
+    }
 }
