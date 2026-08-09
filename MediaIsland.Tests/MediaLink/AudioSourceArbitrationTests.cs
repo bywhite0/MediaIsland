@@ -1,3 +1,4 @@
+using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.MediaLink;
 using Xunit;
 
@@ -87,5 +88,21 @@ public class AudioSourceArbitrationTests
         // 这正是把两者都写成状态函数的收益：断连只需让一个入参变假。
         Assert.False(MediaLinkHostedService.ShouldCaptureLocally(false, true, upstreamAudioActive: true));
         Assert.True(MediaLinkHostedService.ShouldCaptureLocally(false, true, upstreamAudioActive: false));
+    }
+
+    [Fact]
+    public void WithoutAnySpectrumComponent_NothingIsSubscribedOrCaptured()
+    {
+        // 「新功能默认不改变旧行为」这条，用真实的需求对象走一遍而不是直接传 false：
+        // 需求的初值本身就是判据的一部分。它的反面（默认开启）不会有任何报错，
+        // 只会让所有升级上来的用户平白多占一个音频端点、多传约 192KB/s。
+        var demand = new AudioVisualizationDemand();
+
+        Assert.False(demand.IsDemanded);
+        Assert.False(MediaLinkUpstreamHostedService.ShouldConsumeUpstreamAudio(
+            upstreamEnabled: true, connected: true, supportsAudio: true,
+            visualizationDemanded: demand.IsDemanded));
+        Assert.False(MediaLinkHostedService.ShouldCaptureLocally(
+            protocolDemand: false, visualizationDemand: demand.IsDemanded, upstreamAudioActive: false));
     }
 }
