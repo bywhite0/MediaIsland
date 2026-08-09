@@ -10,7 +10,7 @@ namespace MediaIsland.Services.Audio.Visualization;
 /// </summary>
 public sealed class AudioVisualizationService(
     AudioVisualizationDemand demand,
-    AudioSpectrumAnalyzer analyzer) : IAudioFrameSink
+    AudioSpectrumAnalyzer analyzer) : IAudioFrameSink, IAudioFrameSubmitter
 {
     public AudioVisualizationDemand Demand { get; } =
         demand ?? throw new ArgumentNullException(nameof(demand));
