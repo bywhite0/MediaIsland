@@ -18,11 +18,17 @@ public class RealFftTests
     private const int SampleRate = 48000;
     private const int Size = 2048;
 
-    /// <summary>bin 宽度 48000 / 2048 = 23.4375Hz。</summary>
+    /// <summary>Size = 2048 下的 bin 宽度 48000 / 2048 = 23.4375Hz。</summary>
     private const float BinWidth = (float)SampleRate / Size;
 
-    /// <summary>远离所有测试信号的 bin，作本底参照，用来区分「真峰」与「整片抬升」。</summary>
+    /// <summary>远离所有测试信号的 bin（Size = 2048 专用），作本底参照，用来区分「真峰」与「整片抬升」。</summary>
     private const int QuietBin = 700;
+
+    /// <summary>
+    /// 落在整 bin 上的频率：1500 = N/32 × (48000/N)，对本文件用到的每个 N 都是整数 bin。
+    /// 整周期信号无泄漏，峰值幅度才能拿 N/2 这个解析值直接断言绝对标度。
+    /// </summary>
+    private const float ExactBinFrequency = 1500f;
 
     private static float[] Sine(float frequency, int size = Size)
     {
@@ -49,13 +55,19 @@ public class RealFftTests
 
     private static int ExpectedBin(float frequency) => (int)MathF.Round(frequency / BinWidth);
 
+    /// <summary>按实际 FFT 长度换算期望 bin：bin 宽度是 sampleRate / size，随 size 变。</summary>
+    private static int ExpectedBin(float frequency, int size) =>
+        (int)MathF.Round(frequency * size / SampleRate);
+
     private static int PeakBin(float[] magnitudes) => Array.IndexOf(magnitudes, magnitudes.Max());
 
     /// <summary>叠加信号没有全局唯一峰值，只能在期望 bin 的邻域里找局部峰。</summary>
     private static int PeakBinNear(float[] magnitudes, int center, int radius = 3)
     {
-        var from = center - radius;
-        var window = magnitudes.Skip(from).Take(radius * 2 + 1).ToArray();
+        // 低频信号的 center 可能小于 radius，此时窗口左边界必须夹到 0：
+        // LINQ 的 Skip 对负数按 0 处理，但若 from 仍是负数，返回的下标会整体偏移。
+        var from = Math.Max(0, center - radius);
+        var window = magnitudes.Skip(from).Take(center + radius - from + 1).ToArray();
         return from + Array.IndexOf(window, window.Max());
     }
 
@@ -74,6 +86,10 @@ public class RealFftTests
         Assert.Equal(0, PeakBin(magnitudes));
         var rest = magnitudes.Skip(1).Max();
         Assert.True(magnitudes[0] > rest * 100, $"bin 0 = {magnitudes[0]}, 其余最大 = {rest}");
+
+        // 绝对标度必须钉住，不能只验比值：下游按「未归一化、bin 0 == N」这个约定自己做标定，
+        // 若哪天在这里加了 1/N，整谱等比缩小，所有相对断言照样通过，而可视化会整片变矮。
+        Assert.Equal(2048f, magnitudes[0], 1e-2);
     }
 
     [Fact]
@@ -97,6 +113,27 @@ public class RealFftTests
         var peak = PeakBin(magnitudes);
         Assert.InRange(peak, expected - 1, expected + 1);
         Assert.NotInRange(peak, 42, 44);
+    }
+
+    [Theory]
+    [InlineData(512)]
+    [InlineData(2048)]
+    [InlineData(16384)]
+    public void ExactBinSine_PeaksAtAnalyticBinAndAmplitude(int size)
+    {
+        // 覆盖最大端。旋转因子是逐点复数乘法递推出来的，误差随级数（log2 N）累积，
+        // 帧长若从 2048 提到 16384 就多 3 级。把 N 参数化后，这条误差预算由测试守着，
+        // 而不是只写在某份报告里——改帧长时会直接红。
+        //
+        // 1500Hz 对这三个 N 都落在整 bin 上（bin == N/32），整周期无泄漏，
+        // 峰值幅度才有解析值 N/2（振幅 1 的实正弦，能量均分给正负频率）。
+        var magnitudes = Spectrum(Sine(ExactBinFrequency, size));
+        var peak = PeakBin(magnitudes);
+
+        Assert.Equal(size / 32, ExpectedBin(ExactBinFrequency, size));
+        Assert.Equal(size / 32, peak);
+        // 容差取 N/2 的千分之一，即相对误差 1e-3；实测递推误差比这小一到两个数量级。
+        Assert.Equal(size / 2f, magnitudes[peak], size * 5e-4);
     }
 
     [Fact]
@@ -185,6 +222,28 @@ public class RealFftTests
         var magnitudes = new float[Size / 2];
 
         Assert.Throws<ArgumentException>(() => RealFft.Magnitudes(real, imaginary, magnitudes));
+    }
+
+    [Fact]
+    public void MagnitudesWithEmptySpans_Throws()
+    {
+        // 空 span 会让 0 == 0 / 2 这条长度校验通过、循环零次执行，于是静默返回。
+        // 危害不在于空谱本身，而在于同一对长度 Transform 拒绝、Magnitudes 接受——
+        // 调用方就无法从任一方法的行为推断另一个的契约。长度 1 同理。
+        Assert.Throws<ArgumentException>(() =>
+            RealFft.Magnitudes(Array.Empty<float>(), Array.Empty<float>(), Array.Empty<float>()));
+        Assert.Throws<ArgumentException>(() =>
+            RealFft.Magnitudes(new float[1], new float[1], Array.Empty<float>()));
+    }
+
+    [Fact]
+    public void MagnitudesWithNonPowerOfTwoInput_Throws()
+    {
+        // 与 Transform 同源的校验：1000 点的谱不可能由 Transform 产出，就不该被 Magnitudes 受理。
+        var real = new float[1000];
+        var imaginary = new float[1000];
+
+        Assert.Throws<ArgumentException>(() => RealFft.Magnitudes(real, imaginary, new float[500]));
     }
 
     [Fact]
