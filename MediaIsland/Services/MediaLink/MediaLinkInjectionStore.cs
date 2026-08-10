@@ -97,12 +97,14 @@ public sealed class MediaLinkInjectionStore
         }
 
         var rate = payload.PlaybackRate is > 0 ? payload.PlaybackRate.Value : 1.0;
-        var sourceApp = string.IsNullOrWhiteSpace(payload.SourceApp)
-            ? "external"
-            : payload.SourceApp.Trim();
-        var title = payload.Title.Trim();
-        var artist = string.IsNullOrWhiteSpace(payload.Artist) ? null : payload.Artist.Trim();
-        var albumTitle = string.IsNullOrWhiteSpace(payload.AlbumTitle) ? null : payload.AlbumTitle.Trim();
+        // 与 ComputeTrackToken 共用同一个规范化入口。两处各写一遍时，
+        // 任一侧规则变动都会让 token 在链路两端分裂。
+        var identity = MediaLinkTrackIdentity.Normalize(
+            payload.SourceApp, payload.Title, payload.Artist, payload.AlbumTitle);
+        var sourceApp = identity.SourceApp;
+        var title = identity.Title!;   // 上面已校验 Title 非空白，故此处必不为 null
+        var artist = identity.Artist;
+        var albumTitle = identity.AlbumTitle;
         var position = TimeSpan.FromMilliseconds(payload.PositionMs);
         var duration = TimeSpan.FromMilliseconds(payload.DurationMs);
 

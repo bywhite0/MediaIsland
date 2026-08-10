@@ -209,7 +209,16 @@ public static class MediaLinkDtoMapper
     /// </summary>
     internal static string ComputeTrackToken(string sourceApp, string? title, string? artist, string? albumTitle = null)
     {
-        var key = string.Join('\x1F', sourceApp, title ?? string.Empty, artist ?? string.Empty, albumTitle ?? string.Empty);
+        // 先规范化再算：注入存储写入时也走同一个入口，两端的输入因此逐字段相同。
+        // 不这么做时，发送端的原始字段与接收端的存储字段会算出不同的 token。
+        var identity = MediaLinkTrackIdentity.Normalize(sourceApp, title, artist, albumTitle);
+
+        var key = string.Join(
+            '\x1F',
+            identity.SourceApp,
+            identity.Title ?? string.Empty,
+            identity.Artist ?? string.Empty,
+            identity.AlbumTitle ?? string.Empty);
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(key));
         return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
     }
