@@ -366,6 +366,62 @@ public class MediaLinkSessionTests
         // Writer should have processed some items
         Assert.NotEmpty(socket.Outgoing);
     }
+
+    /// <summary>
+    /// 满队且队列中有可丢帧时，不可丢帧必须挤掉最旧的可丢帧入队，而不是被拒、把会话关掉。
+    /// 这里刻意不启动写者：队列只进不出，「到底满没满」是确定的，不与排空速度赛跑。
+    /// </summary>
+    [Fact]
+    public async Task QueueFull_NonDroppableFrame_EvictsMediaInsteadOfClosingSession()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+
+        // 远超队列容量，确保塞满之后队列里躺着的全是可丢帧。
+        for (var i = 0; i < 200; i++)
+        {
+            await session.EnqueueAsync(
+                MediaLinkMessageSerializer.Create(MediaLinkProtocol.TypeEvent,
+                    new MediaLinkMediaDto { Title = $"fill-{i}", SourceApp = "test", PlaybackState = "Playing", ChangeKind = "Timeline" },
+                    name: MediaLinkProtocol.EventMediaUpdated,
+                    seq: i),
+                droppable: true);
+        }
+
+        await session.EnqueueAsync(
+            MediaLinkMessageSerializer.Create(MediaLinkProtocol.TypeEvent,
+                new MediaLinkLyricsDto { Id = "ly-1", Title = "Test", Artist = "A", DurationMs = 1000, Source = "External" },
+                name: MediaLinkProtocol.EventLyricsUpdated),
+            droppable: false);
+
+        Assert.False(session.IsClosed);
+        Assert.Equal(WebSocketState.Open, socket.State);
+    }
+
+    /// <summary>
+    /// 满队且一条可丢帧都没有：没有可牺牲的对象，入队必须失败并以 rate_limited 关闭会话。
+    /// 这是「一律牺牲最旧可丢帧」的边界——不锁住它，把找牺牲者写成恒能找到也照样全绿。
+    /// </summary>
+    [Fact]
+    public async Task QueueFull_AllNonDroppable_FailsEnqueueAndClosesSession()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+
+        // 全部不可丢，塞到远超容量：一旦满了就再没有能腾出来的位置。
+        for (var i = 0; i < 200; i++)
+        {
+            await session.EnqueueAsync(
+                MediaLinkMessageSerializer.Create(MediaLinkProtocol.TypeEvent,
+                    new MediaLinkLyricsDto { Id = $"ly-{i}", Title = "Test", Artist = "A", DurationMs = 1000, Source = "External" },
+                    name: MediaLinkProtocol.EventLyricsUpdated),
+                droppable: false);
+        }
+
+        Assert.True(session.IsClosed);
+        Assert.Equal(WebSocketState.Closed, socket.State);
+    }
+
 private static string AuthJson() =>
         MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeAuth,

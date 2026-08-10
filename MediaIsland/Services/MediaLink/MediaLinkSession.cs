@@ -259,7 +259,8 @@ internal sealed class MediaLinkOutboundQueue
     }
 
     /// <summary>
-    /// 入队。返回 false 表示队列已满且无可牺牲的帧，调用方应以 <c>rate_limited</c> 关闭该会话。
+    /// 入队。队列满时牺牲最旧的可丢帧为来者腾位置，不论来者本身可不可丢。
+    /// 返回 false 表示队列已满且一条可丢帧都没有，调用方应以 <c>rate_limited</c> 关闭该会话。
     /// </summary>
     public bool TryEnqueue(MediaLinkOutboundFrame frame)
     {
@@ -272,15 +273,13 @@ internal sealed class MediaLinkOutboundQueue
 
             if (_items.Count >= _capacity)
             {
-                // 不可丢的帧到达且队列已满：不牺牲任何东西，交由调用方关闭会话。
-                if (!frame.Droppable)
-                {
-                    return false;
-                }
-
+                // 队列满时一律牺牲最旧的可丢帧，不论来者可不可丢——
+                // 可丢帧是会被后继取代的采样值，积压的那些本就过期；
+                // 而按来者的可丢性决定要不要腾位置，会让越重要的帧越先被拒。
                 var victim = FindOldestDroppable();
                 if (victim is null)
                 {
+                    // 满队且一条可丢的都没有：对端确实跟不上重要流量，交由调用方关闭会话。
                     return false;
                 }
 

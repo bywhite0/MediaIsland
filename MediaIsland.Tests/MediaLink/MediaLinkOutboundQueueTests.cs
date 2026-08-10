@@ -26,15 +26,20 @@ public class MediaLinkOutboundQueueTests
     }
 
     [Fact]
-    public void Full_NonDroppableArrives_RejectsInsteadOfEvicting()
+    public void Full_NonDroppableArrives_EvictsOldestDroppable_NotHead()
     {
-        // 歌词不可丢：队列满时不得牺牲任何帧，交由调用方以 rate_limited 关闭会话。
-        var queue = new MediaLinkOutboundQueue(2);
-        queue.TryEnqueue(new MediaLinkOutboundFrame("media-1", Droppable: true));
-        queue.TryEnqueue(new MediaLinkOutboundFrame("media-2", Droppable: true));
+        // 不可丢帧到达满队时同样腾位置——牺牲的是最旧的可丢帧 m1，
+        // 既不是队头的 ctrl，也不是任意一条可丢帧；幸存者保持到达顺序，长度不超容量。
+        var queue = new MediaLinkOutboundQueue(4);
+        Assert.True(queue.TryEnqueue(new MediaLinkOutboundFrame("m1", Droppable: true)));
+        Assert.True(queue.TryEnqueue(new MediaLinkOutboundFrame("ctrl", Droppable: false)));
+        Assert.True(queue.TryEnqueue(new MediaLinkOutboundFrame("m2", Droppable: true)));
+        Assert.True(queue.TryEnqueue(new MediaLinkOutboundFrame("m3", Droppable: true)));
 
-        Assert.False(queue.TryEnqueue(new MediaLinkOutboundFrame("lyrics", Droppable: false)));
-        Assert.Equal(["media-1", "media-2"], Drain(queue));
+        Assert.True(queue.TryEnqueue(new MediaLinkOutboundFrame("lyrics", Droppable: false)));
+
+        Assert.Equal(4, queue.Count);
+        Assert.Equal(["ctrl", "m2", "m3", "lyrics"], Drain(queue));
     }
 
     [Fact]
