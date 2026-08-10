@@ -613,12 +613,26 @@ public class MediaLinkEndToEndTests
         }
         catch (WebSocketException) { } // connection may be aborted by server
 
-        // Verify: each media.updated has a trackToken, and trackTokens change with each song
         var mediaEvents = received.Where(e => e.TryGetProperty("name", out var n) && n.GetString() == MediaLinkProtocol.EventMediaUpdated).ToList();
-        Assert.True(mediaEvents.Count >= 2, $"Expected at least 2 media events from 10 track changes, got {mediaEvents.Count}. Total received: {received.Count}");
-        foreach (var evt in mediaEvents)
+
+        // 订阅时推送的快照若赶在首次切歌之前取样，此刻还没有任何媒体，会发出一条没有 payload
+        // 的 media.updated，语义是"当前无播放"。它本就不该带 trackToken，必须先滤掉：
+        // 否则断言结果取决于快照取样与首次切歌谁先跑，同一份代码会随机红绿。
+        var trackEvents = mediaEvents
+            .Where(e => e.TryGetProperty("payload", out var p)
+                        && p.ValueKind == JsonValueKind.Object
+                        && p.TryGetProperty("title", out _))
+            .ToList();
+
+        // 门槛必须落在过滤后的集合上。若仍只要求过滤前的总数，滤完一条不剩时测试照样绿，
+        // 那是"被测代码什么都不做也能通过"的假绿，比随机红更难发现。
+        Assert.True(trackEvents.Count >= 2,
+            $"Expected at least 2 media events carrying a track from 10 track changes, got {trackEvents.Count}. media.updated: {mediaEvents.Count}, total received: {received.Count}");
+        foreach (var evt in trackEvents)
         {
-            Assert.True(evt.GetProperty("payload").TryGetProperty("trackToken", out _));
+            // 过滤已保证 payload 存在，这里取用不会抛 KeyNotFoundException。
+            Assert.True(evt.GetProperty("payload").TryGetProperty("trackToken", out _),
+                $"media.updated described a track but carried no trackToken: {evt}");
         }
 
         try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
