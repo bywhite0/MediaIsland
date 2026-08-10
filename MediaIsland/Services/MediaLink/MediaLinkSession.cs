@@ -484,6 +484,19 @@ public sealed class MediaLinkSession : IAsyncDisposable
 
                 if (received.IsClosed)
                 {
+                    // 回一次单向关闭再退出。不回应时连接只能等超时结束，
+                    // 而仲裁变化会频繁开关上游连接，每次都留一个等超时的连接。
+                    try
+                    {
+                        await _socket.CloseOutputAsync(
+                            WebSocketCloseStatus.NormalClosure, null, cancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        // 对端可能已经走了。握手回不去不是错误，收循环照常退出。
+                        _logger?.LogDebug(ex, "回应关闭握手失败");
+                    }
+
                     break;
                 }
 
