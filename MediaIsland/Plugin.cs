@@ -103,20 +103,18 @@ namespace MediaIsland
                     visualizationDemand: provider.GetRequiredService<AudioVisualizationDemand>(),
                     // 用 lambda 延迟解析：两个宿主服务互相引用，直接注入会形成构造期循环依赖。
                     downstreamAudioDemandAccessor: () =>
-                        provider.GetRequiredService<MediaLinkHostedService>().HasDownstreamAudioDemand);
+                        provider.GetRequiredService<MediaLinkHostedService>().HasDownstreamAudioDemand,
+                    // 转发目标是本机服务端的广播入口。同样用委托而不是互相注入。
+                    audioForwarder: (frame, ct) =>
+                        provider.GetRequiredService<MediaLinkHostedService>()
+                            .BroadcastAudioFrameAsync(frame, ct));
 
-                // 音源仲裁变了就让服务端重算本机采集需求。在这里接线而不是让两个服务
-                // 互相注入——后者是构造期循环依赖。
-                upstream.AudioSourceChanged += (_, _) =>
-                    _ = provider.GetRequiredService<MediaLinkHostedService>().RecomputeAudioCaptureDemandAsync();
-
-                // 生效媒体来源变了，三个音频角色的归属就变了：本机采集、上游转发、本机播放。
-                // 两个宿主服务各自重算，不互相调用。
-                provider.GetRequiredService<MediaSourceCoordinator>().EffectiveMediaChanged += (_, _) =>
-                {
-                    upstream.RecomputeAudioSubscription();
-                    _ = provider.GetRequiredService<MediaLinkHostedService>().RecomputeAudioCaptureDemandAsync();
-                };
+                // 三条重算边接在两个宿主服务之外。此处解析服务端是安全的：
+                // 依赖方向单向，服务端的工厂不解析上游服务，故不存在构造期环。
+                MediaLinkAudioWiring.Connect(
+                    upstream,
+                    provider.GetRequiredService<MediaLinkHostedService>(),
+                    provider.GetRequiredService<MediaSourceCoordinator>());
                 return upstream;
             });
             services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());

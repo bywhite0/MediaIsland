@@ -26,9 +26,10 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     private readonly AudioVisualizationService? _visualization;
     private readonly AudioVisualizationDemand? _demand;
     private readonly Func<bool>? _downstreamAudioDemand;
+    private readonly Func<byte[], CancellationToken, Task>? _audioForwarder;
 
     private MediaLinkClient? _client;
-    private MediaLinkAudioReceiver? _audioReceiver;
+    private MediaLinkAudioRelay? _audioRelay;
     private PluginSettings? _boundSettings;
     private CancellationTokenSource? _debounceCts;
     private bool _upstreamAudioEnabled;
@@ -42,7 +43,8 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         Func<long>? tickProvider = null,
         AudioVisualizationService? visualization = null,
         AudioVisualizationDemand? visualizationDemand = null,
-        Func<bool>? downstreamAudioDemandAccessor = null)
+        Func<bool>? downstreamAudioDemandAccessor = null,
+        Func<byte[], CancellationToken, Task>? audioForwarder = null)
     {
         _injectionStore = injectionStore ?? throw new ArgumentNullException(nameof(injectionStore));
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -53,9 +55,13 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         _visualization = visualization;
         _demand = visualizationDemand;
         _downstreamAudioDemand = downstreamAudioDemandAccessor;
+        _audioForwarder = audioForwarder;
     }
 
     public bool IsConnected => _client?.IsConnected == true;
+
+    /// <summary>已成功转发给下游的上游音频帧数。用于诊断转发链路通没通。</summary>
+    public long ForwardedFrames => _audioRelay?.ForwardedFrames ?? 0;
 
     /// <summary>
     /// 是否正在消费上游音频。判据全是状态，不用帧流量——
@@ -229,13 +235,17 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             if (_visualization is not null)
             {
                 // trackToken 与歌词同源：切歌后过期曲目的 PCM 由接收侧丢弃。
-                _audioReceiver = new MediaLinkAudioReceiver(
+                var receiver = new MediaLinkAudioReceiver(
                     _visualization,
                     () => _injectionStore.GetMediaSnapshot() is { } media
                         ? MediaLinkDtoMapper.ComputeTrackToken(
                             media.SourceApp, media.Title, media.Artist, media.AlbumTitle)
                         : null,
                     _loggerFactory?.CreateLogger<MediaLinkAudioReceiver>());
+                _audioRelay = new MediaLinkAudioRelay(
+                    receiver,
+                    _audioForwarder,
+                    _loggerFactory?.CreateLogger<MediaLinkAudioRelay>());
                 client.AudioFrameReceived += OnAudioFrameReceived;
             }
 
@@ -353,18 +363,9 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         RecomputeAudioSubscription();
     }
 
-    private void OnAudioFrameReceived(object? sender, MediaLinkAudioFrameReceivedEventArgs e)
-    {
-        try
-        {
-            _audioReceiver?.Handle(e.Frame);
-        }
-        catch (Exception ex)
-        {
-            // 单帧处理失败不该拖垮收循环——那会把一次数据问题升级成一次断连。
-            _logger?.LogDebug(ex, "处理上游音频帧失败");
-        }
-    }
+    // HandleAsync 自身吞掉接收与转发两侧的全部异常，故此处不需要 try。
+    private void OnAudioFrameReceived(object? sender, MediaLinkAudioFrameReceivedEventArgs e) =>
+        _ = _audioRelay?.HandleAsync(e.Frame);
 
     /// <summary>
     /// 重算而非增减。订阅与本机采集同构——都是「有消费者才占资源」，
@@ -416,7 +417,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         _client.AudioFrameReceived -= OnAudioFrameReceived;
         await _client.StopAsync();
         _client = null;
-        _audioReceiver = null;
+        _audioRelay = null;
         _upstreamAudioEnabled = false;
         RaiseAudioSourceChanged();
     }

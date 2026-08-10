@@ -428,6 +428,8 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     /// </summary>
     public async Task RecomputeAudioCaptureDemandAsync()
     {
+        NotifyIfDownstreamAudioDemandChanged();
+
         var audioHub = _audioHub;
         if (audioHub is null)
         {
@@ -442,8 +444,38 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             CancellationToken.None);
     }
 
+    /// <summary>
+    /// 下游音频需求刚刚翻转。上游服务据此重算向上游的订阅意愿——
+    /// 下游订阅 audio 是「要不要转发」的唯一来源，没有这条边时，上游暂停
+    /// （媒体快照相等，协调器不发生效媒体变化）且岛上无频谱组件的情况下，
+    /// 下游订阅 audio 拉不起上游订阅，转发根本不会开始，且不报任何错。
+    ///
+    /// 边沿触发而非每次重算都发：消费者收到通知后会回头再触发一次本重算，
+    /// 每次都发就成了「重算→通知→重算」的自激循环。
+    /// </summary>
+    public event EventHandler? DownstreamAudioDemandChanged;
+
+    /// <summary>
+    /// 0/1 而非 bool：本方法会被协议线程与 UI 线程并发调用，
+    /// 「读旧值-写新值-比较」必须原子，否则同一次翻转会被通知两次或者被吞掉。
+    /// </summary>
+    private int _lastDownstreamAudioDemand;
+
+    private void NotifyIfDownstreamAudioDemandChanged()
+    {
+        var current = (_hub?.HasDownstreamAudioDemand ?? false) ? 1 : 0;
+        if (Interlocked.Exchange(ref _lastDownstreamAudioDemand, current) != current)
+        {
+            DownstreamAudioDemandChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
     /// <summary>下游是否有会话要音频。上游服务据此决定要不要向上游订阅 audio。</summary>
     public bool HasDownstreamAudioDemand => _hub?.HasDownstreamAudioDemand ?? false;
+
+    /// <summary>把一帧音频原样广播给订阅了 audio 的会话。无会话时是廉价的空操作。</summary>
+    public Task BroadcastAudioFrameAsync(byte[] frame, CancellationToken cancellationToken = default) =>
+        _hub?.BroadcastAudioFrameAsync(frame, cancellationToken) ?? Task.CompletedTask;
 
     /// <summary>
     /// 采集需求的全部逻辑。两个需求来源取并集，再整体减去「当前生效的媒体来自上游」。
