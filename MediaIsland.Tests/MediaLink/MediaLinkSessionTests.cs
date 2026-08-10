@@ -369,12 +369,15 @@ public class MediaLinkSessionTests
 
     /// <summary>
     /// 满队且队列中有可丢帧时，不可丢帧必须挤掉最旧的可丢帧入队，而不是被拒、把会话关掉。
-    /// 这里刻意不启动写者：队列只进不出，「到底满没满」是确定的，不与排空速度赛跑。
+    ///
+    /// 填充阶段刻意不启动写者：队列只进不出，「到底满没满」是确定的，不与排空速度赛跑。
+    /// 塞完再起写者，断言那条 lyrics 确实发了出去——光断言「会话没被关」是单边的，
+    /// 入队实现什么都不做也照样满足，证明不了那条帧真的活了下来。
     /// </summary>
     [Fact]
-    public async Task QueueFull_NonDroppableFrame_EvictsMediaInsteadOfClosingSession()
+    public async Task QueueFull_NonDroppableFrame_EvictsMediaAndDeliversLyrics()
     {
-        var socket = new FakeMediaLinkSocket();
+        var socket = new SignalingSocket(MediaLinkProtocol.EventLyricsUpdated);
         var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
 
         // 远超队列容量，确保塞满之后队列里躺着的全是可丢帧。
@@ -396,6 +399,49 @@ public class MediaLinkSessionTests
 
         Assert.False(session.IsClosed);
         Assert.Equal(WebSocketState.Open, socket.State);
+
+        // 此刻帧已经躺在队列里，写者只会把它发出去——等的是必然结果，不是赛跑。
+        // 超时只是断言失败时不挂死的护栏：正常路径上帧一发出即返回，不轮询也不睡眠。
+        session.StartWriter(CancellationToken.None);
+        await socket.Delivered.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    /// <summary>
+    /// 记录出站文本帧，并在首次发出含指定片段的帧时完成 <see cref="Delivered"/>。
+    /// 用事件而非轮询观测写者的产出：帧一上线就完成，无需 sleep，也没有轮询间隔。
+    /// </summary>
+    private sealed class SignalingSocket(string fragment) : IMediaLinkSocket
+    {
+        private readonly TaskCompletionSource _delivered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _closed;
+
+        /// <summary>含指定片段的帧已发出。</summary>
+        public Task Delivered => _delivered.Task;
+
+        public WebSocketState State => Volatile.Read(ref _closed) == 0 ? WebSocketState.Open : WebSocketState.Closed;
+
+        public Task SendTextAsync(string text, CancellationToken cancellationToken)
+        {
+            if (text.Contains(fragment, StringComparison.Ordinal))
+            {
+                _delivered.TrySetResult();
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        // 本测试不跑接收循环；永不完成而非抛出，避免将来被复用时炸在无关路径上。
+        public Task<MediaLinkSocketMessage> ReceiveAsync(CancellationToken cancellationToken) =>
+            Task.Delay(Timeout.Infinite, cancellationToken).ContinueWith(_ => default(MediaLinkSocketMessage), cancellationToken);
+
+        public Task CloseAsync(WebSocketCloseStatus status, string? description, CancellationToken cancellationToken)
+        {
+            Interlocked.Exchange(ref _closed, 1);
+            return Task.CompletedTask;
+        }
     }
 
     /// <summary>
