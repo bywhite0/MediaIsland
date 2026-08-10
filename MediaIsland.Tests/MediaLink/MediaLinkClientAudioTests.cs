@@ -310,6 +310,57 @@ public class MediaLinkClientAudioTests
     }
 
     [Fact]
+    public async Task SubscribingFromTheConnectionStateCallback_ActuallySendsSubscribeWithAudio()
+    {
+        // 上游服务在连接态回调里重算订阅意愿，故「握手刚完成」这一刻必须已经能发出控制帧。
+        // 这里在回调里就地阻塞调用，是为了把那个只有两条字段赋值宽的窗口变成确定性的：
+        // 生产代码经 Task.Run 派发，同样的顺序错误在那里只是低概率竞态，测不稳。
+        //
+        // 顺序错了的表现是静默的：意愿旗标已置真，subscribe 却没发出去，
+        // 于是上游起了采集而本会话没订到 audio 频道，广播跳过它；
+        // 而相同值去重会让后续重算全部提前返回，只能等重连才恢复。
+        var (socket, client) = NewPair(AudioCapable);
+        await using var _ = client;
+
+        var subscribeFailure = (Exception?)null;
+        var switched = false;
+        client.ConnectionStateChanged += (_, _) =>
+        {
+            if (!client.IsConnected || switched)
+            {
+                return;
+            }
+
+            switched = true;
+            try
+            {
+                client.SetAudioSubscribedAsync(true).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                subscribeFailure = ex;
+            }
+        };
+
+        client.Start();
+
+        // auth、握手 subscribe、回调补发的 subscribe、audio.play_start。
+        await socket.WaitForSendsAsync(4);
+
+        Assert.Null(subscribeFailure);
+
+        // 先钉「确实又发了一条 subscribe」再看内容：只断言含 audio 的话，
+        // 一条都没补发时读到的是握手那条，判据就落到了别的帧上。
+        var subscribes = socket.Sent
+            .Where(s => s.Contains($"\"{MediaLinkProtocol.TypeSubscribe}\""))
+            .ToArray();
+        Assert.Equal(2, subscribes.Length);
+
+        Assert.Contains(MediaLinkProtocol.ChannelAudio, SubscribedChannels(socket));
+        Assert.True(Sent(socket, MediaLinkProtocol.TypeAudioPlayStart));
+    }
+
+    [Fact]
     public async Task AudioIntent_SurvivesReconnect()
     {
         var socket = new ScriptedClientSocket();

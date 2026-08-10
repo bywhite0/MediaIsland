@@ -298,11 +298,17 @@ public sealed class MediaLinkClient : IAsyncDisposable
             new MediaLinkSubscribePayload { Channels = BuildChannels() },
             id: "sub"), handshakeCts.Token);
 
+        // 先记活动 socket，再宣告连上。顺序要紧：SetConnected 是同步派发事件的，
+        // 订阅方会就地重算订阅意愿并调 SetAudioSubscribedAsync。若那时 _activeSocket
+        // 还是空，该调用会把意愿旗标置真却发不出 subscribe，而下面只补 audio.play_start
+        // ——上游起了采集，本会话却没订阅 audio 频道，广播跳过它，表现为静默零帧；
+        // 且旗标已为真，后续重算被相同值去重掐掉，只能等重连才恢复。
+        //
+        // 握手完成前不记：那时发控制帧没有意义。
+        _activeSocket = socket;
+
         SetConnected(true);
         LastError = null;
-
-        // 记下活动 socket，供运行中切换订阅时复用。握手完成前不记：那时发控制帧没有意义。
-        _activeSocket = socket;
         try
         {
             if (_audioSubscriptionWanted && SupportsAudio)
