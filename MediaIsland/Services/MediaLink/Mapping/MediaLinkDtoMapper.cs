@@ -207,6 +207,16 @@ public static class MediaLinkDtoMapper
     /// 同一曲目多次调用结果一致；不同曲目碰撞概率极低。
     /// 分隔符用 U+001F，避免字段内容拼接产生歧义。
     /// </summary>
+    /// <remarks>
+    /// 四个字段先经 <see cref="MediaLinkTrackIdentity.Normalize"/> 规范化再入哈希。调用方传原始字段
+    /// 即可，无需自行清洗：规范化幂等，已清洗过的字段再传一次也不改值。
+    /// 由此成立的等价关系——首尾空白不计，<c>" A "</c> 与 <c>"A"</c> 是同一个 token；可选字段的
+    /// null、空串与纯空白三者同义；sourceApp 为空或纯空白时按 external 计。
+    /// 不成立的——大小写不折叠，字段内部的空白原样保留，<c>"A B"</c> 与 <c>"a b"</c>、<c>"AB"</c>
+    /// 都是不同的 token。
+    /// 之所以在此处规范化，是因为注入存储写入时走的是同一个入口：两端对同一曲目必须算出同一个 token，
+    /// 不等时接收端会把全部音频帧判为过期曲目并静默丢弃。
+    /// </remarks>
     internal static string ComputeTrackToken(string sourceApp, string? title, string? artist, string? albumTitle = null)
     {
         // 先规范化再算：注入存储写入时也走同一个入口，两端的输入因此逐字段相同。
