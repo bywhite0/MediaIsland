@@ -486,15 +486,28 @@ public sealed class MediaLinkSession : IAsyncDisposable
                 {
                     // 回一次单向关闭再退出。不回应时连接只能等超时结束，
                     // 而仲裁变化会频繁开关上游连接，每次都留一个等超时的连接。
-                    try
+                    //
+                    // 先判状态：IsClosed 还有第二个来源——消息超限时接收侧会自己先关掉
+                    // socket 再报 IsClosed，那条路径走到这里 socket 已是 Closed，而未认证的
+                    // 对端可以反复触发它，不判状态就是每次都白抛一个异常。
+                    if (_socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
                     {
-                        await _socket.CloseOutputAsync(
-                            WebSocketCloseStatus.NormalClosure, null, cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        // 对端可能已经走了。握手回不去不是错误，收循环照常退出。
-                        _logger?.LogDebug(ex, "回应关闭握手失败");
+                        try
+                        {
+                            // 写要有界。这次 await 挡在 finally 的采集需求重算之前，对端不读
+                            // 数据时无界的写会把音频设备的释放一起无限期拖住。
+                            using var closeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                            closeCts.CancelAfter(SendTimeout);
+                            await _socket.CloseOutputAsync(
+                                WebSocketCloseStatus.NormalClosure, null, closeCts.Token);
+                        }
+                        catch (Exception ex)
+                        {
+                            // 对端可能已经走了，也可能是上面那个超时到了。握手回不去不是错误，
+                            // 收循环照常退出。这里必须自己接住 OperationCanceledException——
+                            // 最外层的 catch 过滤器把它排除在外。
+                            _logger?.LogDebug(ex, "回应关闭握手失败");
+                        }
                     }
 
                     break;
