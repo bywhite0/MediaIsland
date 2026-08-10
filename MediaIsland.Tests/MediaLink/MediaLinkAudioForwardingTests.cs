@@ -86,11 +86,14 @@ public class MediaLinkAudioForwardingTests
     public async Task MalformedFrame_IsNotForwarded()
     {
         var forwarded = new List<byte[]>();
-        var relay = CreateRelay((bytes, _) => { forwarded.Add(bytes); return Task.CompletedTask; }, out _);
+        var relay = CreateRelay((bytes, _) => { forwarded.Add(bytes); return Task.CompletedTask; },
+            out var submitter);
 
         await relay.HandleAsync([0xFF, 0xFF, 0x01, 0x00, 0x00]);
 
         Assert.Empty(forwarded);
+        // 与同类用例对齐：单看「没转发」，在「什么都没发生」时也成立。
+        Assert.Empty(submitter.Frames);
     }
 
     [Fact]

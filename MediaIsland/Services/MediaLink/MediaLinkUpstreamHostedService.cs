@@ -363,7 +363,16 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         RecomputeAudioSubscription();
     }
 
-    // HandleAsync 自身吞掉接收与转发两侧的全部异常，故此处不需要 try。
+    /// <summary>
+    /// HandleAsync 自身吞掉接收与转发两侧的全部异常，故此处不需要 try。
+    ///
+    /// 丢弃返回的 Task 不影响下游帧序，但这依赖一条当前成立的前提：从这里到会话的
+    /// 音频出站队列，整条链上没有一个真正会挂起的 await——本机消费是同步的，
+    /// 转发经广播直达入队，入队只是往队列里放。故同步段一路走到底，入队序即收帧序。
+    ///
+    /// 这条前提没有编译期约束。链上任何一环将来改成真异步，乱序就会静默发生：
+    /// 表现是下游听到的声音偶尔错位，不报错、不丢帧。届时此处要改成串行泵而非即发即忘。
+    /// </summary>
     private void OnAudioFrameReceived(object? sender, MediaLinkAudioFrameReceivedEventArgs e) =>
         _ = _audioRelay?.HandleAsync(e.Frame);
 

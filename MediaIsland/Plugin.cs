@@ -8,7 +8,6 @@ using ClassIsland.Core.Extensions.Registry;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
-using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Storage;
 using MediaIsland.Services.Lyrics.Models;
@@ -63,61 +62,8 @@ namespace MediaIsland
                 provider.GetRequiredService<ISPlayerNextLyricsClient>(),
                 provider.GetRequiredService<ILyricsStore>()));
             services.AddHostedService(provider => provider.GetRequiredService<MediaService>());
-            services.AddSingleton<MediaLinkInjectionStore>();
-            // 分析层三件套：需求计数、共享分析器、门面。全是单例——FFT 贵且与观察者无关，
-            // N 个频谱组件共用一次计算。
-            services.AddSingleton<AudioVisualizationDemand>();
-            services.AddSingleton<AudioSpectrumAnalyzer>();
-            services.AddSingleton<AudioVisualizationService>();
-            services.AddSingleton<MediaSourceCoordinator>(provider => new MediaSourceCoordinator(
-                provider.GetRequiredService<IMediaService>(),
-                provider.GetRequiredService<LyricsSearchService>(),
-                provider.GetRequiredService<MediaLinkInjectionStore>(),
-                () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings));
-            services.AddSingleton<IEffectiveMediaSource>(provider =>
-                provider.GetRequiredService<MediaSourceCoordinator>());
-            services.AddSingleton<MediaLinkHostedService>(provider => new MediaLinkHostedService(
-                provider.GetRequiredService<IMediaService>(),
-                provider.GetRequiredService<LyricsSearchService>(),
-                provider.GetRequiredService<MediaLinkInjectionStore>(),
-                provider.GetRequiredService<MediaSourceCoordinator>(),
-                provider.GetRequiredService<MediaPlatformProviderResolver>(),
-                () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
-                provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(),
-                provider.GetRequiredService<AudioVisualizationDemand>(),
-                provider.GetRequiredService<AudioVisualizationService>(),
-                // 仲裁锚点是生效媒体来源，不是连接态：连着上游不等于该用上游的声音。
-                // 用 lambda 延迟解析，与下面上游服务的接线同理。
-                () => provider.GetRequiredService<MediaSourceCoordinator>().IsExternalMediaEffective));
-            services.AddSingleton<IMediaLinkGateway>(provider => provider.GetRequiredService<MediaLinkHostedService>());
-            services.AddHostedService(provider => provider.GetRequiredService<MediaLinkHostedService>());
-            // 上游消费与服务端相互独立：一台实例可以只推、只收，或两者同时（转发中继）。
-            services.AddSingleton<MediaLinkUpstreamHostedService>(provider =>
-            {
-                var upstream = new MediaLinkUpstreamHostedService(
-                    provider.GetRequiredService<MediaLinkInjectionStore>(),
-                    provider.GetRequiredService<MediaSourceCoordinator>(),
-                    () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
-                    provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(),
-                    visualization: provider.GetRequiredService<AudioVisualizationService>(),
-                    visualizationDemand: provider.GetRequiredService<AudioVisualizationDemand>(),
-                    // 用 lambda 延迟解析：两个宿主服务互相引用，直接注入会形成构造期循环依赖。
-                    downstreamAudioDemandAccessor: () =>
-                        provider.GetRequiredService<MediaLinkHostedService>().HasDownstreamAudioDemand,
-                    // 转发目标是本机服务端的广播入口。同样用委托而不是互相注入。
-                    audioForwarder: (frame, ct) =>
-                        provider.GetRequiredService<MediaLinkHostedService>()
-                            .BroadcastAudioFrameAsync(frame, ct));
-
-                // 三条重算边接在两个宿主服务之外。此处解析服务端是安全的：
-                // 依赖方向单向，服务端的工厂不解析上游服务，故不存在构造期环。
-                MediaLinkAudioWiring.Connect(
-                    upstream,
-                    provider.GetRequiredService<MediaLinkHostedService>(),
-                    provider.GetRequiredService<MediaSourceCoordinator>());
-                return upstream;
-            });
-            services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());
+            services.AddMediaLink(
+                () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings);
             services.AddComponent<NowPlayingComponent, NowPlayingComponentSettings>();
             services.AddComponent<SimplyNowPlayingComponent, SimplyNowPlayingComponentSettings>();
             services.AddComponent<LyricsComponent, LyricsComponentSettings>();

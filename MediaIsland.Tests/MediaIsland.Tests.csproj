@@ -17,6 +17,9 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
+    <!-- 仅测试用：DI 的实现半边。IServiceCollection / ServiceCollection 在 Abstractions 里，
+         但注册测试要 BuildServiceProvider()，那在实现包里。插件本体不引它。 -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\MediaIsland\MediaIsland.csproj" />
