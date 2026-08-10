@@ -298,19 +298,23 @@ public sealed class MediaLinkClient : IAsyncDisposable
             new MediaLinkSubscribePayload { Channels = BuildChannels() },
             id: "sub"), handshakeCts.Token);
 
-        // 先记活动 socket，再宣告连上。顺序要紧：SetConnected 是同步派发事件的，
-        // 订阅方会就地重算订阅意愿并调 SetAudioSubscribedAsync。若那时 _activeSocket
-        // 还是空，该调用会把意愿旗标置真却发不出 subscribe，而下面只补 audio.play_start
-        // ——上游起了采集，本会话却没订阅 audio 频道，广播跳过它，表现为静默零帧；
-        // 且旗标已为真，后续重算被相同值去重掐掉，只能等重连才恢复。
-        //
-        // 握手完成前不记：那时发控制帧没有意义。
-        _activeSocket = socket;
-
-        SetConnected(true);
-        LastError = null;
+        // 赋值与 SetConnected 都放进 try：连接态事件是同步派发的，订阅者抛异常会从这里
+        // 穿出去，若赋值在 try 外，_activeSocket 会留着指向已 Dispose 的 socket
+        // 直到下次握手覆盖它。放进来则由 finally 兜底清空。
         try
         {
+            // 先记活动 socket，再宣告连上。顺序要紧：SetConnected 是同步派发事件的，
+            // 订阅方会就地重算订阅意愿并调 SetAudioSubscribedAsync。若那时 _activeSocket
+            // 还是空，该调用会把意愿旗标置真却发不出 subscribe，而下面只补 audio.play_start
+            // ——上游起了采集，本会话却没订阅 audio 频道，广播跳过它，表现为静默零帧；
+            // 且旗标已为真，后续重算被相同值去重掐掉，只能等重连才恢复。
+            //
+            // 握手完成前不记：那时发控制帧没有意义。
+            _activeSocket = socket;
+
+            SetConnected(true);
+            LastError = null;
+
             if (_audioSubscriptionWanted && SupportsAudio)
             {
                 await SendAsync(socket, MediaLinkMessageSerializer.Create(

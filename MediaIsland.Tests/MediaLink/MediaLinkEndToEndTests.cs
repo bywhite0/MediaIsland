@@ -393,6 +393,85 @@ public class MediaLinkEndToEndTests
         await server.StopAsync();
     }
 
+    [Fact]
+    public async Task UpstreamHostedService_AfterHandshake_UpstreamSeesAudioSubscription()
+    {
+        // 补订阅只能由握手完成后的连接态回调来做：MediaLinkClient.Start() 是 fire-and-forget，
+        // 返回时握手尚未开始，仲裁里「连上了」与「对端支持 audio」两项必为假，
+        // 配置生效那一刻补不到。故这条接线断了不会有任何报错，只会静默收不到音频。
+        //
+        // 验收落在上游会话侧而非客户端旗标：旗标为真却没发出 subscribe 也是一种失败模式，
+        // 只有上游真的把 audio 记进这个会话的频道集，广播才会带上它。
+        var upstreamMedia = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var upstreamSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var upstreamCoordinator = new MediaSourceCoordinator(
+            upstreamMedia, lyrics, new MediaLinkInjectionStore(), () => upstreamSettings);
+        var hub = new MediaLinkSessionHub();
+        using var publisher = new MediaLinkStatePublisher(upstreamCoordinator, hub, timelineMinIntervalMs: () => 0);
+        publisher.Start();
+
+        var server = new MediaLinkServer(
+            hub, s => publisher.PublishSnapshotAsync(s), () => "up-tok", coordinator: upstreamCoordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        var downstreamSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.ExternalPreferred,
+            MediaLinkUpstreamIsEnabled = true,
+            MediaLinkUpstreamEndpoint = $"127.0.0.1:{port}",
+            MediaLinkUpstreamToken = "up-tok"
+        };
+        var downstreamStore = new MediaLinkInjectionStore();
+        using var downstreamCoordinator = new MediaSourceCoordinator(
+            new E2EFakeMediaService(), lyrics, downstreamStore, () => downstreamSettings);
+
+        // 仲裁还要求「当前生效的媒体确实来自上游」，而这一项在连接态回调触发的当下求值——
+        // 那一刻上游快照还没抵达。故先注入一条让判据在握手完成前就成立；
+        // 上游放同一首在播，快照抵达覆盖注入后判据也不会翻回假。
+        upstreamMedia.Raise(
+            new MediaInfo("upstream-app", "AudioWireSong", "AudioWireArtist", null,
+                TimeSpan.FromSeconds(5), TimeSpan.FromMinutes(4),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null),
+            MediaInfoChangeKind.MediaProperties);
+        Assert.True(downstreamStore.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            SourceApp = "upstream-app",
+            Title = "AudioWireSong",
+            Artist = "AudioWireArtist",
+            PlaybackState = "Playing"
+        }, out _));
+        Assert.True(downstreamCoordinator.IsExternalMediaEffective, "前置不成立：生效媒体应判为来自上游");
+
+        // 「要不要」的三个来源里取转发这一路：另两路要真频谱组件或真播放设备。
+        using var upstreamService = new MediaLinkUpstreamHostedService(
+            downstreamStore, downstreamCoordinator, () => downstreamSettings,
+            downstreamAudioDemandAccessor: () => true);
+
+        await upstreamService.StartAsync(CancellationToken.None);
+
+        // 先钉地基再验目标：一条都没连上、或连上了却没走到 subscribe，
+        // 在「频道集里没有 audio」这一个断言下与「订阅漏了 audio」长得一模一样。
+        await WaitUntilAsync(() => hub.Sessions.Count == 1);
+        var session = Assert.Single(hub.Sessions);
+        await WaitUntilAsync(() => session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia));
+        Assert.True(session.IsSubscribedTo(MediaLinkProtocol.ChannelMedia), "握手没走到 subscribe");
+
+        // 验收点本身。
+        await WaitUntilAsync(() => session.IsSubscribedToAudio);
+        Assert.True(
+            session.IsSubscribedToAudio,
+            $"握手完成后上游未收到 audio 订阅，会话当前频道：[{string.Join(", ", session.Channels)}]");
+
+        await upstreamService.StopAsync(CancellationToken.None);
+        await server.StopAsync();
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
