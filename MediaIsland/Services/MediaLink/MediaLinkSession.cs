@@ -1427,12 +1427,15 @@ public sealed class MediaLinkSessionHub
     public IReadOnlyCollection<MediaLinkSession> Sessions => _sessions.Keys.ToArray();
 
     /// <summary>
-    /// 是否有任一在线会话需要音频采集。宿主据此重算采集开关。
+    /// 是否有会话要求推送音频（订阅了 audio 或发过 play_start）。
+    ///
+    /// 名字里不带 Capture：第 3 期这个信号只可能导致本机采集，本期起它在仲裁后
+    /// 也可能导致转发上游音频，叫 CaptureDemand 会与实际后果不符。
     ///
     /// 重算而非增减引用计数：会话以任何方式消失（含客户端进程被杀这类不发关闭握手的路径）
     /// 都不会留下悬空的需求，因为这里读的始终是「当前还在集合里且仍想要」的会话。
     /// </summary>
-    public bool HasAudioCaptureDemand => _sessions.Keys.Any(session => session.WantsAudioCapture);
+    public bool HasDownstreamAudioDemand => _sessions.Keys.Any(session => session.WantsAudioCapture);
 
     /// <summary>
     /// 广播音频二进制帧。未订阅 audio 的会话由 <see cref="MediaLinkSession.EnqueueAudioAsync"/>

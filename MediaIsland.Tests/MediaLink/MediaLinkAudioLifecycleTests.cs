@@ -218,11 +218,11 @@ public class MediaLinkAudioLifecycleTests
         hub.Add(session);
         await SubscribeAsync(socket, "\"audio\"");
         await PlayStartAsync(socket);
-        Assert.True(hub.HasAudioCaptureDemand);
+        Assert.True(hub.HasDownstreamAudioDemand);
 
         socket.EnqueueClose();
 
-        await WaitUntilAsync(() => !hub.HasAudioCaptureDemand);
+        await WaitUntilAsync(() => !hub.HasDownstreamAudioDemand);
     }
 
     [Fact]
@@ -238,15 +238,15 @@ public class MediaLinkAudioLifecycleTests
         await PlayStartAsync(firstSocket);
         await SubscribeAsync(secondSocket, "\"audio\"");
         await PlayStartAsync(secondSocket);
-        Assert.True(hub.HasAudioCaptureDemand);
+        Assert.True(hub.HasDownstreamAudioDemand);
 
         firstSocket.EnqueueClose();
         await WaitUntilAsync(() => first.IsClosed);
-        Assert.True(hub.HasAudioCaptureDemand);
+        Assert.True(hub.HasDownstreamAudioDemand);
 
         secondSocket.EnqueueClose();
 
-        await WaitUntilAsync(() => !hub.HasAudioCaptureDemand);
+        await WaitUntilAsync(() => !hub.HasDownstreamAudioDemand);
     }
 
     // ---- 协议表面回归锁定 ----

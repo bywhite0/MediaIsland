@@ -72,7 +72,7 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
             () => token,
             coordinator: coordinator,
             onAudioCaptureDemandChangedAsync: () =>
-                audioHub.SetCaptureDemandAsync(hub.HasAudioCaptureDemand, CancellationToken.None));
+                audioHub.SetCaptureDemandAsync(hub.HasDownstreamAudioDemand, CancellationToken.None));
 
         await server.StartAsync("127.0.0.1", 0);
         var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);

@@ -463,6 +463,25 @@ namespace MediaIsland.Models
             }
         }
 
+        private bool _mediaLinkPlaybackIsEnabled;
+
+        /// <summary>
+        /// 是否把上游音频放出声。默认关——多数用户只看频谱，出声应是显式选择。
+        ///
+        /// 不需要与本机采集做互斥设置：播放有内容的前提是当前生效的媒体来自上游，
+        /// 而那种情况下本机 loopback 采集本就被仲裁停掉了，回环的前提不存在。
+        /// </summary>
+        public bool MediaLinkPlaybackIsEnabled
+        {
+            get => _mediaLinkPlaybackIsEnabled;
+            set
+            {
+                if (_mediaLinkPlaybackIsEnabled == value) return;
+                _mediaLinkPlaybackIsEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
     }
     public class MediaSource : ObservableObject
     {

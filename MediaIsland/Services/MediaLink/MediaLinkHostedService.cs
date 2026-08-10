@@ -57,7 +57,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         ILoggerFactory? loggerFactory = null,
         AudioVisualizationDemand? visualizationDemand = null,
         AudioVisualizationService? visualization = null,
-        Func<bool>? upstreamAudioActiveAccessor = null)
+        Func<bool>? externalMediaEffectiveAccessor = null)
     {
         // mediaService/lyricsSearchService retained in signature for DI call sites / future use;
         // push path is exclusively via coordinator.
@@ -72,12 +72,12 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         _logger = loggerFactory?.CreateLogger<MediaLinkHostedService>();
         _visualizationDemand = visualizationDemand;
         _visualization = visualization;
-        _upstreamAudioActive = upstreamAudioActiveAccessor;
+        _externalMediaEffective = externalMediaEffectiveAccessor;
     }
 
     private readonly AudioVisualizationDemand? _visualizationDemand;
     private readonly AudioVisualizationService? _visualization;
-    private readonly Func<bool>? _upstreamAudioActive;
+    private readonly Func<bool>? _externalMediaEffective;
 
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
 
@@ -420,7 +420,8 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
     /// <summary>
     /// 重算音频采集需求。需求有两个来源：协议层（谁订阅了 audio、谁 play_start）
-    /// 与本地可视化（岛上有没有频谱组件）。两者取并集。
+    /// 与本地可视化（岛上有没有频谱组件）。两者取并集后再交给仲裁，
+    /// 判据见 <see cref="ShouldCaptureLocally"/>。
     ///
     /// 提升为 public：上游服务的音源仲裁结果变化时要能从外部触发重算，
     /// 而两个宿主服务互相注入会形成构造期循环依赖，只能由 Plugin 在外面接线。
@@ -435,22 +436,27 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
         await audioHub.SetCaptureDemandAsync(
             ShouldCaptureLocally(
-                _hub?.HasAudioCaptureDemand ?? false,
+                _hub?.HasDownstreamAudioDemand ?? false,
                 _visualizationDemand?.IsDemanded == true,
-                _upstreamAudioActive?.Invoke() == true),
+                _externalMediaEffective?.Invoke() == true),
             CancellationToken.None);
     }
 
+    /// <summary>下游是否有会话要音频。上游服务据此决定要不要向上游订阅 audio。</summary>
+    public bool HasDownstreamAudioDemand => _hub?.HasDownstreamAudioDemand ?? false;
+
     /// <summary>
-    /// 采集需求的全部逻辑。协议需求无条件成立；可视化需求还要减去「正在用上游音频」——
-    /// 此时本机采集对可视化是多余的，且同机既采集又播放远端音频会形成回环。
+    /// 采集需求的全部逻辑。两个需求来源取并集，再整体减去「当前生效的媒体来自上游」。
     ///
-    /// 协议需求不受上游影响是最容易写错的一格：订阅 audio 的那些客户端要的是
-    /// 本机这台机器的声音，不是本机转发的上游声音。一起关掉会让别人的频谱毫无征兆地静掉。
+    /// 协议需求不再无条件成立——这是本期相对上一期的推翻点。下游订阅者要的是
+    /// 本机认定的当前曲目的声音；那首歌来自上游时，本机该转发而不是采集自己的输出，
+    /// 否则下游收到的是本机的 PCM 配上游的曲目标识，校验能过但内容错配。
+    ///
+    /// 第三个入参是仲裁结果而非连接态：连着上游不等于该用上游的声音。
     /// </summary>
     internal static bool ShouldCaptureLocally(
-        bool protocolDemand, bool visualizationDemand, bool upstreamAudioActive) =>
-        protocolDemand || (visualizationDemand && !upstreamAudioActive);
+        bool protocolDemand, bool visualizationDemand, bool externalMediaEffective) =>
+        (protocolDemand || visualizationDemand) && !externalMediaEffective;
 
     /// <summary>
     /// 可视化需求或音源仲裁变化时重算。不 await：需求由组件的 Loaded/Unloaded 触发，

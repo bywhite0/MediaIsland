@@ -13,7 +13,7 @@ namespace MediaIsland.Services.Audio;
 ///
 /// <see cref="SetCaptureDemandAsync"/> 接受一个布尔状态而非 start/stop 指令，
 /// 故调用方可以无脑重算并调用，重复传相同值是 no-op。这与
-/// <c>MediaLinkSessionHub.HasAudioCaptureDemand</c> 的重算取向一致：
+/// <c>MediaLinkSessionHub.HasDownstreamAudioDemand</c> 的重算取向一致：
 /// 状态函数没有需要精确配对的「路径」。
 /// </summary>
 public sealed class AudioFrameHub : IDisposable

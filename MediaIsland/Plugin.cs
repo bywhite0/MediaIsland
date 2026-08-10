@@ -86,8 +86,9 @@ namespace MediaIsland
                 provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(),
                 provider.GetRequiredService<AudioVisualizationDemand>(),
                 provider.GetRequiredService<AudioVisualizationService>(),
-                // 用 lambda 延迟解析：两个宿主服务互相引用，直接注入会形成构造期循环依赖。
-                () => provider.GetRequiredService<MediaLinkUpstreamHostedService>().IsConsumingUpstreamAudio));
+                // 仲裁锚点是生效媒体来源，不是连接态：连着上游不等于该用上游的声音。
+                // 用 lambda 延迟解析，与下面上游服务的接线同理。
+                () => provider.GetRequiredService<MediaSourceCoordinator>().IsExternalMediaEffective));
             services.AddSingleton<IMediaLinkGateway>(provider => provider.GetRequiredService<MediaLinkHostedService>());
             services.AddHostedService(provider => provider.GetRequiredService<MediaLinkHostedService>());
             // 上游消费与服务端相互独立：一台实例可以只推、只收，或两者同时（转发中继）。
@@ -99,12 +100,23 @@ namespace MediaIsland
                     () => (Instance ?? throw new InvalidOperationException("MediaIsland 插件尚未初始化。")).Settings,
                     provider.GetService<Microsoft.Extensions.Logging.ILoggerFactory>(),
                     visualization: provider.GetRequiredService<AudioVisualizationService>(),
-                    visualizationDemand: provider.GetRequiredService<AudioVisualizationDemand>());
+                    visualizationDemand: provider.GetRequiredService<AudioVisualizationDemand>(),
+                    // 用 lambda 延迟解析：两个宿主服务互相引用，直接注入会形成构造期循环依赖。
+                    downstreamAudioDemandAccessor: () =>
+                        provider.GetRequiredService<MediaLinkHostedService>().HasDownstreamAudioDemand);
 
                 // 音源仲裁变了就让服务端重算本机采集需求。在这里接线而不是让两个服务
                 // 互相注入——后者是构造期循环依赖。
                 upstream.AudioSourceChanged += (_, _) =>
                     _ = provider.GetRequiredService<MediaLinkHostedService>().RecomputeAudioCaptureDemandAsync();
+
+                // 生效媒体来源变了，三个音频角色的归属就变了：本机采集、上游转发、本机播放。
+                // 两个宿主服务各自重算，不互相调用。
+                provider.GetRequiredService<MediaSourceCoordinator>().EffectiveMediaChanged += (_, _) =>
+                {
+                    upstream.RecomputeAudioSubscription();
+                    _ = provider.GetRequiredService<MediaLinkHostedService>().RecomputeAudioCaptureDemandAsync();
+                };
                 return upstream;
             });
             services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());

@@ -25,6 +25,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     private readonly Func<long> _tickProvider;
     private readonly AudioVisualizationService? _visualization;
     private readonly AudioVisualizationDemand? _demand;
+    private readonly Func<bool>? _downstreamAudioDemand;
 
     private MediaLinkClient? _client;
     private MediaLinkAudioReceiver? _audioReceiver;
@@ -40,7 +41,8 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         ILoggerFactory? loggerFactory = null,
         Func<long>? tickProvider = null,
         AudioVisualizationService? visualization = null,
-        AudioVisualizationDemand? visualizationDemand = null)
+        AudioVisualizationDemand? visualizationDemand = null,
+        Func<bool>? downstreamAudioDemandAccessor = null)
     {
         _injectionStore = injectionStore ?? throw new ArgumentNullException(nameof(injectionStore));
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -50,12 +52,13 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         _tickProvider = tickProvider ?? (() => Environment.TickCount64);
         _visualization = visualization;
         _demand = visualizationDemand;
+        _downstreamAudioDemand = downstreamAudioDemandAccessor;
     }
 
     public bool IsConnected => _client?.IsConnected == true;
 
     /// <summary>
-    /// 是否正在消费上游音频。用连接态判断，不用帧流量判断——
+    /// 是否正在消费上游音频。判据全是状态，不用帧流量——
     /// 按「最近 N 毫秒有没有收到帧」来定，上游断续时采集会反复启停，
     /// 得加迟滞、加时间窗，是一串补丁。
     ///
@@ -64,16 +67,32 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     /// 却以为那是远端的。
     /// </summary>
     public bool IsConsumingUpstreamAudio => ShouldConsumeUpstreamAudio(
-        _upstreamAudioEnabled, IsConnected, _client?.SupportsAudio == true, _demand?.IsDemanded == true);
+        _upstreamAudioEnabled,
+        IsConnected,
+        _client?.SupportsAudio == true,
+        _coordinator.IsExternalMediaEffective,
+        _demand?.IsDemanded == true,
+        _downstreamAudioDemand?.Invoke() == true,
+        _settingsFactory().MediaLinkPlaybackIsEnabled);
 
     /// <summary>
-    /// 仲裁本身。抽成静态纯函数，让这四个条件的组合可以被真值表逐格锁死——
+    /// 仲裁本身。抽成静态纯函数，让这七个条件的组合可以被真值表逐格锁死——
     /// 端到端驱动它需要真实 listener、真实 socket 与真实音频设备，而它的全部内容
-    /// 就是四个布尔量。
+    /// 就是七个布尔量。
+    ///
+    /// 前四项是「能不能」：功能开着、连上了、对端支持、且当前生效的媒体确实来自上游。
+    /// 后三项取并集是「要不要」：岛上有频谱、下游要转发、本机要出声。
     /// </summary>
     internal static bool ShouldConsumeUpstreamAudio(
-        bool upstreamEnabled, bool connected, bool supportsAudio, bool visualizationDemanded) =>
-        upstreamEnabled && connected && supportsAudio && visualizationDemanded;
+        bool upstreamEnabled,
+        bool connected,
+        bool supportsAudio,
+        bool externalMediaEffective,
+        bool visualizationDemanded,
+        bool downstreamAudioDemanded,
+        bool playbackEnabled) =>
+        upstreamEnabled && connected && supportsAudio && externalMediaEffective
+        && (visualizationDemanded || downstreamAudioDemanded || playbackEnabled);
 
     public string? LastError { get; private set; }
 
@@ -91,7 +110,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     {
         if (_demand is not null)
         {
-            _demand.DemandChanged += OnVisualizationDemandChanged;
+            _demand.DemandChanged += RecomputeAudioSubscription;
         }
 
         var settings = _settingsFactory();
@@ -224,11 +243,8 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             _upstreamAudioEnabled = true;
             client.Start();
 
-            // 连上之后按当前需求补一次订阅意愿：组件可能在断线期间就挂载好了。
-            if (_demand?.IsDemanded == true)
-            {
-                await client.SetAudioSubscribedAsync(true);
-            }
+            // 此处不补订阅：客户端刚 Start()，握手未完成，仲裁的连接态与对端能力两项
+            // 必为假。订阅意愿改由握手完成后的 OnClientConnectionStateChanged 重算。
 
             LastError = null;
             RaiseStateChanged();
@@ -329,8 +345,12 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     private void OnClientConnectionStateChanged(object? sender, EventArgs e)
     {
         RaiseStateChanged();
-        // 连接态是仲裁的入参之一：断连必须让服务端重算，否则本机采集不会自动接上。
-        RaiseAudioSourceChanged();
+        // 连接态是两个仲裁的共同入参：断连必须让服务端重算，否则本机采集不会自动接上；
+        // 连上则必须重算向上游的订阅意愿——对端能力要握手完才知道，而 ApplySettingsAsync
+        // 里那次补订阅发生在 Start() 之后、握手之前，判据必然为假，补不到。
+        //
+        // 重算内部无论走哪条分支都会发出 AudioSourceChanged，故不必再单独发一次。
+        RecomputeAudioSubscription();
     }
 
     private void OnAudioFrameReceived(object? sender, MediaLinkAudioFrameReceivedEventArgs e)
@@ -347,10 +367,15 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     }
 
     /// <summary>
-    /// 可视化需求变化：重算而非增减。订阅与本机采集同构——都是「有消费者才占资源」，
+    /// 重算而非增减。订阅与本机采集同构——都是「有消费者才占资源」，
     /// 无消费者时订阅 audio 会让上游白采集、白传约 192KB/s。
+    ///
+    /// 目标值直接取仲裁结果：需求来源从第 3 期的一个变成三个，逐个加判断会分叉。
+    ///
+    /// 提升为 public：生效媒体来源变化时要能从外部触发重算，
+    /// 而两个宿主服务互相注入会形成构造期循环依赖，只能由 Plugin 在外面接线。
     /// </summary>
-    private void OnVisualizationDemandChanged()
+    public void RecomputeAudioSubscription()
     {
         var client = _client;
         if (client is null)
@@ -364,7 +389,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         {
             try
             {
-                await client.SetAudioSubscribedAsync(_demand?.IsDemanded == true);
+                await client.SetAudioSubscribedAsync(IsConsumingUpstreamAudio);
             }
             catch (Exception ex)
             {
@@ -409,7 +434,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
 
         if (_demand is not null)
         {
-            _demand.DemandChanged -= OnVisualizationDemandChanged;
+            _demand.DemandChanged -= RecomputeAudioSubscription;
         }
 
         if (_boundSettings is not null)
