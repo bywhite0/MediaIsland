@@ -15,6 +15,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
 pub mod convert;
+pub mod ring;
 
 #[cfg(windows)]
 pub mod capture;
