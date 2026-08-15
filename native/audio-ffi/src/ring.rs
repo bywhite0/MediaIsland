@@ -4,8 +4,10 @@
 //! 播放这一侧丢最旧同样正确，但理由不同——积压意味着本机放得比上游发得慢，
 //! 保留最新才能追上，保留最旧只会让延迟永久累积。
 
-/// 交错立体声，恒 2 声道。与传输格式一致，此处不做声道数适配。
-const CHANNELS: usize = 2;
+/// 交错立体声。由 crate 根的 [`crate::OUTPUT_CHANNELS`] 导出而非另写一个 2——
+/// 两份声明各自为真时，声道数一旦变更，本模块仍按 2 解释交错布局，每帧都会错位，
+/// 而这种错位没有任何测试抓得到（改成导出是恒等变换，验不出来的正是它要防的事）。
+const CHANNELS: usize = crate::OUTPUT_CHANNELS as usize;
 
 /// 漂移比率的单边上限。±0.1% 无可听伪声，是网络音频的常规量级。
 pub const MAX_DRIFT: f64 = 0.001;
@@ -165,17 +167,51 @@ mod tests {
         ring.reset();
 
         assert_eq!(ring.available_frames(), 0);
-        let mut out = vec![0i16; CH];
+        // 预填非零：全欠载时必须把整个 out 写成静音。WASAPI 交回来的缓冲带着上一轮残留，
+        // 不填零等于把上一轮音频原样重播一遍。
+        let mut out = vec![99i16; CH];
         assert_eq!(ring.read_into(&mut out), 0);
+        assert_eq!(out, vec![0i16; CH]);
     }
 
     #[test]
     fn odd_sample_count_is_ignored_at_the_tail() {
         // 交错立体声，样本数必为偶数。奇数说明上游有误，末尾残样本丢弃而非错位成右声道。
+        //
+        // 必须把数据读回来比对：只查帧数的话，「整段右移一个样本」这类错位仍然让帧数为 1，
+        // 而它的失效形态不是丢一帧，是该次 push 的每一帧左右声道互换。
         let mut ring = PlaybackRing::new(8);
         ring.push(&[1, -1, 5]);
 
         assert_eq!(ring.available_frames(), 1);
+        let mut out = vec![0i16; CH];
+        assert_eq!(ring.read_into(&mut out), 1);
+        assert_eq!(out, stereo(&[(1, -1)]));
+    }
+
+    #[test]
+    fn frame_after_odd_tail_stays_aligned() {
+        // 残样本不能留着跟下一次 push 拼起来——那会让此后每一帧都左右互换，
+        // 且错位会一直传下去，比丢一个样本严重得多。
+        let mut ring = PlaybackRing::new(8);
+        ring.push(&[1, -1, 5]);
+        ring.push(&stereo(&[(2, -2)]));
+
+        let mut out = vec![0i16; 2 * CH];
+        assert_eq!(ring.read_into(&mut out), 2);
+        assert_eq!(out, stereo(&[(1, -1), (2, -2)]));
+    }
+
+    #[test]
+    fn zero_capacity_is_clamped_to_one_frame() {
+        // 容量 0 会让 push / read_into 里的取模直接除零 panic。
+        let mut ring = PlaybackRing::new(0);
+        ring.push(&stereo(&[(1, 1), (2, 2)]));
+
+        assert_eq!(ring.available_frames(), 1);
+        let mut out = vec![0i16; CH];
+        assert_eq!(ring.read_into(&mut out), 1);
+        assert_eq!(out, stereo(&[(2, 2)]));
     }
 
     #[test]
@@ -197,8 +233,22 @@ mod tests {
     #[test]
     fn drift_ratio_is_clamped_to_one_permille() {
         // 硬重置前后 e 可以远超 target。不夹紧会让比率跳到可听的量级。
+        //
+        // 两边的性质不同：上界生产必然触发（target 可低至 50ms，而缓冲深度可达 2000ms）；
+        // 下界纯防御——available≥0 且 target>0 时 e≥-1 恒成立，故只有负 available 才验得到它。
+        // 用 (0.0, 200.0) 验下界是无效的：那时 e 恰为 -1，正落在夹紧边界上，松开也不变。
         assert!((drift_ratio(100_000.0, 200.0) - (1.0 + MAX_DRIFT)).abs() < 1e-12);
+        assert!((drift_ratio(-1000.0, 200.0) - (1.0 - MAX_DRIFT)).abs() < 1e-12);
         assert!((drift_ratio(0.0, 200.0) - (1.0 - MAX_DRIFT)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn drift_ratio_tolerates_non_finite_inputs() {
+        // NaN 会顺着比率污染整条输出流，而这里没有比「不调速」更安全的选择。
+        assert_eq!(drift_ratio(f64::NAN, 200.0), 1.0);
+        assert_eq!(drift_ratio(f64::INFINITY, 200.0), 1.0);
+        assert_eq!(drift_ratio(100.0, f64::NAN), 1.0);
+        assert_eq!(drift_ratio(100.0, f64::INFINITY), 1.0);
     }
 
     #[test]
