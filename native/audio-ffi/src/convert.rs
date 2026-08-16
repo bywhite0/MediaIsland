@@ -118,6 +118,48 @@ pub fn i16_to_le_bytes(samples: &[i16]) -> Vec<u8> {
     out
 }
 
+/// 把一个 f32 样本按设备格式写进 `dst` 的开头。[`normalize_to_f32`] 的逆运算。
+///
+/// 三条防护，都不是理论上的：
+///
+/// 1. **先 clamp**，理由同 [`f32_to_i16`]——回绕会把峰值变成反相的谷值，
+///    听感是刺耳爆音。重采样对满量程信号会产生过冲。
+/// 2. **非有限值写零**。NaN 走整数分支时 `as i32` 得 0，但走 f32 分支会被原样写进
+///    设备缓冲，那是驱动层面的未定义行为。
+/// 3. **切片短于一个样本时整体跳过**。设备 `block_align` 与声道数不自洽时会切出短片，
+///    越界写崩在实时线程上会带走整个宿主进程。
+pub fn write_sample(dst: &mut [u8], sample: f32, format: SampleFormat) {
+    let stride = format.bytes_per_sample();
+    if dst.len() < stride {
+        return;
+    }
+
+    let value = if sample.is_finite() {
+        sample.clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+
+    match format {
+        SampleFormat::Pcm16 => {
+            let raw = (value * i16::MAX as f32) as i16;
+            dst[..2].copy_from_slice(&raw.to_le_bytes());
+        }
+        SampleFormat::Pcm24 => {
+            // 三字节紧密排列的小端，写低三字节即可——i24::MAX 保证不会溢出到第四字节。
+            let raw = (value * 8_388_607.0) as i32;
+            dst[..3].copy_from_slice(&raw.to_le_bytes()[..3]);
+        }
+        SampleFormat::Pcm32 => {
+            let raw = (value as f64 * i32::MAX as f64) as i32;
+            dst[..4].copy_from_slice(&raw.to_le_bytes());
+        }
+        SampleFormat::F32 => {
+            dst[..4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+}
+
 /// 立体声重采样器。
 ///
 /// `SincFixedIn` 要求**固定输入块大小**，而 WASAPI `GetBuffer` 返回的帧数不保证恒定，
@@ -362,5 +404,78 @@ mod tests {
         let back = f32_to_i16(&stereo);
 
         assert_eq!(back, original);
+    }
+
+    /// `write_sample` 与 [`normalize_to_f32`] 互为逆运算，故用往返比对做判据：
+    /// 单独断言字节值只能证明「写了某些字节」，证明不了两者对同一格式的解释一致，
+    /// 而播放侧写错格式的失效形态是刺耳噪声，不是轻微失真。
+    fn round_trip(value: f32, format: SampleFormat) -> f32 {
+        let mut bytes = vec![0u8; format.bytes_per_sample()];
+        write_sample(&mut bytes, value, format);
+        normalize_to_f32(&bytes, format)[0]
+    }
+
+    #[test]
+    fn write_sample_round_trips_every_format() {
+        for format in [
+            SampleFormat::Pcm16,
+            SampleFormat::Pcm24,
+            SampleFormat::Pcm32,
+            SampleFormat::F32,
+        ] {
+            for value in [0.0f32, 0.5, -0.5, 1.0, -1.0] {
+                let back = round_trip(value, format);
+                assert!(
+                    (back - value).abs() < 1e-4,
+                    "{format:?} 往返 {value} 得到 {back}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn write_sample_clamps_instead_of_wrapping() {
+        // 与 f32_to_i16 同一条理由：回绕会把峰值变成反相的谷值，
+        // 听感是刺耳爆音而非轻微失真。漂移控制律不会产生越界值，
+        // 但上游发来的 PCM 经重采样后可以有过冲。
+        for format in [
+            SampleFormat::Pcm16,
+            SampleFormat::Pcm24,
+            SampleFormat::Pcm32,
+            SampleFormat::F32,
+        ] {
+            assert!(round_trip(4.0, format) > 0.9, "{format:?} 正向过冲被回绕了");
+            assert!(round_trip(-4.0, format) < -0.9, "{format:?} 负向过冲被回绕了");
+        }
+    }
+
+    #[test]
+    fn write_sample_ignores_non_finite_input() {
+        // NaN as i32 在 Rust 里是 0，但 f32 格式会把 NaN 原样写进设备缓冲，
+        // 那是设备驱动层面的未定义行为。一律写零。
+        for format in [
+            SampleFormat::Pcm16,
+            SampleFormat::Pcm24,
+            SampleFormat::Pcm32,
+            SampleFormat::F32,
+        ] {
+            assert_eq!(round_trip(f32::NAN, format), 0.0, "{format:?} 放过了 NaN");
+            assert_eq!(
+                round_trip(f32::INFINITY, format),
+                0.0,
+                "{format:?} 放过了 inf"
+            );
+        }
+    }
+
+    #[test]
+    fn write_sample_tolerates_short_slice() {
+        // 设备 block_align 与声道数不自洽时切片会短于一个样本。
+        // 越界写会崩在实时线程上，而那会带走整个宿主进程。
+        let mut bytes = [0u8; 1];
+
+        write_sample(&mut bytes, 0.5, SampleFormat::Pcm16);
+
+        assert_eq!(bytes, [0u8; 1], "短切片应整体跳过而非部分写入");
     }
 }

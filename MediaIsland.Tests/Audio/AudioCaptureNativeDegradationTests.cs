@@ -39,7 +39,7 @@ public class AudioCaptureNativeDegradationTests : IDisposable
     [Fact]
     public void SimulatedAbiMismatch_ReportsUnavailableWithReason()
     {
-        AudioCaptureNative.ResetForTesting(available: false, failureReason: "ABI 版本不匹配：期望 1，实际为 99");
+        AudioCaptureNative.ResetForTesting(available: false, failureReason: "ABI 版本不匹配：期望 2，实际为 99");
 
         Assert.False(AudioCaptureNative.IsAvailable);
         Assert.Contains("ABI", AudioCaptureNative.FailureReason);

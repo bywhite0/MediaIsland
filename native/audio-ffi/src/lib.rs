@@ -15,12 +15,13 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
 pub mod convert;
+pub mod render;
 pub mod ring;
 
 #[cfg(windows)]
 pub mod capture;
 
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 /// 传输格式恒为 48000Hz / 2 声道 / i16，与 `server.hello` 的 `audio` 声明一致。
 pub const OUTPUT_SAMPLE_RATE: u32 = 48_000;
@@ -70,6 +71,40 @@ impl AudioFrame {
 }
 
 pub type AudioFrameCallback = extern "C" fn(*const AudioFrame, *mut c_void);
+
+/// 一块**已写进设备缓冲**的 PCM，供 C# 侧接着喂频谱。布局同 [`AudioFrame`] 的前四项。
+///
+/// 没有 `is_silent` 与 `qpc_position`：播放侧的静音就是零值 PCM，没有单独的标志位；
+/// 而时间戳由 C# 侧在收到回调时取本机时刻，native 侧的 QPC 对它无增量。
+///
+/// 送出的是**重采样前的 48000/2ch/i16**，不是设备格式的那一份——C# 的分析器只认这一种。
+///
+/// # 精度说明
+///
+/// 回调在 PCM 写进 WASAPI 缓冲后触发，而写进缓冲不等于已出声：共享模式下还隔着
+/// 10–30ms 的端点缓冲。**残余误差是 10–30ms 而非零**，在 50ms 可察觉阈值之下。
+/// 记这一条是因为「回调已播出的 PCM」容易被读成零误差，据此去调别的延迟会调错方向。
+#[repr(C)]
+pub struct PlayedFrame {
+    /// 交错 L,R,L,R...；**仅在回调期间有效**。
+    pub samples: *const i16,
+    pub frame_count: usize,
+    pub sample_rate: u32,
+    pub channels: u16,
+}
+
+impl PlayedFrame {
+    pub(crate) fn new(samples: &[i16]) -> Self {
+        Self {
+            samples: samples.as_ptr(),
+            frame_count: samples.len() / OUTPUT_CHANNELS as usize,
+            sample_rate: OUTPUT_SAMPLE_RATE,
+            channels: OUTPUT_CHANNELS,
+        }
+    }
+}
+
+pub type PlayedFrameCallback = extern "C" fn(*const PlayedFrame, *mut c_void);
 
 /// 采集句柄。跨 FFI 传递的是它的裸指针。
 pub struct CaptureHandle {
@@ -226,6 +261,217 @@ pub unsafe extern "C" fn mediaisland_audio_last_error(handle: *mut CaptureHandle
     }
 }
 
+/// 播放句柄。跨 FFI 传递的是它的裸指针。
+pub struct RenderHandle {
+    #[cfg(windows)]
+    inner: render::WasapiRenderer,
+    last_error: Option<String>,
+}
+
+/// 创建播放句柄。`user_data` 原样回传给回调，C# 侧用它还原 `GCHandle`。
+///
+/// # Safety
+/// `out_handle` 必须指向可写的指针大小内存。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_create(
+    callback: PlayedFrameCallback,
+    user_data: *mut c_void,
+    out_handle: *mut *mut RenderHandle,
+) -> i32 {
+    if out_handle.is_null() {
+        return STATUS_INVALID_ARG;
+    }
+
+    *out_handle = ptr::null_mut();
+
+    #[cfg(not(windows))]
+    {
+        let _ = (callback, user_data);
+        return STATUS_UNSUPPORTED_PLATFORM;
+    }
+
+    #[cfg(windows)]
+    {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            render::WasapiRenderer::new(callback, user_data as usize)
+        }));
+
+        match result {
+            Ok(inner) => {
+                let handle = Box::new(RenderHandle {
+                    inner,
+                    last_error: None,
+                });
+                *out_handle = Box::into_raw(handle);
+                STATUS_OK
+            }
+            Err(_) => STATUS_PANIC,
+        }
+    }
+}
+
+/// 起播。`target_buffer_ms` 是抖动缓冲的目标深度，越界值被夹到受支持的范围内
+/// 而非报错——它来自用户设置，夹紧比让播放整个失败更符合预期。
+///
+/// **不支持在线调整深度**：改动设置即停播重启。深度变更要么丢音要么静音填充，
+/// 两者都不如一次干净的重启，而这是罕见操作。
+///
+/// # Safety
+/// `handle` 必须是 [`mediaisland_audio_render_create`] 返回且尚未销毁的指针。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_start(
+    handle: *mut RenderHandle,
+    target_buffer_ms: u32,
+) -> i32 {
+    let Some(handle) = handle.as_mut() else {
+        return STATUS_INVALID_ARG;
+    };
+
+    #[cfg(not(windows))]
+    {
+        let _ = target_buffer_ms;
+        handle.last_error = Some("当前平台不支持音频播放".to_string());
+        STATUS_UNSUPPORTED_PLATFORM
+    }
+
+    #[cfg(windows)]
+    {
+        match catch_unwind(AssertUnwindSafe(|| handle.inner.start(target_buffer_ms))) {
+            Ok(Ok(())) => {
+                handle.last_error = None;
+                STATUS_OK
+            }
+            Ok(Err(err)) => {
+                let status = err.status;
+                handle.last_error = Some(err.message);
+                status
+            }
+            Err(_) => {
+                handle.last_error = Some("播放启动时发生 panic".to_string());
+                STATUS_PANIC
+            }
+        }
+    }
+}
+
+/// 送入交错 i16 立体声。
+///
+/// `frame_count` 是**每声道**采样数，故样本总数为 `frame_count * 2`。
+/// 调用方按字节数算帧数时**必须向下取整到整帧**：环形缓冲不跨调用结转半帧，
+/// 多出来的样本会被丢弃。
+///
+/// # Safety
+/// `handle` 同 [`mediaisland_audio_render_start`]；`samples` 须指向至少
+/// `frame_count * 2` 个 `i16`，仅在本次调用期间被读取。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_push(
+    handle: *mut RenderHandle,
+    samples: *const i16,
+    frame_count: usize,
+) -> i32 {
+    let Some(handle) = handle.as_mut() else {
+        return STATUS_INVALID_ARG;
+    };
+
+    // 空指针配零长度也要短路：slice::from_raw_parts(null, 0) 在 Rust 里是 UB，
+    // 而「零长度所以无所谓」这个直觉恰恰不成立。
+    if frame_count == 0 {
+        return STATUS_OK;
+    }
+    if samples.is_null() {
+        return STATUS_INVALID_ARG;
+    }
+
+    #[cfg(not(windows))]
+    {
+        handle.last_error = Some("当前平台不支持音频播放".to_string());
+        STATUS_UNSUPPORTED_PLATFORM
+    }
+
+    #[cfg(windows)]
+    {
+        let interleaved =
+            std::slice::from_raw_parts(samples, frame_count * OUTPUT_CHANNELS as usize);
+
+        match catch_unwind(AssertUnwindSafe(|| handle.inner.push(interleaved))) {
+            Ok(()) => STATUS_OK,
+            Err(_) => {
+                handle.last_error = Some("送入播放数据时发生 panic".to_string());
+                STATUS_PANIC
+            }
+        }
+    }
+}
+
+/// 停止播放。**同步等待渲染线程真正退出**再返回，理由同
+/// [`mediaisland_audio_capture_stop`]。
+///
+/// # Safety
+/// 同 [`mediaisland_audio_render_start`]。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_stop(handle: *mut RenderHandle) -> i32 {
+    let Some(handle) = handle.as_mut() else {
+        return STATUS_INVALID_ARG;
+    };
+
+    #[cfg(not(windows))]
+    {
+        let _ = &handle;
+        STATUS_UNSUPPORTED_PLATFORM
+    }
+
+    #[cfg(windows)]
+    {
+        match catch_unwind(AssertUnwindSafe(|| handle.inner.stop())) {
+            Ok(()) => STATUS_OK,
+            Err(_) => {
+                handle.last_error = Some("播放停止时发生 panic".to_string());
+                STATUS_PANIC
+            }
+        }
+    }
+}
+
+/// # Safety
+/// `handle` 此后不可再用。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_destroy(handle: *mut RenderHandle) {
+    if handle.is_null() {
+        return;
+    }
+
+    let mut handle = Box::from_raw(handle);
+
+    // 先停再释放：渲染线程仍持有回调指针，此时释放会让它写进已回收的内存。
+    #[cfg(windows)]
+    {
+        let _ = catch_unwind(AssertUnwindSafe(|| handle.inner.stop()));
+    }
+
+    #[cfg(not(windows))]
+    {
+        handle.last_error = None;
+    }
+}
+
+/// 取播放侧最近一次错误。返回的缓冲需由 [`mediaisland_audio_free`] 释放。
+///
+/// # Safety
+/// 同 [`mediaisland_audio_render_start`]。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_last_error(
+    handle: *mut RenderHandle,
+) -> FfiBuffer {
+    let Some(handle) = handle.as_ref() else {
+        return FfiBuffer::empty();
+    };
+
+    match &handle.last_error {
+        Some(message) => FfiBuffer::from_vec(message.clone().into_bytes()),
+        None => FfiBuffer::empty(),
+    }
+}
+
 /// 与 `ttml-ffi` 的 `FfiBuffer` 同布局，C# 侧可复用既有的读取与释放写法。
 #[repr(C)]
 pub struct FfiBuffer {
@@ -274,7 +520,18 @@ mod tests {
     #[test]
     fn abi_version_is_stable() {
         // ABI 版本是 C# 侧 ExpectedAbiVersion 的对端，改动必须是有意识的。
-        assert_eq!(mediaisland_audio_abi_version(), 1);
+        assert_eq!(mediaisland_audio_abi_version(), 2);
+    }
+
+    #[test]
+    fn played_frame_reports_per_channel_count() {
+        let samples = [1i16, 2, 3, 4, 5, 6];
+
+        let frame = PlayedFrame::new(&samples);
+
+        assert_eq!(frame.frame_count, 3);
+        assert_eq!(frame.channels, OUTPUT_CHANNELS);
+        assert_eq!(frame.sample_rate, OUTPUT_SAMPLE_RATE);
     }
 
     #[test]
@@ -346,5 +603,103 @@ mod tests {
         assert_eq!(text, "设备被独占");
 
         unsafe { mediaisland_audio_free(buffer.ptr, buffer.len) };
+    }
+
+    extern "C" fn noop_played(_: *const PlayedFrame, _: *mut c_void) {}
+
+    #[test]
+    fn render_create_rejects_null_out_handle() {
+        let status = unsafe {
+            mediaisland_audio_render_create(noop_played, ptr::null_mut(), ptr::null_mut())
+        };
+
+        assert_eq!(status, STATUS_INVALID_ARG);
+    }
+
+    #[test]
+    fn render_start_rejects_null_handle() {
+        assert_eq!(
+            unsafe { mediaisland_audio_render_start(ptr::null_mut(), 200) },
+            STATUS_INVALID_ARG
+        );
+    }
+
+    #[test]
+    fn render_push_rejects_null_handle() {
+        let samples = [0i16; 4];
+        assert_eq!(
+            unsafe { mediaisland_audio_render_push(ptr::null_mut(), samples.as_ptr(), 2) },
+            STATUS_INVALID_ARG
+        );
+    }
+
+    #[test]
+    fn render_stop_rejects_null_handle() {
+        assert_eq!(
+            unsafe { mediaisland_audio_render_stop(ptr::null_mut()) },
+            STATUS_INVALID_ARG
+        );
+    }
+
+    #[test]
+    fn render_destroy_tolerates_null() {
+        unsafe { mediaisland_audio_render_destroy(ptr::null_mut()) };
+    }
+
+    #[test]
+    fn render_last_error_null_handle_is_empty() {
+        let buffer = unsafe { mediaisland_audio_render_last_error(ptr::null_mut()) };
+
+        assert!(buffer.ptr.is_null());
+        assert_eq!(buffer.len, 0);
+    }
+
+    #[test]
+    fn render_push_of_zero_frames_never_builds_a_slice() {
+        // slice::from_raw_parts(null, 0) 在 Rust 里是 UB，「零长度所以无所谓」
+        // 这个直觉不成立。零帧必须在取切片之前就短路掉。
+        //
+        // 用真句柄而非 null：null 会先被句柄检查挡掉，那样这条测的就不是短路。
+        let mut handle: *mut RenderHandle = ptr::null_mut();
+        let created =
+            unsafe { mediaisland_audio_render_create(noop_played, ptr::null_mut(), &mut handle) };
+        if created != STATUS_OK {
+            // 非 Windows 平台不建句柄，此路径无从驱动。
+            return;
+        }
+
+        let status = unsafe { mediaisland_audio_render_push(handle, ptr::null(), 0) };
+
+        assert_eq!(status, STATUS_OK);
+        unsafe { mediaisland_audio_render_destroy(handle) };
+    }
+
+    #[test]
+    fn render_push_rejects_null_samples_with_frames() {
+        let mut handle: *mut RenderHandle = ptr::null_mut();
+        let created =
+            unsafe { mediaisland_audio_render_create(noop_played, ptr::null_mut(), &mut handle) };
+        if created != STATUS_OK {
+            return;
+        }
+
+        let status = unsafe { mediaisland_audio_render_push(handle, ptr::null(), 4) };
+
+        assert_eq!(status, STATUS_INVALID_ARG);
+        unsafe { mediaisland_audio_render_destroy(handle) };
+    }
+
+    #[test]
+    fn render_stop_without_start_is_ok() {
+        // 托管侧停服路径会无条件调 stop，此时可能从未起播过。
+        let mut handle: *mut RenderHandle = ptr::null_mut();
+        let created =
+            unsafe { mediaisland_audio_render_create(noop_played, ptr::null_mut(), &mut handle) };
+        if created != STATUS_OK {
+            return;
+        }
+
+        assert_eq!(unsafe { mediaisland_audio_render_stop(handle) }, STATUS_OK);
+        unsafe { mediaisland_audio_render_destroy(handle) };
     }
 }

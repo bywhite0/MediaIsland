@@ -62,12 +62,12 @@ impl CaptureError {
     }
 }
 
-/// 设备混音格式的解析结果。
-struct MixFormat {
-    sample_rate: u32,
-    channels: u16,
-    format: SampleFormat,
-    block_align: usize,
+/// 设备混音格式的解析结果。播放侧同样按它成型输出，故对 crate 内可见。
+pub(crate) struct MixFormat {
+    pub(crate) sample_rate: u32,
+    pub(crate) channels: u16,
+    pub(crate) format: SampleFormat,
+    pub(crate) block_align: usize,
 }
 
 pub struct WasapiLoopbackCapture {
@@ -79,7 +79,7 @@ pub struct WasapiLoopbackCapture {
 }
 
 /// 停止事件的所有权包装，确保句柄只被关闭一次。
-struct StopEvent(HANDLE);
+pub(crate) struct StopEvent(pub(crate) HANDLE);
 
 // HANDLE 是裸指针包装，Windows 事件对象本身可跨线程使用。
 unsafe impl Send for StopEvent {}
@@ -295,13 +295,13 @@ unsafe fn capture_loop_inner(
 }
 
 #[derive(PartialEq, Eq)]
-enum WaitObject {
+pub(crate) enum WaitObject {
     Buffer,
     Stop,
     Timeout,
 }
 
-unsafe fn wait_for_any(handles: &[HANDLE; 2], timeout_ms: u32) -> WaitObject {
+pub(crate) unsafe fn wait_for_any(handles: &[HANDLE; 2], timeout_ms: u32) -> WaitObject {
     // 逐个轮询而非 WaitForMultipleObjects：停止事件是手动重置的，先查它可保证
     // 停止请求不会被持续到达的缓冲事件饿死。
     if WaitForSingleObject(handles[1], 0) == WAIT_OBJECT_0 {
@@ -358,7 +358,7 @@ fn build_output_frame(
 /// 解析设备混音格式。
 ///
 /// `WAVE_FORMAT_EXTENSIBLE` 时真正的格式在 `SubFormat` GUID 里，`wFormatTag` 只是个占位。
-unsafe fn parse_mix_format(ptr: *const WAVEFORMATEX) -> Result<MixFormat, CaptureError> {
+pub(crate) unsafe fn parse_mix_format(ptr: *const WAVEFORMATEX) -> Result<MixFormat, CaptureError> {
     if ptr.is_null() {
         return Err(CaptureError::device("混音格式为空"));
     }
