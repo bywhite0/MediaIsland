@@ -435,17 +435,31 @@ mod tests {
 
     #[test]
     fn write_sample_clamps_instead_of_wrapping() {
-        // 与 f32_to_i16 同一条理由：回绕会把峰值变成反相的谷值，
-        // 听感是刺耳爆音而非轻微失真。漂移控制律不会产生越界值，
-        // 但上游发来的 PCM 经重采样后可以有过冲。
+        // 与 f32_to_i16 同一条理由：回绕会把峰值变成反相的谷值，听感是刺耳爆音。
+        // 漂移控制律不会产生越界值，但上游 PCM 经重采样后可以有过冲。
+        //
+        // **这条判据只对 Pcm24 与 F32 成立，且必须断言精确值而非「够大」。**
+        // Rust 的浮点→整数 `as` 自 1.45 起是饱和转换，故 Pcm16 / Pcm32 即使删掉
+        // clamp 也不会回绕——那两支的 clamp 是冗余防护，测不出来也不必假称测到。
+        // 真正会回绕的是 Pcm24（只写低三字节，高位截断后符号位翻转）与
+        // F32（原样写，4.0 会原封不动送进设备缓冲）。
         for format in [
             SampleFormat::Pcm16,
             SampleFormat::Pcm24,
             SampleFormat::Pcm32,
             SampleFormat::F32,
         ] {
-            assert!(round_trip(4.0, format) > 0.9, "{format:?} 正向过冲被回绕了");
-            assert!(round_trip(-4.0, format) < -0.9, "{format:?} 负向过冲被回绕了");
+            let high = round_trip(4.0, format);
+            let low = round_trip(-4.0, format);
+
+            assert!(
+                (high - 1.0).abs() < 1e-4,
+                "{format:?} 正向过冲应夹到 +1.0，实际 {high}"
+            );
+            assert!(
+                (low + 1.0).abs() < 1e-4,
+                "{format:?} 负向过冲应夹到 −1.0，实际 {low}"
+            );
         }
     }
 

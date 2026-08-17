@@ -12,7 +12,6 @@
 //! **`played_cb` 送的是重采样前的 48k i16**，不是写进设备缓冲的那一份：
 //! C# 侧的分析器只认 48000/2ch/i16。
 
-use crate::ring::MAX_DRIFT;
 use crate::OUTPUT_SAMPLE_RATE;
 
 /// 抖动缓冲目标深度的取值范围。
@@ -115,6 +114,42 @@ pub fn frames_to_ms(frames: usize) -> f64 {
     frames as f64 * 1_000.0 / OUTPUT_SAMPLE_RATE as f64
 }
 
+/// 本轮是否处于预填充；是则返回该送出的零值帧数（**48k 域**）。
+///
+/// 抽成纯函数不是为了复用，是为了让这段接线可测——原先它内嵌在渲染循环里，
+/// 而循环没有任何自动化测试进得去，于是「用设备帧数还是 48k 帧数」这个选择
+/// 无人看守，实际就选错了：>48k 的设备上首轮即越界 panic。
+///
+/// 夹到 `max_input_frames` 是最后一道防线：越界发生在实时线程上，
+/// panic 会带走整个宿主进程，不是可恢复的托管异常。
+pub fn prefill_silence_frames(
+    prefill: &mut PrefillState,
+    available_frames: usize,
+    writable_device_frames: usize,
+    device_rate: u32,
+    max_input_frames: usize,
+) -> Option<usize> {
+    if prefill.is_open(available_frames) {
+        return None;
+    }
+
+    Some(output_frames_for(writable_device_frames, device_rate).min(max_input_frames))
+}
+
+/// 设备帧数折算成同时长的传输帧数（48k 域）。
+///
+/// **两个域必须分清。** 送给 `played_cb` 的缓冲按 48k 输入帧分配，而 WASAPI 说的
+/// 「本轮可写几帧」是设备帧。设备率 >48000 时设备帧数**多于**同时长的 48k 帧数，
+/// 拿设备帧数去索引按 48k 分配的缓冲就是越界——96kHz / 20ms 下是 3840 索引进
+/// 长 2182 的缓冲，渲染线程当场 panic，而此时 `render_start` 已经返回过 OK。
+pub fn output_frames_for(device_frames: usize, device_rate: u32) -> usize {
+    if device_rate == 0 || device_rate == OUTPUT_SAMPLE_RATE {
+        return device_frames;
+    }
+
+    device_frames * OUTPUT_SAMPLE_RATE as usize / device_rate as usize
+}
+
 #[cfg(windows)]
 pub use wasapi::{RenderError, WasapiRenderer};
 
@@ -144,8 +179,8 @@ mod wasapi {
     use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 
     use super::{
-        clamp_target_ms, frames_to_ms, resample_ratio, target_frames, PrefillState, MAX_DRIFT,
-        MAX_RELATIVE_RATIO, RING_CAPACITY_FRAMES, SINC_LEN,
+        clamp_target_ms, frames_to_ms, prefill_silence_frames, resample_ratio, target_frames,
+        PrefillState, MAX_RELATIVE_RATIO, RING_CAPACITY_FRAMES, SINC_LEN,
     };
     use crate::capture::{parse_mix_format, wait_for_any, MixFormat, StopEvent, WaitObject};
     use crate::convert;
@@ -173,6 +208,16 @@ mod wasapi {
         }
     }
 
+    /// 线程句柄与停止事件。**收进 `Mutex` 是为了让 `start` / `stop` 只需 `&self`。**
+    ///
+    /// FFI 层拿到的是同一个裸指针，若 `start` / `stop` 需要 `&mut`，而 `push` 在
+    /// 网络线程并发调用，就会同时存在两个指向同一对象的引用——那在 Rust 里是 UB，
+    /// 且靠「文档要求调用方串行」是保不住的。全部改成 `&self` 后这个面在构造上消失。
+    struct RenderThread {
+        worker: Option<JoinHandle<()>>,
+        stop_event: Option<Arc<StopEvent>>,
+    }
+
     pub struct WasapiRenderer {
         callback: PlayedFrameCallback,
         user_data: usize,
@@ -180,8 +225,7 @@ mod wasapi {
         /// 两者都要 `&mut`，故必须互斥。
         ring: Arc<Mutex<PlaybackRing>>,
         running: Arc<AtomicBool>,
-        worker: Option<JoinHandle<()>>,
-        stop_event: Option<Arc<StopEvent>>,
+        thread: Mutex<RenderThread>,
     }
 
     impl WasapiRenderer {
@@ -191,8 +235,10 @@ mod wasapi {
                 user_data,
                 ring: Arc::new(Mutex::new(PlaybackRing::new(RING_CAPACITY_FRAMES))),
                 running: Arc::new(AtomicBool::new(false)),
-                worker: None,
-                stop_event: None,
+                thread: Mutex::new(RenderThread {
+                    worker: None,
+                    stop_event: None,
+                }),
             }
         }
 
@@ -200,7 +246,16 @@ mod wasapi {
         ///
         /// 必须等：设备被独占、混音格式不受支持这些失败只有线程里知道，不等就只能靠
         /// 「声音没出来」感知，而那与「上游没在发」无从区分——两者的排查方向相反。
-        pub fn start(&mut self, target_ms: u32) -> Result<(), RenderError> {
+        pub fn start(&self, target_ms: u32) -> Result<(), RenderError> {
+            // 持锁贯穿整个启动：并发两次 start 时，后者应当看到前者已把线程装好，
+            // 从而走 ALREADY_RUNNING，而不是各起一个线程抢同一个设备。
+            let Ok(mut thread) = self.thread.lock() else {
+                return Err(RenderError {
+                    message: "播放状态锁已中毒".to_string(),
+                    status: STATUS_PANIC,
+                });
+            };
+
             if self.running.load(Ordering::SeqCst) {
                 return Err(RenderError {
                     message: "播放已在运行".to_string(),
@@ -237,8 +292,11 @@ mod wasapi {
                         user_data,
                         target_ms,
                     };
+                    // 用析构守卫而非 spawn 尾部的一句 store：线程 panic 时 unwind 会
+                    // 跳过尾部语句，`running` 卡在 true，此后不调 stop 就再 start
+                    // 会一直得到 ALREADY_RUNNING。守卫在 unwind 路径上照样跑。
+                    let _running_guard = RunningGuard(&running);
                     unsafe { render_loop(&context, &ring, &running, thread_stop.0, &ready_tx) };
-                    running.store(false, Ordering::SeqCst);
                 })
                 .map_err(|err| {
                     self.running.store(false, Ordering::SeqCst);
@@ -249,8 +307,8 @@ mod wasapi {
             // 线程 panic 时发送端随之析构，recv 拿到 Err 而非死等。
             match ready_rx.recv() {
                 Ok(Ok(())) => {
-                    self.worker = Some(worker);
-                    self.stop_event = Some(stop_event);
+                    thread.worker = Some(worker);
+                    thread.stop_event = Some(stop_event);
                     Ok(())
                 }
                 Ok(Err(err)) => {
@@ -291,8 +349,15 @@ mod wasapi {
         ///
         /// 必须等：线程仍持有 C# 传来的回调指针与 user_data，提前返回会让托管侧
         /// 释放 GCHandle 后线程还在往里写，那是进程级崩溃而非可恢复的托管异常。
-        pub fn stop(&mut self) {
-            if let Some(event) = &self.stop_event {
+        pub fn stop(&self) {
+            let Ok(mut thread) = self.thread.lock() else {
+                // 锁中毒说明持锁者 panic 过。此时线程状态不可知，能做的只有
+                // 置停止位——不能 join 一个拿不到句柄的线程。
+                self.running.store(false, Ordering::SeqCst);
+                return;
+            };
+
+            if let Some(event) = &thread.stop_event {
                 unsafe {
                     let _ = SetEvent(event.0);
                 }
@@ -300,17 +365,27 @@ mod wasapi {
 
             self.running.store(false, Ordering::SeqCst);
 
-            if let Some(worker) = self.worker.take() {
+            if let Some(worker) = thread.worker.take() {
                 let _ = worker.join();
             }
 
-            self.stop_event = None;
+            thread.stop_event = None;
         }
     }
 
     impl Drop for WasapiRenderer {
         fn drop(&mut self) {
             self.stop();
+        }
+    }
+
+    /// `running` 的析构守卫。线程 panic 时 unwind 会跳过尾部语句，
+    /// 而这个位卡在 true 会让此后的 `start` 一直返回 ALREADY_RUNNING。
+    struct RunningGuard<'a>(&'a AtomicBool);
+
+    impl Drop for RunningGuard<'_> {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::SeqCst);
         }
     }
 
@@ -326,6 +401,11 @@ mod wasapi {
     ///
     /// 启动结果经 `ready` 恰好发一次；此后的失败无人接收，与采集侧同构：
     /// 托管侧据「声音停了」感知，native 侧没有可上报的地方。
+    ///
+    /// 会话的建立与循环收在 `render_session_loop` 里，**这是为了让所有 COM 对象在
+    /// `CoUninitialize` 之前析构**。把会话开在本函数里会让 `IAudioClient` 的 Release
+    /// 跑在已退出的单元里——`capture.rs` 因为把会话开在 `capture_loop_inner` 内而
+    /// 天然正确，那一半结构不能丢。
     unsafe fn render_loop(
         context: &LoopContext,
         ring: &Mutex<PlaybackRing>,
@@ -340,6 +420,18 @@ mod wasapi {
             return;
         }
 
+        render_session_loop(context, ring, running, stop_event, ready);
+
+        CoUninitialize();
+    }
+
+    unsafe fn render_session_loop(
+        context: &LoopContext,
+        ring: &Mutex<PlaybackRing>,
+        running: &AtomicBool,
+        stop_event: HANDLE,
+        ready: &mpsc::Sender<Result<(), RenderError>>,
+    ) {
         let session = match open_render_session() {
             Ok(session) => {
                 let _ = ready.send(Ok(()));
@@ -347,14 +439,11 @@ mod wasapi {
             }
             Err(err) => {
                 let _ = ready.send(Err(err));
-                CoUninitialize();
                 return;
             }
         };
 
         render_frames(context, ring, running, stop_event, &session);
-
-        CoUninitialize();
     }
 
     unsafe fn render_frames(
@@ -370,7 +459,17 @@ mod wasapi {
 
         // 三块缓冲一次分配到位。渲染是实时线程，循环内分配会引入不可预测的停顿，
         // 而停顿就是可听的 glitch；`ring` 的三个方法也是全程无分配的。
-        let max_input = max_input_frames(session.mix.sample_rate, session.buffer_frames);
+        //
+        // 上界取 rubato 自己的 `input_frames_max`——那正是它为此用途提供的契约值。
+        // 曾自己按 `update_needed_len` 推过一个更大的界，理由是「`input_frames_max`
+        // 少加了半个 sinc_len 故会低估」，那个理由是错的：`last_index` 稳态收敛到
+        // ≈ −sinc_len，正好抵掉式子里加的整个 sinc_len，于是稳态 `needed` 就是
+        // `ceil(chunk/ratio)`，峰值只出现在构造与 reset 那一轮。
+        let max_input = resampler
+            .as_ref()
+            .map_or(session.buffer_frames as usize, |state| {
+                state.inner.input_frames_max()
+            });
         let channels = OUTPUT_CHANNELS as usize;
         let mut staging = vec![0i16; max_input * channels];
         let mut planar = vec![vec![0f32; max_input], vec![0f32; max_input]];
@@ -378,10 +477,6 @@ mod wasapi {
             vec![0f32; session.buffer_frames as usize],
             vec![0f32; session.buffer_frames as usize],
         ];
-
-        if session.client.Start().is_err() {
-            return;
-        }
 
         while running.load(Ordering::SeqCst) {
             let handles = [session.buffer_event, stop_event];
@@ -401,10 +496,16 @@ mod wasapi {
                 break;
             };
 
-            if !prefill.is_open(available) {
+            if let Some(output_frames) = prefill_silence_frames(
+                &mut prefill,
+                available,
+                writable as usize,
+                session.mix.sample_rate,
+                max_input,
+            ) {
                 // 预填充期送等长零值帧而非跳过回调：跳过会让频谱冻结在上一帧波形上，
                 // 而硬重置后的预填充可达 1 秒。同 `capture.rs` 的第三处刻意偏离。
-                let silent = writable as usize * channels;
+                let silent = output_frames * channels;
                 staging[..silent].fill(0);
                 if write_silence(&session.render_client, writable).is_err() {
                     break;
@@ -561,6 +662,14 @@ mod wasapi {
             return Err(RenderError::device("设备报告的缓冲大小为零"));
         }
 
+        // **Start 必须在这里，不能挪到循环里。** 启动结果由调用方同步等待，
+        // 而 `Start` 是「设备被独占」这类失败真正暴露的地方；放到上报之后失败，
+        // `render_start` 会返回 OK 且 `last_error` 为空，表现为无声且无错误——
+        // 那恰好否掉了 `WasapiRenderer::start` 文档声称的性质。
+        client
+            .Start()
+            .map_err(|err| RenderError::device(format!("启动播放失败：{err}")))?;
+
         Ok(RenderSession {
             client,
             render_client,
@@ -600,21 +709,6 @@ mod wasapi {
         .ok()?;
 
         Some(ResamplerState { inner })
-    }
-
-    /// 单轮所需输入帧数的上界。
-    ///
-    /// **不用 `Resampler::input_frames_max`**：rubato 0.16.2 的 `SincFixedOut` 那份实现
-    /// 只加了 `sinc_len / 2`，而 `input_frames_next` 实际加的是整个 `sinc_len`
-    /// （见其 `update_needed_len`），于是上界比实际需要更小。照它预分配会在
-    /// 实时线程上触发扩容。这里按 `update_needed_len` 的式子自己算，并留两帧余量。
-    fn max_input_frames(device_rate: u32, buffer_frames: u32) -> usize {
-        if device_rate == 0 || device_rate == OUTPUT_SAMPLE_RATE {
-            return buffer_frames as usize;
-        }
-
-        let slowest = device_rate as f64 / OUTPUT_SAMPLE_RATE as f64 * (1.0 - MAX_DRIFT);
-        (buffer_frames as f64 / slowest).ceil() as usize + SINC_LEN + 2
     }
 
     /// 交错 i16 → 分声道 f32 → 重采样 → 分声道 f32。返回产出的设备帧数。
@@ -728,6 +822,7 @@ mod wasapi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ring::MAX_DRIFT;
 
     #[test]
     fn target_frames_converts_ms_at_output_rate() {
@@ -826,5 +921,68 @@ mod tests {
                 "available={available} 时相对比率 {relative} 会被 rubato 拒掉"
             );
         }
+    }
+
+    #[test]
+    fn silent_frame_count_is_expressed_at_the_output_rate() {
+        // 预填充期送出的零值帧是喂给频谱的，长度必须按 48k 解释。
+        // 直接用设备帧数会在 >48k 的设备上越界读 staging——后者按 48k 输入帧分配。
+        for (rate, buffer_frames) in [
+            (44_100u32, 882usize),
+            (48_000, 960),
+            (88_200, 1_764),
+            (96_000, 1_920),
+            (192_000, 3_840),
+        ] {
+            let frames = output_frames_for(buffer_frames, rate);
+            assert_eq!(
+                frames, 960,
+                "{rate}Hz 的 20ms 缓冲应折算成 960 个 48k 帧，实际 {frames}"
+            );
+        }
+    }
+
+    #[test]
+    fn output_rate_conversion_never_inflates_high_rate_devices() {
+        // 上一条的失效形态：>48k 时设备帧数多于同时长的 48k 帧数，
+        // 照设备帧数去索引按 48k 分配的缓冲就是越界 panic。
+        assert!(output_frames_for(1_920, 96_000) < 1_920);
+        assert!(output_frames_for(3_840, 192_000) < 3_840);
+        assert_eq!(output_frames_for(960, 48_000), 960);
+        // 低速设备反向：同时长的 48k 帧数更多，故折算是放大。
+        assert!(output_frames_for(882, 44_100) > 882);
+    }
+
+    #[test]
+    fn prefill_round_reports_silence_in_output_frames_within_the_buffer() {
+        // 本条钉的是复审找出的 Critical。96kHz / 20ms 下设备帧数是 1920，
+        // 而 staging 按 48k 输入帧分配只有约 1091 帧——照设备帧数索引就是越界 panic，
+        // 且此时 render_start 已经返回过 OK，表现为静默无声。
+        let mut state = PrefillState::new(target_frames(200));
+        let max_input = 1_091;
+
+        let frames = prefill_silence_frames(&mut state, 0, 1_920, 96_000, max_input)
+            .expect("未达目标深度时应处于预填充");
+
+        assert_eq!(frames, 960, "1920 个 96k 设备帧等于 960 个 48k 帧");
+        assert!(frames <= max_input, "零值帧数不得超过 staging 容量");
+    }
+
+    #[test]
+    fn prefill_silence_is_clamped_to_the_staging_bound() {
+        // 换算结果仍可能超过上界（例如上界自身被算小），故必须夹。
+        // 这是最后一道防线：越界发生在实时线程上，panic 会带走整个宿主进程。
+        let mut state = PrefillState::new(target_frames(200));
+
+        let frames = prefill_silence_frames(&mut state, 0, 4_800, 48_000, 100).expect("预填充");
+
+        assert_eq!(frames, 100, "超过上界时必须夹到上界");
+    }
+
+    #[test]
+    fn reaching_target_depth_ends_the_prefill_round() {
+        let mut state = PrefillState::new(target_frames(200));
+
+        assert!(prefill_silence_frames(&mut state, 9_600, 1_920, 96_000, 1_091).is_none());
     }
 }

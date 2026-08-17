@@ -262,10 +262,24 @@ pub unsafe extern "C" fn mediaisland_audio_last_error(handle: *mut CaptureHandle
 }
 
 /// 播放句柄。跨 FFI 传递的是它的裸指针。
+///
+/// **所有 render 导出都只取 `&RenderHandle`，从不取 `&mut`。** C# 侧会在网络线程
+/// `push`、在 UI 线程 `stop`，若任一导出取 `&mut`，两个引用就同时指向同一对象——
+/// 那在 Rust 里是 UB，且靠「文档要求调用方串行」保不住。故 `last_error` 上锁，
+/// `WasapiRenderer` 的 start / stop / push 也全部只需 `&self`。
 pub struct RenderHandle {
     #[cfg(windows)]
     inner: render::WasapiRenderer,
-    last_error: Option<String>,
+    last_error: std::sync::Mutex<Option<String>>,
+}
+
+impl RenderHandle {
+    /// 记下错误串。锁中毒时放弃记录——诊断信息丢失好过在 FFI 边界上 panic。
+    fn set_error(&self, message: Option<String>) {
+        if let Ok(mut slot) = self.last_error.lock() {
+            *slot = message;
+        }
+    }
 }
 
 /// 创建播放句柄。`user_data` 原样回传给回调，C# 侧用它还原 `GCHandle`。
@@ -300,7 +314,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_create(
             Ok(inner) => {
                 let handle = Box::new(RenderHandle {
                     inner,
-                    last_error: None,
+                    last_error: std::sync::Mutex::new(None),
                 });
                 *out_handle = Box::into_raw(handle);
                 STATUS_OK
@@ -323,14 +337,14 @@ pub unsafe extern "C" fn mediaisland_audio_render_start(
     handle: *mut RenderHandle,
     target_buffer_ms: u32,
 ) -> i32 {
-    let Some(handle) = handle.as_mut() else {
+    let Some(handle) = handle.as_ref() else {
         return STATUS_INVALID_ARG;
     };
 
     #[cfg(not(windows))]
     {
         let _ = target_buffer_ms;
-        handle.last_error = Some("当前平台不支持音频播放".to_string());
+        handle.set_error(Some("当前平台不支持音频播放".to_string()));
         STATUS_UNSUPPORTED_PLATFORM
     }
 
@@ -338,16 +352,16 @@ pub unsafe extern "C" fn mediaisland_audio_render_start(
     {
         match catch_unwind(AssertUnwindSafe(|| handle.inner.start(target_buffer_ms))) {
             Ok(Ok(())) => {
-                handle.last_error = None;
+                handle.set_error(None);
                 STATUS_OK
             }
             Ok(Err(err)) => {
                 let status = err.status;
-                handle.last_error = Some(err.message);
+                handle.set_error(Some(err.message));
                 status
             }
             Err(_) => {
-                handle.last_error = Some("播放启动时发生 panic".to_string());
+                handle.set_error(Some("播放启动时发生 panic".to_string()));
                 STATUS_PANIC
             }
         }
@@ -369,7 +383,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_push(
     samples: *const i16,
     frame_count: usize,
 ) -> i32 {
-    let Some(handle) = handle.as_mut() else {
+    let Some(handle) = handle.as_ref() else {
         return STATUS_INVALID_ARG;
     };
 
@@ -384,7 +398,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_push(
 
     #[cfg(not(windows))]
     {
-        handle.last_error = Some("当前平台不支持音频播放".to_string());
+        handle.set_error(Some("当前平台不支持音频播放".to_string()));
         STATUS_UNSUPPORTED_PLATFORM
     }
 
@@ -396,7 +410,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_push(
         match catch_unwind(AssertUnwindSafe(|| handle.inner.push(interleaved))) {
             Ok(()) => STATUS_OK,
             Err(_) => {
-                handle.last_error = Some("送入播放数据时发生 panic".to_string());
+                handle.set_error(Some("送入播放数据时发生 panic".to_string()));
                 STATUS_PANIC
             }
         }
@@ -410,7 +424,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_push(
 /// 同 [`mediaisland_audio_render_start`]。
 #[no_mangle]
 pub unsafe extern "C" fn mediaisland_audio_render_stop(handle: *mut RenderHandle) -> i32 {
-    let Some(handle) = handle.as_mut() else {
+    let Some(handle) = handle.as_ref() else {
         return STATUS_INVALID_ARG;
     };
 
@@ -425,7 +439,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_stop(handle: *mut RenderHandle
         match catch_unwind(AssertUnwindSafe(|| handle.inner.stop())) {
             Ok(()) => STATUS_OK,
             Err(_) => {
-                handle.last_error = Some("播放停止时发生 panic".to_string());
+                handle.set_error(Some("播放停止时发生 panic".to_string()));
                 STATUS_PANIC
             }
         }
@@ -440,7 +454,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_destroy(handle: *mut RenderHan
         return;
     }
 
-    let mut handle = Box::from_raw(handle);
+    let handle = Box::from_raw(handle);
 
     // 先停再释放：渲染线程仍持有回调指针，此时释放会让它写进已回收的内存。
     #[cfg(windows)]
@@ -448,10 +462,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_destroy(handle: *mut RenderHan
         let _ = catch_unwind(AssertUnwindSafe(|| handle.inner.stop()));
     }
 
-    #[cfg(not(windows))]
-    {
-        handle.last_error = None;
-    }
+    drop(handle);
 }
 
 /// 取播放侧最近一次错误。返回的缓冲需由 [`mediaisland_audio_free`] 释放。
@@ -466,7 +477,11 @@ pub unsafe extern "C" fn mediaisland_audio_render_last_error(
         return FfiBuffer::empty();
     };
 
-    match &handle.last_error {
+    let Ok(slot) = handle.last_error.lock() else {
+        return FfiBuffer::empty();
+    };
+
+    match slot.as_ref() {
         Some(message) => FfiBuffer::from_vec(message.clone().into_bytes()),
         None => FfiBuffer::empty(),
     }
