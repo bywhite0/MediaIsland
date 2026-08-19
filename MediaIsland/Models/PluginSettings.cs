@@ -482,6 +482,40 @@ namespace MediaIsland.Models
             }
         }
 
+        /// <summary>抖动缓冲的默认目标深度。对 WiFi 的重传与漫游尖峰够用。</summary>
+        public const int DefaultPlaybackBufferMs = 200;
+
+        /// <summary>
+        /// 下界不取更小：低于一个音频周期（约 20ms）加一次网络重传的量级，
+        /// 缓冲会持续欠载，表现为断续。
+        /// </summary>
+        public const int MinPlaybackBufferMs = 50;
+
+        /// <summary>上界即播放环形缓冲容量的一半，留出被填满也不覆盖未读数据的余量。</summary>
+        public const int MaxPlaybackBufferMs = 1000;
+
+        private int _mediaLinkPlaybackBufferMs = DefaultPlaybackBufferMs;
+
+        /// <summary>
+        /// 抖动缓冲目标深度，毫秒。有线局域网抖动小，调到 80 可显著降低延迟；
+        /// WiFi 遇重传或漫游可能出现 200ms 以上尖峰，调低会断续。
+        ///
+        /// 越界夹紧而不拒绝：设置页里的数字框允许任意输入，
+        /// 拒绝会让用户面对一个不生效又不报错的输入框。夹紧后仍发通知，
+        /// 否则双向绑定的界面会继续显示越界值而生效值已经变了。
+        /// </summary>
+        public int MediaLinkPlaybackBufferMs
+        {
+            get => _mediaLinkPlaybackBufferMs;
+            set
+            {
+                var clamped = Math.Clamp(value, MinPlaybackBufferMs, MaxPlaybackBufferMs);
+                if (_mediaLinkPlaybackBufferMs == clamped) return;
+                _mediaLinkPlaybackBufferMs = clamped;
+                OnPropertyChanged();
+            }
+        }
+
     }
     public class MediaSource : ObservableObject
     {

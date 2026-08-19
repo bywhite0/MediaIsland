@@ -1,4 +1,5 @@
 using MediaIsland.Models;
+using MediaIsland.Services.Audio;
 using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink.Mapping;
@@ -23,7 +24,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     private readonly ILogger<MediaLinkUpstreamHostedService>? _logger;
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly Func<long> _tickProvider;
-    private readonly AudioVisualizationService? _visualization;
+    private readonly IAudioFrameSubmitter? _visualization;
     private readonly AudioVisualizationDemand? _demand;
     private readonly Func<bool>? _downstreamAudioDemand;
     private readonly Func<byte[], CancellationToken, Task>? _audioForwarder;
@@ -41,7 +42,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         Func<PluginSettings> settingsFactory,
         ILoggerFactory? loggerFactory = null,
         Func<long>? tickProvider = null,
-        AudioVisualizationService? visualization = null,
+        IAudioFrameSubmitter? visualization = null,
         AudioVisualizationDemand? visualizationDemand = null,
         Func<bool>? downstreamAudioDemandAccessor = null,
         Func<byte[], CancellationToken, Task>? audioForwarder = null)
@@ -101,6 +102,15 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         && (visualizationDemanded || downstreamAudioDemanded || playbackEnabled);
 
     public string? LastError { get; private set; }
+
+    /// <summary>
+    /// 入站 PCM 的提交目标。只读视图，供注册图的守卫断言这条边接对了。
+    ///
+    /// 它必须是播放装饰器而不是可视化服务本身，否则播放路径全程收不到帧：
+    /// renderer 起得来、开关显示为开、日志一切正常，就是没声音。
+    /// 这种失效没有任何运行期提示，而这一层的接线只在 DI 工厂里出现一次。
+    /// </summary>
+    internal IAudioFrameSubmitter? AudioSubmitTarget => _visualization;
 
     /// <summary>连接状态或配置变化时触发，供设置页刷新，避免轮询。</summary>
     public event EventHandler? StateChanged;
@@ -163,7 +173,26 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         {
             DebouncedReload();
         }
+        else if (AffectsAudioRouting(e.PropertyName))
+        {
+            RecomputeAudioSubscription();
+        }
     }
+
+    /// <summary>
+    /// 该属性变化是否要重算音频路由。抽成静态纯函数是为了让「哪些属性会触发重算」可测——
+    /// 漏一个属性不会有任何报错，只会让某个开关看起来生效了却没效果。
+    ///
+    /// 播放开关参与 <see cref="ShouldConsumeUpstreamAudio"/> 的「要不要」那一组。
+    /// 漏掉它的后果是：打开播放后上游从不订阅 audio，播放器起来了却收不到帧，
+    /// 表现为开关开着但没声音，且与「对方没在放」无从区分。
+    ///
+    /// 缓冲深度不影响订阅，但重算无论走哪条分支都会发出 <see cref="AudioSourceChanged"/>，
+    /// 播放侧据此拿到新深度并重启。把两者收在同一个信号里，比多接一条边少一处可漏的。
+    /// </summary>
+    internal static bool AffectsAudioRouting(string? propertyName) =>
+        propertyName is nameof(PluginSettings.MediaLinkPlaybackIsEnabled)
+            or nameof(PluginSettings.MediaLinkPlaybackBufferMs);
 
     private void DebouncedReload()
     {

@@ -1,4 +1,5 @@
 using MediaIsland.Models;
+using MediaIsland.Services.Audio.Playback;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
@@ -82,6 +83,21 @@ public class MediaLinkServiceRegistrationTests
         Assert.True(
             Volatile.Read(ref audioSourceChanges) > 0,
             "生效媒体变了却没触发向上游的重算：接线没接上");
+    }
+
+    [Fact]
+    public void ObjectGraph_RoutesInboundAudioThroughThePlaybackDecorator()
+    {
+        // 装饰器必须接在入站 PCM 与可视化之间，否则播放路径全程收不到帧：
+        // renderer 起得来、开关显示为开、日志一切正常，就是没声音。
+        // 这条边在整张图里只出现一次，接错不会有任何运行期提示。
+        using var provider = BuildProvider(new PluginSettings());
+
+        var upstream = provider.GetRequiredService<MediaLinkUpstreamHostedService>();
+
+        Assert.Same(
+            provider.GetRequiredService<AudioPlaybackService>(),
+            upstream.AudioSubmitTarget);
     }
 
     private sealed class RegistrationFakeMediaService : IMediaService

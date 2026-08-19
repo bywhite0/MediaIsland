@@ -612,6 +612,25 @@
                                MaxWidth="360" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
+                                       Header="播放对方的声音"
+                                       Description="把对方设备正在播放的音频放出来。需要先在上面开启「从另一台设备接收」，且媒体来源要设为使用对方的信息。开启后本机不再采集自己的输出，因此不会产生回声。">
+                <controls:SettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkPlaybackIsEnabled, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
+            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
+                                       Header="播放缓冲"
+                                       Description="网络抖动时用来垫底的缓冲长度。有线网络可以调小以降低延迟；无线网络调得太小会断续。修改后会重新开始播放。">
+                <controls:SettingsExpander.Footer>
+                    <NumericUpDown Width="140"
+                                   Minimum="50"
+                                   Maximum="1000"
+                                   Increment="10"
+                                   FormatString="0 'ms'"
+                                   Value="{Binding Settings.MediaLinkPlaybackBufferMs, Mode=TwoWay}" />
+                </controls:SettingsExpander.Footer>
+            </controls:SettingsExpander>
             <ci:IconText Glyph="&#xEAEF;" Text="隐私" Margin="0 16 0 8" />
             <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
                                        Header="匿名使用情况分析"

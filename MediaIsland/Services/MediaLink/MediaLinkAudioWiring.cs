@@ -1,3 +1,6 @@
+using MediaIsland.Models;
+using MediaIsland.Services.Audio.Playback;
+
 namespace MediaIsland.Services.MediaLink;
 
 /// <summary>
@@ -43,4 +46,47 @@ public static class MediaLinkAudioWiring
         // 回来的那次重算读到同一个值，不再发出通知。
         server.DownstreamAudioDemandChanged += (_, _) => upstream.RecomputeAudioSubscription();
     }
+
+    /// <summary>
+    /// 接上播放的重算边。与 <see cref="Connect"/> 分开是为了保住那个方法「内部无分支」
+    /// 的性质——注册测试正是靠它才敢说「一条通即三条都接上了」。
+    ///
+    /// 只需要一条边：播放开关与缓冲深度的变化都由上游服务转成
+    /// <see cref="MediaLinkUpstreamHostedService.AudioSourceChanged"/>，
+    /// 仲裁与连接态的变化本来就走这个信号。
+    /// </summary>
+    public static void ConnectPlayback(
+        MediaLinkUpstreamHostedService upstream,
+        AudioPlaybackService playback,
+        Func<PluginSettings> settingsAccessor)
+    {
+        ArgumentNullException.ThrowIfNull(upstream);
+        ArgumentNullException.ThrowIfNull(playback);
+        ArgumentNullException.ThrowIfNull(settingsAccessor);
+
+        upstream.AudioSourceChanged += (_, _) =>
+        {
+            var (enabled, targetBufferMs) =
+                ResolvePlayback(settingsAccessor(), upstream.IsConsumingUpstreamAudio);
+            playback.Configure(enabled, targetBufferMs);
+        };
+    }
+
+    /// <summary>
+    /// 由设置与仲裁结果算出播放配置。抽成纯函数：这两个条件的合成方式一旦写错，
+    /// 表现是「装了频谱组件就自动出声」或「开了播放却不出声」，两者都不报错。
+    ///
+    /// 用户开了播放**且**当前真的在消费上游音频，才播。少了后一项，仲裁说该用本机媒体时
+    /// 也会打开播放器，那只是占着音频端点空转，独占型音频软件会因此拿不到设备。
+    /// 少了前一项，<see cref="MediaLinkUpstreamHostedService.IsConsumingUpstreamAudio"/>
+    /// 会因为岛上有频谱组件而为真，于是装个频谱组件就等于自动出声。
+    ///
+    /// 深度在关闭态也照传：<see cref="AudioPlaybackService.Configure"/> 的幂等判据比的是
+    /// 请求值，关闭态不记准的话「先调深度再开播」会用上一次的深度起播。
+    /// </summary>
+    internal static (bool Enabled, int TargetBufferMs) ResolvePlayback(
+        PluginSettings settings,
+        bool consumingUpstreamAudio) =>
+        (settings.MediaLinkPlaybackIsEnabled && consumingUpstreamAudio,
+            settings.MediaLinkPlaybackBufferMs);
 }

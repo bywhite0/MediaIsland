@@ -1,4 +1,6 @@
 using MediaIsland.Models;
+using MediaIsland.Services.Audio.Playback;
+using MediaIsland.Services.Audio.Playback.Native;
 using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Media;
@@ -43,6 +45,16 @@ public static class MediaLinkServiceCollectionExtensions
         services.AddSingleton<AudioSpectrumAnalyzer>();
         services.AddSingleton<AudioVisualizationService>();
 
+        // 播放层：renderer 是可选能力（缺 native 库时自行降级），装饰器包住可视化服务，
+        // 让「viz 游标随播放开关切换」成为装饰器内部的状态转移。
+        // 容器持有 renderer，故它的 native 句柄与 GCHandle 随容器一起释放。
+        services.AddSingleton<IAudioRenderer>(provider => new WasapiRenderer(
+            provider.GetService<ILoggerFactory>()?.CreateLogger<WasapiRenderer>()));
+        services.AddSingleton<AudioPlaybackService>(provider => new AudioPlaybackService(
+            provider.GetRequiredService<AudioVisualizationService>(),
+            provider.GetRequiredService<IAudioRenderer>(),
+            provider.GetService<ILoggerFactory>()?.CreateLogger<AudioPlaybackService>()));
+
         services.AddSingleton<MediaSourceCoordinator>(provider => new MediaSourceCoordinator(
             provider.GetRequiredService<IMediaService>(),
             provider.GetRequiredService<LyricsSearchService>(),
@@ -76,7 +88,9 @@ public static class MediaLinkServiceCollectionExtensions
                 provider.GetRequiredService<MediaSourceCoordinator>(),
                 settingsAccessor,
                 provider.GetService<ILoggerFactory>(),
-                visualization: provider.GetRequiredService<AudioVisualizationService>(),
+                // 提交目标是播放装饰器而非可视化服务本身：播放开着时帧要先进播放缓冲，
+                // 由已播出的那一块反过来驱动可视化。装饰器对外仍只是 IAudioFrameSubmitter。
+                visualization: provider.GetRequiredService<AudioPlaybackService>(),
                 visualizationDemand: provider.GetRequiredService<AudioVisualizationDemand>(),
                 // 用 lambda 延迟解析：两个宿主服务互相引用，直接注入会形成构造期循环依赖。
                 downstreamAudioDemandAccessor: () =>
@@ -93,6 +107,12 @@ public static class MediaLinkServiceCollectionExtensions
                 upstream,
                 provider.GetRequiredService<MediaLinkHostedService>(),
                 provider.GetRequiredService<MediaSourceCoordinator>());
+
+            // 播放的那条边单独接：见 ConnectPlayback 的说明。
+            MediaLinkAudioWiring.ConnectPlayback(
+                upstream,
+                provider.GetRequiredService<AudioPlaybackService>(),
+                settingsAccessor);
             return upstream;
         });
         services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());
