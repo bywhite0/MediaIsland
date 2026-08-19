@@ -100,6 +100,61 @@ public class MediaLinkServiceRegistrationTests
             upstream.AudioSubmitTarget);
     }
 
+    [Fact]
+    public async Task PlaybackDepthSetting_ReachesTheDecorator()
+    {
+        // W9 与 W10 两跳串联，全程同步（上游客户端为 null，重算就地发出音源变化）：
+        //   改设置 → PropertyChanged → OnSettingsChanged → AffectsAudioRouting 判真
+        //   → RecomputeAudioSubscription → ConnectPlayback 的 lambda → Configure
+        //
+        // 断言落在请求深度上而不是「起播成功」：这两跳是纯托管接线，不该因为跑测试的
+        // 机器没有 native 音频库就无从判定。native 缺失时 Configure 走回落分支，
+        // Start 从不被调用，而请求值照样记下——那正是这条判据要看的东西。
+        //
+        // 用真 DI 图而不是手搭：ConnectPlayback 的调用本身住在 AddMediaLink 的
+        // upstream 工厂里，手搭只能证明手搭得对，证不了注册图里那条边接上了。
+        var settings = new PluginSettings
+        {
+            MediaLinkPlaybackIsEnabled = true,
+            MediaLinkPlaybackBufferMs = 300
+        };
+        using var provider = BuildProvider(settings);
+        var upstream = provider.GetRequiredService<MediaLinkUpstreamHostedService>();
+        var playback = provider.GetRequiredService<AudioPlaybackService>();
+
+        // BindSettings 在 StartAsync 内，不起来就没人听 PropertyChanged。
+        await upstream.StartAsync(CancellationToken.None);
+
+        // 地基：此刻还没有哪次 Configure 带过 500。不钉这一条，
+        // 「本来就是 500」会冒充成功。
+        Assert.NotEqual(500, playback.RequestedTargetBufferMs);
+
+        settings.MediaLinkPlaybackBufferMs = 500;
+
+        Assert.Equal(500, playback.RequestedTargetBufferMs);
+
+        await upstream.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public void AudioSourceChange_AloneReconfiguresPlayback()
+    {
+        // W10 单独。刻意不 StartAsync：BindSettings 没跑，故改设置不会触发任何链路，
+        // 于是唯一能让 Configure 被调用的路径只剩音源变化这一条。
+        // 这个隔离让上一条与本条各自失败时指向不同的边，而不是一起红。
+        var settings = new PluginSettings { MediaLinkPlaybackBufferMs = 800 };
+        using var provider = BuildProvider(settings);
+        var upstream = provider.GetRequiredService<MediaLinkUpstreamHostedService>();
+        var playback = provider.GetRequiredService<AudioPlaybackService>();
+
+        // 地基两条：既证明 800 不是初始值，也证明未 Start 时链路确实是断的。
+        Assert.NotEqual(800, playback.RequestedTargetBufferMs);
+
+        upstream.RecomputeAudioSubscription();
+
+        Assert.Equal(800, playback.RequestedTargetBufferMs);
+    }
+
     private sealed class RegistrationFakeMediaService : IMediaService
     {
         public event EventHandler<MediaInfoChangedEventArgs>? MediaInfoChanged;

@@ -53,6 +53,29 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IDisposable
     public string? LastError { get; private set; }
 
     /// <summary>
+    /// 上次收到的播放开关请求。
+    ///
+    /// 记的是请求，不是当前实际状态。请求为开不等于正在出声——那看
+    /// <see cref="IsPlaying"/> 与 <see cref="LastError"/>。混淆这两者会把
+    /// 「请求为开」误读成「已经在放」，而 native 缺失时前者为真、后者为假。
+    ///
+    /// 暴露它是为了让接线边可测。播放配置由两跳传来：设置变化让上游服务重算并发出
+    /// 音源变化，音源变化再由接线转成一次 <see cref="Configure"/>。这两跳断了都不报错，
+    /// 只会让用户改了设置没反应，而在此之前没有任何可观测量能区分接线通与断。
+    /// </summary>
+    public bool RequestedIsEnabled => Volatile.Read(ref _requestedEnabled);
+
+    /// <summary>
+    /// 上次收到的目标缓冲深度请求。语义同 <see cref="RequestedIsEnabled"/>——
+    /// 是请求值，不是当前实际在用的深度。
+    ///
+    /// 用 volatile 读而不进 <see cref="_gate"/>：读这两个值不需要与启停互斥，
+    /// 而进锁会多出一个死锁面——<see cref="IAudioRenderer.FramePlayed"/> 的处理器
+    /// 已被约定禁止回调进几个持锁方法，没有理由再往那个列表里添两项。
+    /// </summary>
+    public int RequestedTargetBufferMs => Volatile.Read(ref _requestedTargetMs);
+
+    /// <summary>
     /// 设置播放开关与目标缓冲深度。幂等：由设置变化与仲裁变化共同触发，会被反复调用，
     /// 每次都重启 renderer 会让播放一顿一顿。
     ///
