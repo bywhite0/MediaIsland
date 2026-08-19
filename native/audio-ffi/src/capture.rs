@@ -36,6 +36,7 @@ use windows::Win32::System::Com::{
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
 
 use crate::convert::{self, SampleFormat, StereoResampler};
+use crate::run_guarded;
 use crate::{
     AudioFrame, AudioFrameCallback, OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE, STATUS_ALREADY_RUNNING,
     STATUS_DEVICE_ERROR,
@@ -127,13 +128,17 @@ impl WasapiLoopbackCapture {
         let worker = std::thread::Builder::new()
             .name("medialink-audio-capture".to_string())
             .spawn(move || {
-                let result = unsafe { capture_loop(callback, user_data, &running, thread_stop.0) };
-                running.store(false, Ordering::SeqCst);
-                if let Err(err) = result {
-                    // 采集线程内无法回传错误串（句柄归调用线程所有），只能落日志式忽略。
-                    // 托管侧据「帧不再到达」感知失败，与 native 缺失的降级路径同构。
-                    let _ = err;
-                }
+                // 原先靠尾部一句 running.store(false)，那在 panic 的 unwind 路径上
+                // 会被跳过，标志卡真使采集永久无法重启且不报错。播放侧同形问题已修，
+                // 这里补上。写法与理由见 crate::run_guarded。
+                run_guarded(&running, || {
+                    let result = unsafe { capture_loop(callback, user_data, &running, thread_stop.0) };
+                    if let Err(err) = result {
+                        // 采集线程内无法回传错误串（句柄归调用线程所有），只能落日志式忽略。
+                        // 托管侧据「帧不再到达」感知失败，与 native 缺失的降级路径同构。
+                        let _ = err;
+                    }
+                });
             })
             .map_err(|err| CaptureError::device(format!("创建采集线程失败：{err}")))?;
 

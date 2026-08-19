@@ -189,6 +189,7 @@ mod wasapi {
         PlayedFrame, PlayedFrameCallback, OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE,
         STATUS_ALREADY_RUNNING, STATUS_DEVICE_ERROR, STATUS_PANIC,
     };
+    use crate::run_guarded;
 
     /// 20ms 缓冲，与采集侧同量级。共享模式下的实用下限。
     const BUFFER_DURATION_100NS: i64 = 20 * 10_000;
@@ -292,11 +293,11 @@ mod wasapi {
                         user_data,
                         target_ms,
                     };
-                    // 用析构守卫而非 spawn 尾部的一句 store：线程 panic 时 unwind 会
-                    // 跳过尾部语句，`running` 卡在 true，此后不调 stop 就再 start
-                    // 会一直得到 ALREADY_RUNNING。守卫在 unwind 路径上照样跑。
-                    let _running_guard = RunningGuard(&running);
-                    unsafe { render_loop(&context, &ring, &running, thread_stop.0, &ready_tx) };
+                    // 守卫的理由与写法见 crate::run_guarded：panic 时 unwind 会跳过
+                    // 尾部语句，而 running 卡在真会让此后的 start 一直报已在运行。
+                    run_guarded(&running, || {
+                        unsafe { render_loop(&context, &ring, &running, thread_stop.0, &ready_tx) };
+                    });
                 })
                 .map_err(|err| {
                     self.running.store(false, Ordering::SeqCst);
@@ -376,16 +377,6 @@ mod wasapi {
     impl Drop for WasapiRenderer {
         fn drop(&mut self) {
             self.stop();
-        }
-    }
-
-    /// `running` 的析构守卫。线程 panic 时 unwind 会跳过尾部语句，
-    /// 而这个位卡在 true 会让此后的 `start` 一直返回 ALREADY_RUNNING。
-    struct RunningGuard<'a>(&'a AtomicBool);
-
-    impl Drop for RunningGuard<'_> {
-        fn drop(&mut self) {
-            self.0.store(false, Ordering::SeqCst);
         }
     }
 

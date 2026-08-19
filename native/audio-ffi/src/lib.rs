@@ -13,6 +13,7 @@
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod convert;
 pub mod render;
@@ -20,6 +21,33 @@ pub mod ring;
 
 #[cfg(windows)]
 pub mod capture;
+
+/// `running` 标志的析构守卫。
+///
+/// 线程 panic 时 unwind 会跳过函数尾部的语句，故「在末尾把标志置假」这种写法在
+/// panic 路径上不成立：标志卡在真，此后不调 stop 就再 start 会一直得到
+/// ALREADY_RUNNING，而线程其实已经死了。守卫的 Drop 在 unwind 路径上照样跑。
+///
+/// 住在 crate 根而不在采集或播放任一侧：两者都要用它，而 capture 模块只在 Windows
+/// 编译，守卫若住进去就无法在其他平台被测试——它要防的是 unwind，那与 WASAPI 无关。
+pub(crate) struct RunningGuard<'a>(pub(crate) &'a AtomicBool);
+
+impl Drop for RunningGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// 在 `running` 守卫下执行线程主体。
+///
+/// 封成函数而不是让调用方自己声明守卫变量：`let _ = RunningGuard(&running)` 与
+/// `let _guard = RunningGuard(&running)` 只差一个字符，而前者立即 drop，守卫在下一行
+/// 就失效。两种写法都编译通过、都无警告、测试全绿，于是写错与写对无法区分。
+/// 这个入口没有可以写错的绑定形式。
+pub(crate) fn run_guarded(running: &AtomicBool, body: impl FnOnce()) {
+    let _guard = RunningGuard(running);
+    body();
+}
 
 pub const ABI_VERSION: u32 = 2;
 
@@ -716,5 +744,70 @@ mod tests {
 
         assert_eq!(unsafe { mediaisland_audio_render_stop(handle) }, STATUS_OK);
         unsafe { mediaisland_audio_render_destroy(handle) };
+    }
+
+    #[test]
+    fn run_guarded_clears_the_flag_on_normal_return() {
+        let flag = AtomicBool::new(true);
+
+        run_guarded(&flag, || {});
+
+        assert!(!flag.load(Ordering::SeqCst), "正常返回后 running 应归假");
+    }
+
+    #[test]
+    fn run_guarded_clears_the_flag_when_the_body_panics() {
+        // 这一条是整个改动的理由。线程 panic 时 unwind 跳过尾部语句，
+        // 原先那句 running.store(false) 就不执行，此后不调 stop 再 start
+        // 永远得到 ALREADY_RUNNING——采集永久无法重启，且不报错。
+        let flag = AtomicBool::new(true);
+
+        // 默认 panic 钩子会往 stderr 打整段 backtrace 把测试输出淹掉。
+        // 只换钩子不改行为：catch_unwind 照常捕获。
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            run_guarded(&flag, || panic!("模拟采集线程崩溃"));
+        }));
+        std::panic::set_hook(previous);
+
+        assert!(result.is_err(), "地基不成立：body 应当真的 panic 了");
+        assert!(!flag.load(Ordering::SeqCst), "unwind 路径上 running 也必须归假");
+    }
+
+    #[test]
+    fn run_guarded_holds_the_flag_until_the_body_returns() {
+        // 这一条是整组测试里唯一能区分「守卫正确持有」与「守卫立即失效」的判据。
+        //
+        // 变异实测发现的缺口：把 `let _guard = RunningGuard(running)` 写成
+        // `let _ = RunningGuard(running)`（一字之差，前者持有到作用域末尾，
+        // 后者立即 drop），另外三条测试全部照旧通过——它们断言的是「最终标志为假」，
+        // 而立即 drop 也让标志为假，两者只差在时机上，而时机没被任何断言观测。
+        //
+        // 观测时机的唯一办法是在 body 内部读标志：守卫还在，标志就该仍是真。
+        let flag = AtomicBool::new(true);
+        let mut seen_inside = false;
+
+        run_guarded(&flag, || {
+            seen_inside = flag.load(Ordering::SeqCst);
+        });
+
+        assert!(
+            seen_inside,
+            "守卫在 body 执行期间就已 drop：running 提前归假，此时另一个线程调 start 会成功"
+        );
+        assert!(!flag.load(Ordering::SeqCst), "body 返回后 running 仍未归假");
+    }
+
+    #[test]
+    fn run_guarded_runs_the_body() {
+        // 负向条件恰好满足的防线：若 run_guarded 根本不调 body，
+        // 上面两条照样全绿——标志归假只需要守卫 drop。
+        let flag = AtomicBool::new(true);
+        let mut ran = false;
+
+        run_guarded(&flag, || ran = true);
+
+        assert!(ran, "body 没有被调用");
     }
 }
