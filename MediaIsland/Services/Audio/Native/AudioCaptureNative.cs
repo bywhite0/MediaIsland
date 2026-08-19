@@ -29,7 +29,7 @@ internal struct NativeAudioFrame
 /// </summary>
 internal static partial class AudioCaptureNative
 {
-    public const uint ExpectedAbiVersion = 2;
+    public const uint ExpectedAbiVersion = 3;
 
     public const int StatusOk = 0;
     public const int StatusInvalidArg = 1;

@@ -49,7 +49,7 @@ pub(crate) fn run_guarded(running: &AtomicBool, body: impl FnOnce()) {
     body();
 }
 
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 /// 传输格式恒为 48000Hz / 2 声道 / i16，与 `server.hello` 的 `audio` 声明一致。
 pub const OUTPUT_SAMPLE_RATE: u32 = 48_000;
@@ -133,6 +133,32 @@ impl PlayedFrame {
 }
 
 pub type PlayedFrameCallback = extern "C" fn(*const PlayedFrame, *mut c_void);
+
+/// 播放侧的运行时统计。
+///
+/// 全字段 u64 是刻意的：混用 u32 与 u64 会让 C 布局出现中间 padding，而跨 FFI 的
+/// 布局错位是静默的——读到的是别的字段的值，表现为「数值不对」，与「逻辑算错了」
+/// 无从区分。全 u64 时 6 乘 8 等于 48 字节，无 padding，两端布局无歧义。
+///
+/// 六个字段不保证是同一瞬间的快照（见 render::RenderStatsCell）。
+///
+/// 改动即 ABI 变更，须同步提升 [`ABI_VERSION`]。
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct RenderStats {
+    /// 环形缓冲当前占用，48000Hz 域的帧数。
+    pub ring_frames: u64,
+    /// 欠载累计次数：本轮要的帧数没取够。
+    pub underrun_count: u64,
+    /// 硬重置累计次数。与上一项分开才判得出「连续欠载只重置一次」。
+    pub hard_reset_count: u64,
+    /// 已写进设备缓冲的设备帧数。与 `device_sample_rate` 配对可换算秒，用于对墙钟。
+    pub device_frames_rendered: u64,
+    /// 设备混音格式的采样率。为 0 表示本句柄从未起播过。
+    pub device_sample_rate: u64,
+    /// 当前重采样比，ppm。为 0 表示尚未算出或输入非有限。
+    pub resample_ratio_ppm: u64,
+}
 
 /// 采集句柄。跨 FFI 传递的是它的裸指针。
 pub struct CaptureHandle {
@@ -515,6 +541,52 @@ pub unsafe extern "C" fn mediaisland_audio_render_last_error(
     }
 }
 
+/// 读播放统计。
+///
+/// 未起播的句柄返回全零而非错误——查询一个没在跑的播放器不是调用方的错误，
+/// 且调用方要在启停两侧都读它。`device_sample_rate` 为 0 即未起播。
+///
+/// # Safety
+/// `handle` 必须是 [`mediaisland_audio_render_create`] 返回且尚未销毁的指针；
+/// `out_stats` 须指向可写的 [`RenderStats`] 大小内存。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_stats(
+    handle: *mut RenderHandle,
+    out_stats: *mut RenderStats,
+) -> i32 {
+    if out_stats.is_null() {
+        return STATUS_INVALID_ARG;
+    }
+
+    // 先写默认值：此后任何错误路径上，调用方拿到的都是干净的全零，
+    // 而不是它自己栈上的残留。空句柄的检查放在这之后正是为此。
+    *out_stats = RenderStats::default();
+
+    let Some(handle) = handle.as_ref() else {
+        return STATUS_INVALID_ARG;
+    };
+
+    #[cfg(not(windows))]
+    {
+        let _ = handle;
+        STATUS_UNSUPPORTED_PLATFORM
+    }
+
+    #[cfg(windows)]
+    {
+        match catch_unwind(AssertUnwindSafe(|| handle.inner.stats())) {
+            Ok(stats) => {
+                *out_stats = stats;
+                STATUS_OK
+            }
+            Err(_) => {
+                handle.set_error(Some("读播放统计时发生 panic".to_string()));
+                STATUS_PANIC
+            }
+        }
+    }
+}
+
 /// 与 `ttml-ffi` 的 `FfiBuffer` 同布局，C# 侧可复用既有的读取与释放写法。
 #[repr(C)]
 pub struct FfiBuffer {
@@ -563,7 +635,8 @@ mod tests {
     #[test]
     fn abi_version_is_stable() {
         // ABI 版本是 C# 侧 ExpectedAbiVersion 的对端，改动必须是有意识的。
-        assert_eq!(mediaisland_audio_abi_version(), 2);
+        // 2 到 3 是本次新增 mediaisland_audio_render_stats 与 RenderStats。
+        assert_eq!(mediaisland_audio_abi_version(), 3);
     }
 
     #[test]

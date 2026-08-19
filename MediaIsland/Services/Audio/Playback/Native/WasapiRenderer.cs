@@ -149,6 +149,40 @@ internal sealed class WasapiRenderer : IAudioRenderer
     internal static nuint FramesToPush(byte[]? pcm, bool running) =>
         !running || pcm is null ? 0 : (nuint)(pcm.Length / BytesPerFrame);
 
+    public unsafe AudioRenderStats ReadStats()
+    {
+        // 与 Push 同一把锁：句柄可能在读取途中被 Dispose 销毁，那会让 RenderStats
+        // 打在已释放的 Box 上。读统计是低频的诊断路径（漂移判据约每 100ms 一次），
+        // 与 50 帧每秒的 Push 争抢这把锁的代价可忽略。
+        //
+        // 代价与 Push 相同：FramePlayed 的处理器不得回调进这里，接口注释已把它
+        // 写进那条约定的方法列表。
+        lock (_gate)
+        {
+            if (_disposed || _handle == nint.Zero)
+            {
+                return default;
+            }
+
+            var native = default(NativeRenderStats);
+            var status = AudioRenderNative.NativeMethods.RenderStats(_handle, &native);
+            if (status != AudioRenderNative.StatusOk)
+            {
+                // 不抛也不记日志：这是诊断路径，让它自己变成噪声源是本末倒置。
+                // 全零会被调用方读成「没起播」，而那与「读不到」要做的判断相同。
+                return default;
+            }
+
+            return new AudioRenderStats(
+                (long)native.RingFrames,
+                (long)native.UnderrunCount,
+                (long)native.HardResetCount,
+                (long)native.DeviceFramesRendered,
+                (int)native.DeviceSampleRate,
+                (long)native.ResampleRatioPpm);
+        }
+    }
+
     public void Dispose()
     {
         lock (_gate)

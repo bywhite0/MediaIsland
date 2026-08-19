@@ -18,6 +18,25 @@ internal struct NativePlayedFrame
 }
 
 /// <summary>
+/// 播放统计的原始载荷。字段布局是 Rust <c>#[repr(C)] RenderStats</c> 的镜像。
+///
+/// 六个字段全用 <c>ulong</c> 是刻意的：混用 32 位与 64 位会让布局出现中间 padding，
+/// 而跨 FFI 的布局错位是静默的——读到的是别的字段的值。
+/// <c>AudioRenderStatsTests.NativeLayout_MatchesRustRepr</c> 与 Rust 侧的
+/// <c>render_stats_layout_has_no_padding</c> 一起钉住这一点。
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeRenderStats
+{
+    public ulong RingFrames;
+    public ulong UnderrunCount;
+    public ulong HardResetCount;
+    public ulong DeviceFramesRendered;
+    public ulong DeviceSampleRate;
+    public ulong ResampleRatioPpm;
+}
+
+/// <summary>
 /// <c>MediaIsland.Audio</c> 播放侧的 P/Invoke 绑定。
 ///
 /// 降级模式与采集侧的 <c>AudioCaptureNative</c> 同形：首次访问时探 ABI 版本，DLL 缺失或版本
@@ -29,7 +48,7 @@ internal struct NativePlayedFrame
 /// </summary>
 internal static partial class AudioRenderNative
 {
-    public const uint ExpectedAbiVersion = 2;
+    public const uint ExpectedAbiVersion = 3;
 
     public const int StatusOk = 0;
     public const int StatusInvalidArg = 1;
@@ -224,6 +243,9 @@ internal static partial class AudioRenderNative
         [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_last_error")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         public static partial FfiBuffer RenderLastError(nint handle);
+
+        [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_stats")]
+        public static unsafe partial int RenderStats(nint handle, NativeRenderStats* stats);
 
         [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_free")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

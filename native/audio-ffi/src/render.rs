@@ -12,6 +12,8 @@
 //! **`played_cb` 送的是重采样前的 48k i16**，不是写进设备缓冲的那一份：
 //! C# 侧的分析器只认 48000/2ch/i16。
 
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
 use crate::OUTPUT_SAMPLE_RATE;
 
 /// 抖动缓冲目标深度的取值范围。
@@ -150,6 +152,104 @@ pub fn output_frames_for(device_frames: usize, device_rate: u32) -> usize {
     device_frames * OUTPUT_SAMPLE_RATE as usize / device_rate as usize
 }
 
+/// 重采样比换成 ppm（百万分之一）。
+///
+/// 为什么不把 f64 直接送出 FFI：跨 FFI 的结构体全字段用 u64 是为了消除 padding 歧义
+/// （见 crate::RenderStats），而 f64 要走 to_bits / from_bits，两端各多一处可错的地方。
+/// ppm 对判据够用——控制律的相对幅度上界是 MAX_RELATIVE_RATIO，即偏离 1.0 最多
+/// 一万 ppm，而 ppm 的分辨率是 1。
+///
+/// 非有限或非正的输入返回 0，与「未起播」共用同一个哨兵：两者对读者的含义相同，
+/// 都是「这个数不可用，别拿它算」。
+pub fn ratio_to_ppm(ratio: f64) -> u64 {
+    if !ratio.is_finite() || ratio <= 0.0 {
+        return 0;
+    }
+
+    let ppm = (ratio * 1_000_000.0).round();
+    if ppm >= u64::MAX as f64 {
+        return u64::MAX;
+    }
+
+    ppm as u64
+}
+
+/// 渲染线程的统计量。
+///
+/// 全部原子且只用 Relaxed。Relaxed 够用的理由：这些值不参与同步任何其他内存访问，
+/// 读者只要最终看到即可，而它们之间也不需要互相有序。
+///
+/// 更要紧的是它们绝不去抢 ring 那把互斥量——对面等那把锁的是 WASAPI 实时线程，
+/// 而观测手段不该改变被观测对象的时序。
+///
+/// 代价：六个字段不是同一瞬间的快照，可能跨越一次渲染轮次。判据应看斜率与累计计数的
+/// 单调性，不要依赖六元组的瞬时一致性。
+#[derive(Default)]
+pub struct RenderStatsCell {
+    ring_frames: AtomicU64,
+    underrun_count: AtomicU64,
+    hard_reset_count: AtomicU64,
+    device_frames_rendered: AtomicU64,
+    device_sample_rate: AtomicU64,
+    resample_ratio_ppm: AtomicU64,
+}
+
+impl RenderStatsCell {
+    pub fn set_ring_frames(&self, frames: usize) {
+        self.ring_frames.store(frames as u64, AtomicOrdering::Relaxed);
+    }
+
+    pub fn note_underrun(&self) {
+        self.underrun_count.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+
+    pub fn note_hard_reset(&self) {
+        self.hard_reset_count.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+
+    pub fn add_rendered(&self, device_frames: usize) {
+        self.device_frames_rendered
+            .fetch_add(device_frames as u64, AtomicOrdering::Relaxed);
+    }
+
+    pub fn set_device_rate(&self, rate: u32) {
+        self.device_sample_rate
+            .store(rate as u64, AtomicOrdering::Relaxed);
+    }
+
+    pub fn set_ratio_ppm(&self, ppm: u64) {
+        self.resample_ratio_ppm.store(ppm, AtomicOrdering::Relaxed);
+    }
+
+    /// 起播时清零。
+    ///
+    /// 停播时刻意**不**清：本次会话的累计值是停播后唯一还能读到的诊断信息，
+    /// 而「这次播放共欠载几次、硬重置几次」正是关停检查要看的。
+    /// 托管侧的句柄在停播后依然活着（只有释放才销毁），故读得到。
+    pub fn reset(&self) {
+        self.ring_frames.store(0, AtomicOrdering::Relaxed);
+        self.underrun_count.store(0, AtomicOrdering::Relaxed);
+        self.hard_reset_count.store(0, AtomicOrdering::Relaxed);
+        self.device_frames_rendered
+            .store(0, AtomicOrdering::Relaxed);
+        self.device_sample_rate.store(0, AtomicOrdering::Relaxed);
+        self.resample_ratio_ppm.store(0, AtomicOrdering::Relaxed);
+    }
+
+    pub fn snapshot(&self) -> crate::RenderStats {
+        crate::RenderStats {
+            ring_frames: self.ring_frames.load(AtomicOrdering::Relaxed),
+            underrun_count: self.underrun_count.load(AtomicOrdering::Relaxed),
+            hard_reset_count: self.hard_reset_count.load(AtomicOrdering::Relaxed),
+            device_frames_rendered: self
+                .device_frames_rendered
+                .load(AtomicOrdering::Relaxed),
+            device_sample_rate: self.device_sample_rate.load(AtomicOrdering::Relaxed),
+            resample_ratio_ppm: self.resample_ratio_ppm.load(AtomicOrdering::Relaxed),
+        }
+    }
+}
+
 #[cfg(windows)]
 pub use wasapi::{RenderError, WasapiRenderer};
 
@@ -179,8 +279,9 @@ mod wasapi {
     use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 
     use super::{
-        clamp_target_ms, frames_to_ms, prefill_silence_frames, resample_ratio, target_frames,
-        PrefillState, MAX_RELATIVE_RATIO, RING_CAPACITY_FRAMES, SINC_LEN,
+        clamp_target_ms, frames_to_ms, prefill_silence_frames, ratio_to_ppm, resample_ratio,
+        target_frames, PrefillState, RenderStatsCell, MAX_RELATIVE_RATIO, RING_CAPACITY_FRAMES,
+        SINC_LEN,
     };
     use crate::capture::{parse_mix_format, wait_for_any, MixFormat, StopEvent, WaitObject};
     use crate::convert;
@@ -226,6 +327,9 @@ mod wasapi {
         /// 两者都要 `&mut`，故必须互斥。
         ring: Arc<Mutex<PlaybackRing>>,
         running: Arc<AtomicBool>,
+        /// 与渲染线程共享。只有渲染线程写、FFI 只读，故不需要锁——
+        /// 尤其不能去抢上面那把 ring 的互斥量，对面等它的是 WASAPI 实时线程。
+        stats: Arc<RenderStatsCell>,
         thread: Mutex<RenderThread>,
     }
 
@@ -236,11 +340,17 @@ mod wasapi {
                 user_data,
                 ring: Arc::new(Mutex::new(PlaybackRing::new(RING_CAPACITY_FRAMES))),
                 running: Arc::new(AtomicBool::new(false)),
+                stats: Arc::new(RenderStatsCell::default()),
                 thread: Mutex::new(RenderThread {
                     worker: None,
                     stop_event: None,
                 }),
             }
+        }
+
+        /// 读运行时统计。未起播的句柄返回全零，`device_sample_rate` 为 0 即未起播。
+        pub fn stats(&self) -> crate::RenderStats {
+            self.stats.snapshot()
         }
 
         /// 起渲染线程，**同步等它汇报启动结果**再返回。
@@ -275,12 +385,18 @@ mod wasapi {
                 ring.reset();
             }
 
+            // 与 ring.reset() 同处，理由相同：上一次会话的计数混进来，会让
+            // 「本次播放共欠载几次」变成历史累计，静默失真。停播时不清，
+            // 那些计数是停播后唯一还能读到的诊断信息。
+            self.stats.reset();
+
             let (ready_tx, ready_rx) = mpsc::channel::<Result<(), RenderError>>();
 
             let callback = self.callback;
             let user_data = self.user_data;
             let ring = Arc::clone(&self.ring);
             let running = Arc::clone(&self.running);
+            let stats = Arc::clone(&self.stats);
             let thread_stop = Arc::clone(&stop_event);
 
             self.running.store(true, Ordering::SeqCst);
@@ -296,7 +412,9 @@ mod wasapi {
                     // 守卫的理由与写法见 crate::run_guarded：panic 时 unwind 会跳过
                     // 尾部语句，而 running 卡在真会让此后的 start 一直报已在运行。
                     run_guarded(&running, || {
-                        unsafe { render_loop(&context, &ring, &running, thread_stop.0, &ready_tx) };
+                        unsafe {
+                            render_loop(&context, &ring, &running, &stats, thread_stop.0, &ready_tx)
+                        };
                     });
                 })
                 .map_err(|err| {
@@ -401,6 +519,7 @@ mod wasapi {
         context: &LoopContext,
         ring: &Mutex<PlaybackRing>,
         running: &AtomicBool,
+        stats: &RenderStatsCell,
         stop_event: HANDLE,
         ready: &mpsc::Sender<Result<(), RenderError>>,
     ) {
@@ -411,7 +530,7 @@ mod wasapi {
             return;
         }
 
-        render_session_loop(context, ring, running, stop_event, ready);
+        render_session_loop(context, ring, running, stats, stop_event, ready);
 
         CoUninitialize();
     }
@@ -420,6 +539,7 @@ mod wasapi {
         context: &LoopContext,
         ring: &Mutex<PlaybackRing>,
         running: &AtomicBool,
+        stats: &RenderStatsCell,
         stop_event: HANDLE,
         ready: &mpsc::Sender<Result<(), RenderError>>,
     ) {
@@ -434,16 +554,21 @@ mod wasapi {
             }
         };
 
-        render_frames(context, ring, running, stop_event, &session);
+        render_frames(context, ring, running, stats, stop_event, &session);
     }
 
     unsafe fn render_frames(
         context: &LoopContext,
         ring: &Mutex<PlaybackRing>,
         running: &AtomicBool,
+        stats: &RenderStatsCell,
         stop_event: HANDLE,
         session: &RenderSession,
     ) {
+        // 设备率是判「重采样到底走没走」的唯一依据，且必须在第一轮渲染之前就可读：
+        // 大于 48k 的设备曾在首轮渲染即 panic，而那时 render_start 已经返回过 OK。
+        stats.set_device_rate(session.mix.sample_rate);
+
         let target_ms = context.target_ms;
         let mut prefill = PrefillState::new(target_frames(target_ms));
         let mut resampler = build_resampler(session.mix.sample_rate, session.buffer_frames);
@@ -487,6 +612,8 @@ mod wasapi {
                 break;
             };
 
+            stats.set_ring_frames(available);
+
             if let Some(output_frames) = prefill_silence_frames(
                 &mut prefill,
                 available,
@@ -501,6 +628,9 @@ mod wasapi {
                 if write_silence(&session.render_client, writable).is_err() {
                     break;
                 }
+                // 预填充也要计入已渲染帧：漏掉它会让「已渲染时长对墙钟」这条判据
+                // 在每次硬重置后凭空少掉一段（预填充可达一秒），而那会被误读成设备丢帧。
+                stats.add_rendered(writable as usize);
                 emit_played(context, &staging[..silent]);
                 continue;
             }
@@ -517,9 +647,15 @@ mod wasapi {
                         break;
                     }
                     let _ = state.inner.set_resample_ratio(ratio, true);
+                    stats.set_ratio_ppm(ratio_to_ppm(ratio));
                     state.inner.input_frames_next()
                 }
-                None => writable as usize,
+                None => {
+                    // 不重采样等于比率恰好 1，显式写下而不是留 0——0 的含义是
+                    // 「不可用」，让 48k 设备读到 0 会与「还没算出来」混淆。
+                    stats.set_ratio_ppm(1_000_000);
+                    writable as usize
+                }
             };
 
             debug_assert!(
@@ -537,7 +673,9 @@ mod wasapi {
             };
 
             if taken < needed {
+                stats.note_underrun();
                 if prefill.note_underrun(frames_to_ms(needed - taken)) {
+                    stats.note_hard_reset();
                     let Ok(mut ring) = ring.lock() else { break };
                     ring.reset();
                     if let Some(state) = resampler.as_mut() {
@@ -573,6 +711,8 @@ mod wasapi {
             if written.is_err() {
                 break;
             }
+
+            stats.add_rendered(write_frames);
 
             // 送出的是重采样**前**的 48k i16：C# 侧的分析器只认这一种格式。
             emit_played(context, &staging[..needed * channels]);
@@ -975,5 +1115,100 @@ mod tests {
         let mut state = PrefillState::new(target_frames(200));
 
         assert!(prefill_silence_frames(&mut state, 9_600, 1_920, 96_000, 1_091).is_none());
+    }
+
+    #[test]
+    fn ratio_one_maps_to_one_million_ppm() {
+        assert_eq!(ratio_to_ppm(1.0), 1_000_000);
+    }
+
+    #[test]
+    fn ratio_ppm_keeps_the_base_of_a_non_48k_device() {
+        // 44.1k 设备的基准比率是 44100/48000 = 0.91875，即 918750 ppm。
+        // 这条钉住的是「ppm 的分辨率够用」：判据要从 ppm 反推漂移项，
+        // 而漂移项的量级只有千分之一，若 ppm 把基准比率也算糊了就无从反推。
+        let base = 44_100.0 / 48_000.0;
+
+        assert_eq!(ratio_to_ppm(base), 918_750);
+    }
+
+    #[test]
+    fn ratio_ppm_resolves_the_drift_term() {
+        // 控制律的相对幅度上界是 MAX_RELATIVE_RATIO，即偏离 1.0 最多一万 ppm。
+        // 千分之一的漂移必须体现为 ppm 上可见的差，否则这个字段判不了符号。
+        let with_drift = ratio_to_ppm(1.001);
+
+        assert!(
+            with_drift > 1_000_000,
+            "千分之一的漂移应当在 ppm 上可见，实际 {with_drift}"
+        );
+        assert_eq!(with_drift, 1_001_000);
+    }
+
+    #[test]
+    fn non_finite_ratio_yields_zero_ppm() {
+        // 承 ring.rs 的 drift_ratio_tolerates_non_finite_inputs：非有限输入不得产生
+        // 垃圾值。0 是「不可用」的哨兵，与「未起播」共用同一个值。
+        assert_eq!(ratio_to_ppm(f64::NAN), 0);
+        assert_eq!(ratio_to_ppm(f64::INFINITY), 0);
+        assert_eq!(ratio_to_ppm(f64::NEG_INFINITY), 0);
+        assert_eq!(ratio_to_ppm(0.0), 0);
+        assert_eq!(ratio_to_ppm(-1.0), 0);
+    }
+
+    #[test]
+    fn stats_cell_starts_at_zero_and_reads_back_what_was_written() {
+        let cell = RenderStatsCell::default();
+        let empty = cell.snapshot();
+        assert_eq!(empty.device_sample_rate, 0, "未起播时设备率必须为 0");
+        assert_eq!(empty.ring_frames, 0);
+
+        cell.set_device_rate(48_000);
+        cell.set_ring_frames(9_600);
+        cell.set_ratio_ppm(1_000_000);
+        cell.add_rendered(960);
+        cell.note_underrun();
+        cell.note_underrun();
+        cell.note_hard_reset();
+
+        let s = cell.snapshot();
+        assert_eq!(s.device_sample_rate, 48_000);
+        assert_eq!(s.ring_frames, 9_600);
+        assert_eq!(s.resample_ratio_ppm, 1_000_000);
+        assert_eq!(s.device_frames_rendered, 960);
+        assert_eq!(s.underrun_count, 2, "欠载是累加的");
+        assert_eq!(s.hard_reset_count, 1);
+    }
+
+    #[test]
+    fn stats_cell_reset_clears_every_field() {
+        // 起播时清零。若漏掉任一字段，上一次会话的计数会混进这一次，
+        // 而「本次播放共欠载几次」这条判据就变成了历史累计，静默失真。
+        let cell = RenderStatsCell::default();
+        cell.set_device_rate(44_100);
+        cell.set_ring_frames(1);
+        cell.set_ratio_ppm(918_750);
+        cell.add_rendered(1);
+        cell.note_underrun();
+        cell.note_hard_reset();
+
+        cell.reset();
+
+        let s = cell.snapshot();
+        assert_eq!(s.ring_frames, 0);
+        assert_eq!(s.underrun_count, 0);
+        assert_eq!(s.hard_reset_count, 0);
+        assert_eq!(s.device_frames_rendered, 0);
+        assert_eq!(s.device_sample_rate, 0);
+        assert_eq!(s.resample_ratio_ppm, 0);
+    }
+
+    #[test]
+    fn render_stats_layout_has_no_padding() {
+        // 布局判据。托管侧有一条对称的 Marshal.SizeOf 断言，两条都成立才说明两端一致。
+        // 错位是静默的：读到的是别的字段的值，表现为「数值不对」，
+        // 与「逻辑算错了」无从区分。
+        assert_eq!(std::mem::size_of::<crate::RenderStats>(), 48);
+        assert_eq!(std::mem::align_of::<crate::RenderStats>(), 8);
     }
 }
