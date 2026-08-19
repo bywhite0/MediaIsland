@@ -3,6 +3,7 @@ using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Lyrics.Providers;
 using MediaIsland.Services.Media;
+using MediaIsland.Tests.Infrastructure;
 using Xunit;
 
 namespace MediaIsland.Tests.Lyrics;
@@ -236,7 +237,7 @@ public class SPlayerNextLyricsClientTests
             LyricsSourceSettings.NormalizeSPlayerNextBaseUrl("http://127.0.0.1:24558/"));
     }
 
-    [Fact]
+    [LiveServiceFact]
     public async Task TryFetchAsync_AgainstLiveApi_ReturnsDocumentWhenSourceMatches()
     {
         var client = new SPlayerNextLyricsClient();
@@ -246,25 +247,18 @@ public class SPlayerNextLyricsClientTests
         });
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-        using var nowPlayingResponse = await http.GetAsync("http://127.0.0.1:14558/api/now-playing");
-        if (!nowPlayingResponse.IsSuccessStatusCode)
-        {
-            return;
-        }
+        using var nowPlayingResponse = await GetNowPlayingOrFailAsync(http);
 
         await using var stream = await nowPlayingResponse.Content.ReadAsStreamAsync();
         using var document = await System.Text.Json.JsonDocument.ParseAsync(stream);
-        if (!document.RootElement.TryGetProperty("track", out var track) ||
-            track.ValueKind != System.Text.Json.JsonValueKind.Object)
-        {
-            return;
-        }
+        var hasTrack = document.RootElement.TryGetProperty("track", out var track)
+                       && track.ValueKind == System.Text.Json.JsonValueKind.Object;
+        Assert.True(hasTrack, "前提不成立：now-playing 的应答里没有 track 对象，本机播放器可能没在放歌");
 
         var title = track.TryGetProperty("title", out var titleNode) ? titleNode.GetString() : null;
-        if (string.IsNullOrWhiteSpace(title))
-        {
-            return;
-        }
+        Assert.False(
+            string.IsNullOrWhiteSpace(title),
+            "前提不成立：now-playing 的 track 没有标题，无法据此查歌词");
 
         var artists = new List<string>();
         if (track.TryGetProperty("artists", out var artistsNode) &&
@@ -295,14 +289,45 @@ public class SPlayerNextLyricsClientTests
             null);
 
         var result = await client.TryFetchAsync(media, settings, CancellationToken.None);
-        if (result == null)
-        {
-            return;
-        }
 
+        // 与上面三处不同：这一条不是前提不成立，而是被测方法真的没返回文档。
+        // 前提都已满足（服务在跑、有曲目、有标题），此时拿不到结果就是失败。
+        // 原先这里也是 return，那让「客户端完全不工作」也报绿——
+        // 这条测试因此从未真正验证过任何东西。
+        Assert.NotNull(result);
         Assert.Equal(LyricsSourceId.SPlayerNext, result.Source);
         Assert.NotEmpty(result.Document.Lines);
         Assert.Equal(title, result.Title);
+    }
+
+    /// <summary>
+    /// 探本机歌词服务。
+    ///
+    /// 门控已声明「服务在跑」是本条测试的前提，故服务不可达是前提不成立而非通过。
+    /// 原先这里探测失败即 return，那报的是绿：它什么都没验证却声称通过，
+    /// 而「全量 N passed」这句话里因此含有一条假的，且从计数上看不出来。
+    ///
+    /// 而且原先那道 IsSuccessStatusCode 检查根本走不到——服务不在跑时
+    /// GetAsync 抛的是 HttpRequestException（连接被拒），不是返回非 2xx。
+    /// 所以「服务不在跑就红」不是设计如此，是防护漏了异常路径。
+    /// </summary>
+    private static async Task<HttpResponseMessage> GetNowPlayingOrFailAsync(HttpClient http)
+    {
+        try
+        {
+            var response = await http.GetAsync("http://127.0.0.1:14558/api/now-playing");
+            Assert.True(
+                response.IsSuccessStatusCode,
+                $"前提不成立：本机 14558 应答 {(int)response.StatusCode}");
+            return response;
+        }
+        catch (HttpRequestException ex)
+        {
+            Assert.Fail(
+                $"前提不成立：{LiveServiceFactAttribute.Variable} 已设为启用，" +
+                $"但本机 14558 不可达（{ex.Message}）");
+            throw;
+        }
     }
 }
 
