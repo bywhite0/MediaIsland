@@ -1,21 +1,24 @@
 using System.Diagnostics;
 using MediaIsland.Services.Audio;
 using MediaIsland.Services.Audio.Native;
+using MediaIsland.Tests.Infrastructure;
 using Xunit;
 using Xunit.Abstractions;
 
 namespace MediaIsland.Tests.Audio;
 
 /// <summary>
-/// 真机 WASAPI loopback 采集验证。默认跳过——它需要真实音频设备且正在放音，
-/// 在 CI 上必然失败。手工验证时把 Skip 去掉再跑。
+/// 真机 WASAPI loopback 采集验证。需要真实音频设备且正在放音，
+/// 故默认跳过，设 MEDIAISLAND_REAL_AUDIO=1 后启用。
 ///
-/// 这是本期唯一无法自动化的一环：WASAPI 依赖真机，其余全部由单测覆盖。
+/// 这一条覆盖发送侧的真采集，它是 MediaIsland.Tests/RealDevice 下那套播放判据
+/// 唯一没有覆盖到的一环——那套用合成注入替代采集，因为采集与播放取的是同一个
+/// 默认输出端点，同时工作就是啸叫。
 /// </summary>
 [Collection(nameof(AudioNativeCollection))]
 public class WasapiLoopbackManualCheck(ITestOutputHelper output)
 {
-    [Fact(Skip = "手工验证：需真实音频设备且正在放音。见 AGENTS.md 的 MediaLink Audio Capture Check")]
+    [RealAudioFact]
     public async Task CapturesRealLoopbackAudio()
     {
         AudioCaptureNative.ResetForTesting();

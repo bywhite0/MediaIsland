@@ -9,6 +9,7 @@ using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink;
 using MediaIsland.Services.MediaLink.Protocol;
+using MediaIsland.Tests.Infrastructure;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -21,13 +22,13 @@ namespace MediaIsland.Tests.Audio;
 /// 与 <see cref="WasapiLoopbackManualCheck"/> 的区别：那条只验采集本身，这条把协议
 /// 也串进来，覆盖「客户端订阅 audio + play_start 后真的收到能解码的帧」这一完整承诺。
 ///
-/// 默认跳过——需真实音频设备且正在放音。手工验证时去掉 Skip 再跑，
+/// 默认跳过——需真实音频设备且正在放音。设 MEDIAISLAND_REAL_AUDIO=1 后启用，
 /// 步骤见 AGENTS.md 的 "MediaLink Audio Capture Check"。
 /// </summary>
 [Collection(nameof(AudioNativeCollection))]
 public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
 {
-    [Fact(Skip = "手工验证：需真实音频设备且正在放音。见 AGENTS.md 的 MediaLink Audio Capture Check")]
+    [RealAudioFact]
     public async Task CapturedAudioReachesSubscriberOverRealWebSocket()
     {
         AudioCaptureNative.ResetForTesting();
