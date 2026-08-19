@@ -296,4 +296,68 @@ public class AudioPlaybackServiceTests
 
         Assert.Equal(1, renderer.StopCount);
     }
+
+    [Fact]
+    public void MismatchedSampleRate_IsDroppedNotPushed()
+    {
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        // 地基：确认此刻确实在播放路径上，否则「没进渲染器」由不播放造成，
+        // 与校验生效无从区分。
+        Assert.True(service.IsPlaying);
+
+        service.Submit(new AudioFrame(new byte[8], 0, SampleRate: 44_100, Channels: 2, IsSilent: false));
+
+        Assert.Empty(renderer.Pushed);
+        Assert.Equal(1, service.RejectedFrameCount);
+    }
+
+    [Fact]
+    public void MismatchedChannelCount_IsDroppedNotPushed()
+    {
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.True(service.IsPlaying);
+
+        service.Submit(new AudioFrame(new byte[8], 0, SampleRate: 48_000, Channels: 1, IsSilent: false));
+
+        Assert.Empty(renderer.Pushed);
+        Assert.Equal(1, service.RejectedFrameCount);
+    }
+
+    [Fact]
+    public void MatchingFrame_StillReachesTheRenderer()
+    {
+        // 负向条件恰好满足的防线：若校验写成恒真，上面两条照样绿，
+        // 而那会让播放彻底静音。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        service.Submit(new AudioFrame(new byte[8], 0, 48_000, 2, IsSilent: false));
+
+        Assert.Single(renderer.Pushed);
+        Assert.Equal(0, service.RejectedFrameCount);
+    }
+
+    [Fact]
+    public void MismatchedFrame_WhileNotPlaying_StillReachesInner()
+    {
+        // 校验的约束来自渲染器，不是来自帧本身。不播放时走直连，
+        // 可视化按帧携带的采样率自己处理——在这里也拦掉会让非 48k 的源连频谱都没有。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+
+        service.Submit(new AudioFrame(new byte[8], 0, 44_100, 2, IsSilent: false));
+
+        Assert.Single(inner.Frames);
+        Assert.Equal(0, service.RejectedFrameCount);
+    }
 }

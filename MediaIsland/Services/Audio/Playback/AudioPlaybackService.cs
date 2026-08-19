@@ -16,6 +16,15 @@ namespace MediaIsland.Services.Audio.Playback;
 /// </summary>
 public sealed class AudioPlaybackService : IAudioFrameSubmitter, IDisposable
 {
+    /// <summary>
+    /// 渲染器要求的采样率。与 MediaLink 的线格式一致——归一化在 native 采集侧完成，
+    /// 到这一层时所有生产者都该已经是这个值。
+    /// </summary>
+    public const int RequiredSampleRate = 48_000;
+
+    /// <summary>渲染器要求的声道数。</summary>
+    public const int RequiredChannels = 2;
+
     private readonly IAudioFrameSubmitter _inner;
     private readonly IAudioRenderer _renderer;
     private readonly ILogger? _logger;
@@ -35,6 +44,7 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IDisposable
 
     private bool _requestedEnabled;
     private int _requestedTargetMs;
+    private long _rejectedFrames;
     private volatile bool _playing;
     private bool _disposed;
 
@@ -74,6 +84,14 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IDisposable
     /// 已被约定禁止回调进几个持锁方法，没有理由再往那个列表里添两项。
     /// </summary>
     public int RequestedTargetBufferMs => Volatile.Read(ref _requestedTargetMs);
+
+    /// <summary>
+    /// 因格式失配被丢弃的帧数。
+    ///
+    /// 暴露它是为了让校验本身可测：丢弃是静默的（不抛、不断流），
+    /// 没有这个计数就无法区分「校验拦下了」与「帧根本没来」。
+    /// </summary>
+    public long RejectedFrameCount => Interlocked.Read(ref _rejectedFrames);
 
     /// <summary>
     /// 设置播放开关与目标缓冲深度。幂等：由设置变化与仲裁变化共同触发，会被反复调用，
@@ -141,11 +159,41 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IDisposable
         // 切换瞬间最多让一帧走错分支，那比每帧抢启停的锁划算。
         if (_playing)
         {
+            // 渲染器的契约是 48000Hz 与 2 声道 i16 交错，而在此之前没有任何一处强制它。
+            // 当前两个生产者都已归一，故这条分支不可达；第三个帧源进来时会静默播错速，
+            // 那比崩溃难查——声音出来了，只是不对。
+            //
+            // 丢弃而不抛：本方法在网络收循环上，抛异常会把一帧的格式问题升级成断流。
+            // 与转发侧对失配帧不出网的处置一致。
+            if (frame.SampleRate != RequiredSampleRate || frame.Channels != RequiredChannels)
+            {
+                RejectFrame(frame);
+                return;
+            }
+
             _renderer.Push(frame.Pcm);
             return;
         }
 
         SubmitToInner(frame);
+    }
+
+    /// <summary>
+    /// 记一次格式失配。只在第一帧落日志——失配是持续性的（源不会一帧一个格式），
+    /// 50 帧每秒逐帧记会把日志刷爆，而第一条已经说清了是什么格式对不上。
+    /// </summary>
+    private void RejectFrame(AudioFrame frame)
+    {
+        var count = Interlocked.Increment(ref _rejectedFrames);
+        if (count == 1)
+        {
+            _logger?.LogWarning(
+                "[音频:播放] 丢弃格式失配的帧：{Rate}Hz/{Channels} 声道，播放器只接 {RequiredRate}Hz/{RequiredChannels} 声道。",
+                frame.SampleRate,
+                frame.Channels,
+                RequiredSampleRate,
+                RequiredChannels);
+        }
     }
 
     /// <summary>
