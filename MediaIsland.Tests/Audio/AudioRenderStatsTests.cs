@@ -16,6 +16,26 @@ public class AudioRenderStatsTests
         Assert.Equal(48, Marshal.SizeOf<NativeRenderStats>());
     }
 
+    [Theory]
+    [InlineData(nameof(NativeRenderStats.RingFrames), 0)]
+    [InlineData(nameof(NativeRenderStats.UnderrunCount), 8)]
+    [InlineData(nameof(NativeRenderStats.HardResetCount), 16)]
+    [InlineData(nameof(NativeRenderStats.DeviceFramesRendered), 24)]
+    [InlineData(nameof(NativeRenderStats.DeviceSampleRate), 32)]
+    [InlineData(nameof(NativeRenderStats.ResampleRatioPpm), 40)]
+    public void NativeLayout_PinsEveryFieldOffset(string field, int expectedOffset)
+    {
+        // 为什么 SizeOf 那一条不够：变异实测发现把首字段从 ulong 改成 uint 时
+        // 总大小仍是 48（uint 后补 4 字节 padding 对齐到 8），SizeOf 判据全绿。
+        // 而真正危险的错位是字段顺序错——它同样不改总大小，却让每个字段都读到
+        // 别人的值，且在两端各自看都合法。只有逐字段偏移能钉住顺序。
+        //
+        // 偏移值来自 Rust 侧 RenderStats 的声明顺序，全 u64 故每个 8 字节、无中间 padding。
+        Assert.Equal(
+            expectedOffset,
+            (int)Marshal.OffsetOf<NativeRenderStats>(field));
+    }
+
     [Fact]
     public void NeverStarted_IsReportedAsSuch()
     {
