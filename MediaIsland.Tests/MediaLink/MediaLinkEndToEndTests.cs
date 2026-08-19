@@ -909,33 +909,72 @@ public class MediaLinkEndToEndTests
             await Task.Delay(30);
         }
 
-        // Drain all received events
+        // 收集直到出现第一条描述了曲目的事件，或到 deadline。
+        //
+        // 门槛是「至少一条」而不是「至少两条」，这一改动是本条测试从随负载随机红
+        // 转为稳定的全部原因，故理由必须写清：
+        //
+        // 事件条数是发布侧合并行为的函数，不是被测契约。MediaLinkStatePublisher
+        // 是快照式发布，把 30ms 内的连续切歌合并成一条是它允许的行为，负载高时
+        // 合并得更多。要求两条等于要求「发布侧不许合并」——那从来不是承诺。
+        //
+        // 原门槛的顾虑是对的：滤完一条不剩时下面的 foreach 空转，测试照样绿，
+        // 那是「被测代码什么都不做也能通过」的假绿。但用一个会随机不成立的条数
+        // 去防它，是把真问题挡在了一个随机失败的门后面。改由「等到至少一条，
+        // 超时即红」来防——超时红是真红，说明发布侧一条都没发。
         var received = new List<JsonElement>();
-        try
+        var trackEvents = new List<JsonElement>();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+
+        while (DateTime.UtcNow < deadline)
         {
-            while (true)
+            JsonElement evt;
+            try
             {
-                try { received.Add(await ReceiveJsonAsync(client, timeoutMs: 500)); }
-                catch (OperationCanceledException) { break; }
+                evt = await ReceiveJsonAsync(client, timeoutMs: 500);
+            }
+            catch (OperationCanceledException)
+            {
+                // 一次读超时不代表结束：已经收到目标就收尾，否则继续等到 deadline。
+                if (trackEvents.Count > 0)
+                {
+                    break;
+                }
+
+                continue;
+            }
+            catch (WebSocketException)
+            {
+                break;
+            }
+
+            received.Add(evt);
+
+            if (!evt.TryGetProperty("name", out var name)
+                || name.GetString() != MediaLinkProtocol.EventMediaUpdated)
+            {
+                continue;
+            }
+
+            // 订阅时推送的快照若赶在首次切歌之前取样，此刻还没有任何媒体，会发出一条
+            // 没有 payload 的 media.updated，语义是「当前无播放」。它本就不该带
+            // trackToken，必须先滤掉。
+            if (evt.TryGetProperty("payload", out var payload)
+                && payload.ValueKind == JsonValueKind.Object
+                && payload.TryGetProperty("title", out _))
+            {
+                trackEvents.Add(evt);
             }
         }
-        catch (WebSocketException) { } // connection may be aborted by server
 
-        var mediaEvents = received.Where(e => e.TryGetProperty("name", out var n) && n.GetString() == MediaLinkProtocol.EventMediaUpdated).ToList();
-
-        // 订阅时推送的快照若赶在首次切歌之前取样，此刻还没有任何媒体，会发出一条没有 payload
-        // 的 media.updated，语义是「当前无播放」。它本就不该带 trackToken，必须先滤掉：
-        // 否则断言结果取决于快照取样与首次切歌谁先跑，同一份代码会随机红绿。
-        var trackEvents = mediaEvents
-            .Where(e => e.TryGetProperty("payload", out var p)
-                        && p.ValueKind == JsonValueKind.Object
-                        && p.TryGetProperty("title", out _))
+        var mediaEvents = received
+            .Where(e => e.TryGetProperty("name", out var n) && n.GetString() == MediaLinkProtocol.EventMediaUpdated)
             .ToList();
 
-        // 门槛必须落在过滤后的集合上。若仍只要求过滤前的总数，滤完一条不剩时测试照样绿，
-        // 那是「被测代码什么都不做也能通过」的假绿，比随机红更难发现。
-        Assert.True(trackEvents.Count >= 2,
-            $"Expected at least 2 media events carrying a track from 10 track changes, got {trackEvents.Count}. media.updated: {mediaEvents.Count}, total received: {received.Count}");
+        Assert.True(
+            trackEvents.Count >= 1,
+            $"10 次切歌后没有任何 media.updated 描述了曲目。media.updated: {mediaEvents.Count}, 收到总数: {received.Count}");
+
         foreach (var evt in trackEvents)
         {
             // 过滤已保证 payload 存在，这里取用不会抛 KeyNotFoundException。
