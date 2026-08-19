@@ -79,18 +79,19 @@
 
 	<Target Name="BuildTtmlNative"
 	        BeforeTargets="PrepareForBuild"
-	        Inputs="$(TtmlNativeManifest);$(MSBuildProjectDirectory)\..\native\ttml-ffi\Cargo.lock;$(MSBuildProjectDirectory)\..\native\ttml-ffi\src\lib.rs"
+	        Inputs="$(TtmlNativeManifest);$(MSBuildProjectDirectory)\..\native\ttml-ffi\Cargo.lock;$(MSBuildProjectDirectory)\..\native\ttml-ffi\src\*.rs"
 	        Outputs="$(TtmlNativeLibrary)"
 	        Condition="'$(OS)' == 'Windows_NT' And '$(PlatformTarget)' == 'x64' And Exists('$(TtmlNativeManifest)')">
 		<Exec Command="cargo build --manifest-path &quot;$(TtmlNativeManifest)&quot; --release" />
 		<Copy SourceFiles="$(TtmlNativeCargoOutput)" DestinationFiles="$(TtmlNativeLibrary)" SkipUnchangedFiles="true" />
 	</Target>
 
-	<!-- Inputs lists every source file: audio-ffi is multi-module, so lib.rs alone would leave
-	     capture/convert edits undetected and silently ship a stale DLL. -->
+	<!-- Inputs globs src\*.rs instead of enumerating: audio-ffi is multi-module, and an
+	     enumeration goes stale the moment a module is added — ring.rs and render.rs were both
+	     missed that way, and a missed module silently ships a DLL that predates the edit. -->
 	<Target Name="BuildAudioNative"
 	        BeforeTargets="PrepareForBuild"
-	        Inputs="$(AudioNativeManifest);$(MSBuildProjectDirectory)\..\native\audio-ffi\Cargo.lock;$(MSBuildProjectDirectory)\..\native\audio-ffi\src\lib.rs;$(MSBuildProjectDirectory)\..\native\audio-ffi\src\capture.rs;$(MSBuildProjectDirectory)\..\native\audio-ffi\src\convert.rs"
+	        Inputs="$(AudioNativeManifest);$(MSBuildProjectDirectory)\..\native\audio-ffi\Cargo.lock;$(MSBuildProjectDirectory)\..\native\audio-ffi\src\*.rs"
 	        Outputs="$(AudioNativeLibrary)"
 	        Condition="'$(OS)' == 'Windows_NT' And '$(PlatformTarget)' == 'x64' And Exists('$(AudioNativeManifest)')">
 		<Exec Command="cargo build --manifest-path &quot;$(AudioNativeManifest)&quot; --release" />
