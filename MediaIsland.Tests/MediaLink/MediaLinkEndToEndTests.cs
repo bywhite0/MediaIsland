@@ -11,6 +11,7 @@ using MediaIsland.Services.MediaLink;
 using MediaIsland.Services.MediaLink.Mapping;
 using MediaIsland.Services.MediaLink.Protocol;
 using MediaIsland.Models;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -1168,6 +1169,146 @@ public class MediaLinkEndToEndTests
         // 不清理会让后续测试的连接被误拒。
         server.ClearAuthFailures("127.0.0.1");
         await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task RelayedAudioFrame_ThroughTheRegisteredGraph_ArrivesAtTheThirdHopByteIdentical()
+    {
+        // 三跳的合成。每一跳单独都已有判据：A→B 的字节相等
+        // （AudioFrame_OverRealWebSocket_ArrivesByteIdentical）、中继接缝的原样转发
+        // （MediaLinkAudioForwardingTests.AcceptedFrame_IsForwardedByteForByte）、
+        // 需求向上游传导（DownstreamAudioDemand_AloneIsEnough_ToPullUpstreamSubscription）。
+        //
+        // 没人看守的是注册图里那个 audioForwarder lambda 与 BroadcastAudioFrameAsync 的接合：
+        // 既有的转发链测试手搭中继节点时根本没传 audioForwarder。那条边断了不会报错，
+        // 只会让 C 永远收不到音频，而 A 与 B 之间一切正常。
+        //
+        // 故 B 由产品的注册图建起来而不是在测试里手搭——手搭只能证明手搭得对。
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+
+        // A：最初的采集端。要走真实的媒体推送，否则 B 判不出「生效媒体来自上游」，
+        // 而那是订阅上游音频的前提之一。
+        var originMedia = new E2EFakeMediaService();
+        var originSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var originCoordinator = new MediaSourceCoordinator(
+            originMedia, lyrics, new MediaLinkInjectionStore(), () => originSettings);
+        var originHub = new MediaLinkSessionHub();
+        using var originPublisher = new MediaLinkStatePublisher(
+            originCoordinator, originHub, timelineMinIntervalMs: () => 0);
+        originPublisher.Start();
+        var originServer = new MediaLinkServer(
+            originHub, s => originPublisher.PublishSnapshotAsync(s), () => "origin-tok",
+            coordinator: originCoordinator);
+        await originServer.StartAsync("127.0.0.1", 0);
+        var originPort = int.Parse(originServer.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        originMedia.Raise(
+            new MediaInfo("origin-app", "RelayHopSong", "RelayHopArtist", null,
+                TimeSpan.FromSeconds(5), TimeSpan.FromMinutes(4),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null),
+            MediaInfoChangeKind.MediaProperties);
+
+        // B：中继节点，整张对象图来自 AddMediaLink。
+        var relaySettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.ExternalPreferred,
+            MediaLinkIsEnabled = true,
+            MediaLinkListenAddress = "127.0.0.1",
+            MediaLinkPort = 0,
+            MediaLinkToken = "relay-tok",
+            MediaLinkUpstreamIsEnabled = true,
+            MediaLinkUpstreamEndpoint = $"127.0.0.1:{originPort}",
+            MediaLinkUpstreamToken = "origin-tok"
+        };
+        var services = new ServiceCollection();
+        services.AddSingleton<IMediaService>(new E2EFakeMediaService());
+        services.AddSingleton(new LyricsSearchService([], [], () => new LyricsSourceSettings()));
+        services.AddSingleton(new MediaPlatformProviderResolver(
+            [], NullLogger<MediaPlatformProviderResolver>.Instance));
+        services.AddMediaLink(() => relaySettings);
+        await using var provider = services.BuildServiceProvider();
+
+        var relayServer = provider.GetRequiredService<MediaLinkHostedService>();
+        var relayUpstream = provider.GetRequiredService<MediaLinkUpstreamHostedService>();
+        await relayServer.StartAsync(CancellationToken.None);
+        await relayUpstream.StartAsync(CancellationToken.None);
+
+        await WaitUntilAsync(() =>
+            provider.GetRequiredService<MediaSourceCoordinator>().IsExternalMediaEffective);
+        await WaitUntilAsync(() => originHub.Sessions.Count == 1);
+        var originSession = Assert.Single(originHub.Sessions);
+        await WaitUntilAsync(() => originSession.IsSubscribedTo(MediaLinkProtocol.ChannelMedia));
+
+        // 地基：此刻没有任何下游要音频，A 就不该被订阅 audio。一帧不发，转发无从谈起，
+        // 而 A 白采集、白传约 192KB/s。不钉这一条，「一开始就在转」会冒充成功。
+        Assert.False(originSession.IsSubscribedToAudio, "前置不成立：无下游需求时不该订阅 audio");
+
+        // C：第三跳。用裸 socket 而非 MediaLinkClient——要验的是线上字节。
+        using var thirdHop = new ClientWebSocket();
+        await thirdHop.ConnectAsync(new Uri(relayServer.Endpoint!), CancellationToken.None);
+        await ReceiveJsonAsync(thirdHop); // hello
+        await SendJsonAsync(thirdHop, new
+        {
+            type = MediaLinkProtocol.TypeAuth, id = "a1", v = 1, ts = NowMs(),
+            payload = new { token = relaySettings.MediaLinkToken }
+        });
+        await ReceiveUntilTypeAsync(thirdHop, MediaLinkProtocol.TypeAuthOk);
+        await SendJsonAsync(thirdHop, new
+        {
+            type = MediaLinkProtocol.TypeSubscribe, id = "s1", v = 1, ts = NowMs(),
+            payload = new { channels = new[] { MediaLinkProtocol.ChannelAudio } }
+        });
+        await ReceiveUntilTypeAsync(thirdHop, MediaLinkProtocol.TypeSubscribeOk);
+        await SendJsonAsync(thirdHop, new
+        {
+            type = MediaLinkProtocol.TypeAudioPlayStart, id = "ap1", v = 1, ts = NowMs()
+        });
+        await ReceiveUntilTypeAsync(thirdHop, MediaLinkProtocol.TypeOk);
+
+        await WaitUntilAsync(() => originSession.IsSubscribedToAudio);
+        Assert.True(originSession.IsSubscribedToAudio, "C 要音频却没能一路拉起 B 对 A 的订阅");
+
+        // B 的接收侧按 trackToken 丢弃过期曲目的 PCM，故这一帧必须带 B 当前认定的 token。
+        var snapshot = provider.GetRequiredService<MediaLinkInjectionStore>().GetMediaSnapshot();
+        Assert.NotNull(snapshot);
+        var trackToken = MediaLinkDtoMapper.ComputeTrackToken(
+            snapshot!.SourceApp, snapshot.Title, snapshot.Artist, snapshot.AlbumTitle);
+
+        var pcm = new byte[4096];
+        Random.Shared.NextBytes(pcm);
+        var originFrame = MediaLinkAudioFrame.Encode(
+            new MediaLinkAudioFrameHeader(1234, 5678, 9012, 77, trackToken, MediaLinkAudioFrameFlags.None),
+            pcm);
+        await originSession.EnqueueAudioAsync(originFrame, CancellationToken.None);
+
+        // 验收点：C 收到的字节与 A 发出的逐一相等，三个时间戳与 seq 都在。
+        // 中继改写它们不会报错，只会把 A 那一跳的时间信息抹掉，
+        // 让 C 算出的传输延迟只覆盖最后一跳。
+        var arrived = await ReceiveBinaryAsync(thirdHop);
+        Assert.Equal(originFrame, arrived);
+
+        static (MediaLinkAudioFrameHeader Header, byte[] Pcm) Decode(byte[] frame)
+        {
+            Assert.True(MediaLinkAudioFrame.TryDecode(frame, out var header, out var pcm, out _));
+            return (header, pcm.ToArray());
+        }
+
+        var (header, decodedPcm) = Decode(arrived);
+        Assert.Equal(trackToken, header.TrackToken);
+        Assert.Equal(77u, header.Seq);
+        Assert.Equal(1234, header.StartPositionMs);
+        Assert.Equal(5678, header.CapturedAtMs);
+        Assert.Equal(9012, header.ServerTimeMs);
+        Assert.Equal(pcm, decodedPcm);
+
+        try { await thirdHop.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await relayUpstream.StopAsync(CancellationToken.None);
+        await relayServer.StopAsync(CancellationToken.None);
+        await originServer.StopAsync();
     }
 
     private static async Task<JsonElement> ReceiveJsonAsync(WebSocket ws, int timeoutMs = 3000)

@@ -22,7 +22,7 @@ public class AudioPlaybackServiceTests
     /// 第一个进入 <see cref="Submit"/> 的调用卡住不返回，后续调用立即通过。用来把
     /// 「两个线程同时进内层」变成确定性事件，而不是靠压力测试碰运气。
     ///
-    /// **只挡第一个**是判据成立的关键：若后续调用也挡，那么「第二个提交没完成」
+    /// 只挡第一个是判据成立的关键：若后续调用也挡，那么「第二个提交没完成」
     /// 在有锁与无锁两种实现下都成立，这条测试就一点区分力也没有。
     /// </summary>
     private sealed class BlockingSubmitter : IAudioFrameSubmitter
