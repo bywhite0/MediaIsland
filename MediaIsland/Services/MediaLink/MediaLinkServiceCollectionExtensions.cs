@@ -54,6 +54,10 @@ public static class MediaLinkServiceCollectionExtensions
             provider.GetRequiredService<AudioVisualizationService>(),
             provider.GetRequiredService<IAudioRenderer>(),
             provider.GetService<ILoggerFactory>()?.CreateLogger<AudioPlaybackService>()));
+        // 呈现侧只需要「本机输出延迟是多少」，不需要认识播放层。别名注册同 IEffectiveMediaSource：
+        // 这条边断了不会报错，只会让跨机播放时歌词一直领先耳朵一个抖动缓冲的深度。
+        services.AddSingleton<IAudioOutputLatency>(provider =>
+            provider.GetRequiredService<AudioPlaybackService>());
 
         services.AddSingleton<MediaSourceCoordinator>(provider => new MediaSourceCoordinator(
             provider.GetRequiredService<IMediaService>(),

@@ -360,4 +360,72 @@ public class AudioPlaybackServiceTests
         Assert.Single(inner.Frames);
         Assert.Equal(0, service.RejectedFrameCount);
     }
+
+    [Fact]
+    public void OutputLatency_IsZeroWhileNotPlaying()
+    {
+        // 不出声就没有本机引入的延迟。此时媒体时钟对齐的是对方的实时位置，
+        // 那本身就是对的——减一个缓冲深度反而会把歌词推到听觉后面。
+        var service = new AudioPlaybackService(new RecordingSubmitter(), new FakeRenderer());
+        using var _ = service;
+
+        Assert.Equal(TimeSpan.Zero, service.OutputLatency);
+    }
+
+    [Fact]
+    public void OutputLatency_EqualsTargetDepthWhilePlaying()
+    {
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        // 地基：先钉住真的在播。否则「延迟为 200」与「压根没起播但读到了请求值」长得一样。
+        Assert.True(service.IsPlaying);
+        Assert.Equal(TimeSpan.FromMilliseconds(200), service.OutputLatency);
+    }
+
+    [Fact]
+    public void OutputLatency_FollowsDepthChanges()
+    {
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+
+        service.Configure(enabled: true, targetBufferMs: 200);
+        service.Configure(enabled: true, targetBufferMs: 500);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(500), service.OutputLatency);
+    }
+
+    [Fact]
+    public void OutputLatency_IsZeroWhenRendererUnavailable()
+    {
+        // 这一条是选 IsPlaying 而不是 RequestedIsEnabled 的全部理由。
+        // native 缺失时请求为开、帧走直连、没有任何额外延迟；
+        // 若按请求值报 200ms，歌词会被推到听觉后面 200ms，比不补偿更坏。
+        var renderer = new FakeRenderer { IsAvailable = false, FailureReason = "native 缺失" };
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        // 地基：请求确实是开的，只是没播起来。少了这一条，本判据与
+        // 「Configure 压根没被调用」无从区分。
+        Assert.True(service.RequestedIsEnabled);
+        Assert.False(service.IsPlaying);
+        Assert.Equal(TimeSpan.Zero, service.OutputLatency);
+    }
+
+    [Fact]
+    public void OutputLatency_ReturnsToZeroAfterStop()
+    {
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.Equal(TimeSpan.FromMilliseconds(200), service.OutputLatency);
+
+        service.Configure(enabled: false, targetBufferMs: 200);
+
+        Assert.Equal(TimeSpan.Zero, service.OutputLatency);
+    }
 }

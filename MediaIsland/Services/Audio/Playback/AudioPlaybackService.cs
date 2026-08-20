@@ -14,7 +14,7 @@ namespace MediaIsland.Services.Audio.Playback;
 /// 播放起不来时回落直连。不回落的话，打开播放开关会让频谱一起死掉，
 /// 而用户的心智模型里这两件事无关，排查方向会指向频谱组件。
 /// </summary>
-public sealed class AudioPlaybackService : IAudioFrameSubmitter, IDisposable
+public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLatency, IDisposable
 {
     /// <summary>
     /// 渲染器要求的采样率。与 MediaLink 的线格式一致——归一化在 native 采集侧完成，
@@ -92,6 +92,24 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IDisposable
     /// 没有这个计数就无法区分「校验拦下了」与「帧根本没来」。
     /// </summary>
     public long RejectedFrameCount => Interlocked.Read(ref _rejectedFrames);
+
+    /// <summary>
+    /// 本机输出延迟。出声时等于在用的抖动缓冲深度，否则为零。
+    ///
+    /// 取目标缓冲深度而不是实测占用（<see cref="AudioRenderStats.RingMs"/>）：占用在目标值
+    /// 附近持续波动，把它直接喂给呈现侧会让画面来回抖，而向后跳一下比恒定偏一点更难看。
+    /// 目标深度是稳定值，且漂移控制律把占用保持在目标附近，两者的稳态差远小于人可察觉的
+    /// 约 50ms。将来若实测出稳态差超过那个量级，再换成平滑后的实测值。
+    ///
+    /// 不含端点缓冲（共享模式下约 10 到 30ms）：它本身就在可察觉阈值以下，而读到它需要
+    /// IAudioClient::GetStreamLatency，那是一次 FFI 与 ABI 变更。它是本量已知的残余误差。
+    ///
+    /// 判据用实际在播而非请求值：native 缺失时请求为开却没有额外延迟，
+    /// 那时减去一个缓冲深度会把画面推到听觉后面，比不补偿更坏。
+    /// 而在播必然意味着仲裁认定生效媒体来自上游，故不必再另外判一次音源。
+    /// </summary>
+    public TimeSpan OutputLatency =>
+        _playing ? TimeSpan.FromMilliseconds(Volatile.Read(ref _requestedTargetMs)) : TimeSpan.Zero;
 
     /// <summary>
     /// 设置播放开关与目标缓冲深度。幂等：由设置变化与仲裁变化共同触发，会被反复调用，

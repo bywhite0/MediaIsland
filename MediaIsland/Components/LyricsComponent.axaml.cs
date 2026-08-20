@@ -11,6 +11,7 @@ using ClassIsland.Core.Attributes;
 using MediaIsland.Controls;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
+using MediaIsland.Services.Audio.Playback;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
@@ -40,6 +41,11 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private readonly IMediaService _mediaService;
     private readonly IEffectiveMediaSource? _effectiveSource;
+    /// <summary>
+    /// 本机输出延迟的来源。为 null 时按零延迟处理——没有播放层的场景下
+    /// 媒体时钟本身就对齐可听内容，不需要补偿。
+    /// </summary>
+    private readonly IAudioOutputLatency? _outputLatency;
     private readonly LyricsSearchService _lyricsSearchService;
     private readonly ILogger<LyricsComponent> _logger;
     private readonly DispatcherTimer _lyricsTimer;
@@ -81,7 +87,8 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         IMediaService mediaService,
         LyricsSearchService lyricsSearchService,
         ILogger<LyricsComponent> logger,
-        IEffectiveMediaSource? effectiveSource = null)
+        IEffectiveMediaSource? effectiveSource = null,
+        IAudioOutputLatency? outputLatency = null)
     {
         InitializeComponent();
         _front = LyricsFrontLayer;
@@ -91,6 +98,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         _lyricsSearchService = lyricsSearchService;
         _logger = logger;
         _effectiveSource = effectiveSource;
+        _outputLatency = outputLatency;
         _lyricsTimer = new DispatcherTimer
         {
             Interval = LineRenderInterval
@@ -791,8 +799,10 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
-        position = _clock.GetCurrentPosition() +
-                   (_pluginSettings?.Lyrics.GetGlobalOffset(lyrics.Source) ?? TimeSpan.Zero);
+        position = LyricsPresentationPosition.Compose(
+            _clock.GetCurrentPosition(),
+            _pluginSettings?.Lyrics.GetGlobalOffset(lyrics.Source) ?? TimeSpan.Zero,
+            _outputLatency?.OutputLatency ?? TimeSpan.Zero);
         var activeLines = LyricsLineSelector.SelectActive(lyrics, position);
         var currentIndex = activeLines.Count > 0 ? activeLines[0].LineIndex : 0;
         var interlude = IsLyricsInterludeAnimationEnabled

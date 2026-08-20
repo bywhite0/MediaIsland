@@ -53,6 +53,12 @@ public class MediaLinkServiceRegistrationTests
         Assert.Same(
             provider.GetRequiredService<MediaSourceCoordinator>(),
             provider.GetRequiredService<IEffectiveMediaSource>());
+        // 呈现侧读延迟的那条别名边。解析出第二份 AudioPlaybackService 的话，
+        // 它的「在播」恒为假、延迟恒为零，跨机播放时歌词会一直领先耳朵一个缓冲深度，
+        // 而这个失效不报错、不影响出声。
+        Assert.Same(
+            provider.GetRequiredService<AudioPlaybackService>(),
+            provider.GetRequiredService<IAudioOutputLatency>());
     }
 
     [Fact]
