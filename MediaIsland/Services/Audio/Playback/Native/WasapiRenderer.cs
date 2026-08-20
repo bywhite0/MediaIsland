@@ -118,8 +118,9 @@ internal sealed class WasapiRenderer : IAudioRenderer
         // 对 20ms 一帧差六个数量级；真正的争抢只来自罕见的启停，
         // 而那时阻塞一次 Push 恰是想要的行为。
         //
-        // 代价是 FramePlayed 的处理器不得回调进 Push 或 Stop——停播时渲染线程在 join，
-        // 它若在等 _gate 就互等。接口注释已把这条写成约定。
+        // 代价是 FramePlayed 的处理器不得回调进本类的任何方法——停播时渲染线程在 join，
+        // 它若在等 _gate 就互等。规则写在 IAudioRenderer.FramePlayed 上，这里不复述名单：
+        // 名单会随新增持锁方法而变假，规则不会。
         lock (_gate)
         {
             if (!_running || _handle == nint.Zero)
@@ -155,8 +156,8 @@ internal sealed class WasapiRenderer : IAudioRenderer
         // 打在已释放的 Box 上。读统计是低频的诊断路径（漂移判据约每 100ms 一次），
         // 与 50 帧每秒的 Push 争抢这把锁的代价可忽略。
         //
-        // 代价与 Push 相同：FramePlayed 的处理器不得回调进这里，接口注释已把它
-        // 写进那条约定的方法列表。
+        // 代价与 Push 相同：FramePlayed 的处理器不得回调进本类的任何方法。
+        // 规则见 IAudioRenderer.FramePlayed。
         lock (_gate)
         {
             if (_disposed || _handle == nint.Zero)

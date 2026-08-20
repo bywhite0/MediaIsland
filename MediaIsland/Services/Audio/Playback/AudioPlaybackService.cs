@@ -81,7 +81,7 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     ///
     /// 用 volatile 读而不进 <see cref="_gate"/>：读这两个值不需要与启停互斥，
     /// 而进锁会多出一个死锁面——<see cref="IAudioRenderer.FramePlayed"/> 的处理器
-    /// 已被约定禁止回调进几个持锁方法，没有理由再往那个列表里添两项。
+    /// 已被约定禁止调用渲染器上的任何方法，没有理由让本类的读也落进同一条约束。
     /// </summary>
     public int RequestedTargetBufferMs => Volatile.Read(ref _requestedTargetMs);
 
