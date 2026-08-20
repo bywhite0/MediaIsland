@@ -494,6 +494,12 @@ namespace MediaIsland.Models
         /// <summary>上界即播放环形缓冲容量的一半，留出被填满也不覆盖未读数据的余量。</summary>
         public const int MaxPlaybackBufferMs = 1000;
 
+        // 上面那对区间给设置页 NumericUpDown 用的 decimal 镜像。那两个属性是 decimal?，
+        // 而 {x:Static} 不做 XAML 的字面量类型转换，int 静态量在 AXAML 编译期就被拒。
+        // 由上面推导而来，不重新写数字——区间仍只有一个真值源，且 AXAML 引用错名字是编译错误。
+        public const decimal PlaybackBufferMsMinimum = MinPlaybackBufferMs;
+        public const decimal PlaybackBufferMsMaximum = MaxPlaybackBufferMs;
+
         private int _mediaLinkPlaybackBufferMs = DefaultPlaybackBufferMs;
 
         /// <summary>

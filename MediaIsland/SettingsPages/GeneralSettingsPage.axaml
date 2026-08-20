@@ -6,6 +6,7 @@
                      xmlns:controls="using:FluentAvalonia.UI.Controls"
                      xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
                      xmlns:local="clr-namespace:MediaIsland.SettingsPages"
+                     xmlns:models="clr-namespace:MediaIsland.Models"
                      mc:Ignorable="d"
                      d:DesignHeight="450" d:DesignWidth="800"
                      TextElement.Foreground="{DynamicResource MaterialDesignBody}"
@@ -624,8 +625,8 @@
                                        Description="网络抖动时用来垫底的缓冲长度。有线网络可以调小以降低延迟；无线网络调得太小会断续。修改后会重新开始播放。">
                 <controls:SettingsExpander.Footer>
                     <NumericUpDown Width="140"
-                                   Minimum="50"
-                                   Maximum="1000"
+                                   Minimum="{x:Static models:PluginSettings.PlaybackBufferMsMinimum}"
+                                   Maximum="{x:Static models:PluginSettings.PlaybackBufferMsMaximum}"
                                    Increment="10"
                                    FormatString="0 'ms'"
                                    Value="{Binding Settings.MediaLinkPlaybackBufferMs, Mode=TwoWay}" />

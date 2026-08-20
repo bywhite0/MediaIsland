@@ -135,4 +135,28 @@ public class PluginSettingsTests
 
         Assert.Equal(1, invocationCount);
     }
+
+    [Fact]
+    public void PlaybackBufferMs_ClampsToNamedBounds()
+    {
+        // 与 AudioPlaybackSettingsTests 里那条 InlineData 版不重复：那条钉的是数值本身
+        // （50 / 1000），这条钉的是「setter 用的是常量」。改常量时前者变红、后者保持绿，
+        // 两条各自能被不同的变异杀掉。
+        var settings = new PluginSettings();
+
+        settings.MediaLinkPlaybackBufferMs = PluginSettings.MaxPlaybackBufferMs + 1;
+        Assert.Equal(PluginSettings.MaxPlaybackBufferMs, settings.MediaLinkPlaybackBufferMs);
+
+        settings.MediaLinkPlaybackBufferMs = PluginSettings.MinPlaybackBufferMs - 1;
+        Assert.Equal(PluginSettings.MinPlaybackBufferMs, settings.MediaLinkPlaybackBufferMs);
+    }
+
+    [Fact]
+    public void PlaybackBufferMs_DecimalMirrors_AgreeWithTheirSourceBounds()
+    {
+        // 设置页的 NumericUpDown 读的是镜像。镜像被改回字面量则真值源又成两份，
+        // 而那份分裂在界面上没有任何提示。
+        Assert.Equal((decimal)PluginSettings.MinPlaybackBufferMs, PluginSettings.PlaybackBufferMsMinimum);
+        Assert.Equal((decimal)PluginSettings.MaxPlaybackBufferMs, PluginSettings.PlaybackBufferMsMaximum);
+    }
 }

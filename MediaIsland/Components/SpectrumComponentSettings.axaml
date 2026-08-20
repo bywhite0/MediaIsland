@@ -33,43 +33,57 @@
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE745;}" Header="组件宽度" Description="频谱占用的横向像素。">
                 <controls:SettingsExpander.Footer>
-                    <NumericUpDown MinWidth="140" Minimum="16" Maximum="480" Increment="8"
+                    <NumericUpDown MinWidth="140" Increment="8"
+                                   Minimum="{x:Static local:SpectrumComponentConfig.ComponentWidthMinimum}"
+                                   Maximum="{x:Static local:SpectrumComponentConfig.ComponentWidthMaximum}"
                                    Value="{Binding Settings.Width, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE9E9;}" Header="频段数" Description="仅频谱柱形态使用。段数越多越细，但窄岛上会糊成一片。">
                 <controls:SettingsExpander.Footer>
-                    <NumericUpDown MinWidth="140" Minimum="1" Maximum="64" Increment="1"
+                    <NumericUpDown MinWidth="140" Increment="1"
+                                   Minimum="{x:Static local:SpectrumComponentConfig.BandCountMinimum}"
+                                   Maximum="{x:Static local:SpectrumComponentConfig.BandCountMaximum}"
                                    Value="{Binding Settings.BandCount, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8C8;}" Header="柱间距" Description="仅频谱柱形态使用。">
                 <controls:SettingsExpander.Footer>
-                    <NumericUpDown MinWidth="140" Minimum="0" Maximum="16" Increment="1"
+                    <NumericUpDown MinWidth="140" Increment="1"
+                                   Minimum="{x:Static local:SpectrumComponentConfig.BarGapMinimum}"
+                                   Maximum="{x:Static local:SpectrumComponentConfig.BarGapMaximum}"
                                    Value="{Binding Settings.BarGap, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8C8;}" Header="圆角半径" Description="柱子与填充条的圆角。">
                 <controls:SettingsExpander.Footer>
-                    <NumericUpDown MinWidth="140" Minimum="0" Maximum="16" Increment="1"
+                    <NumericUpDown MinWidth="140" Increment="1"
+                                   Minimum="{x:Static local:SpectrumComponentConfig.BarCornerRadiusMinimum}"
+                                   Maximum="{x:Static local:SpectrumComponentConfig.BarCornerRadiusMaximum}"
                                    Value="{Binding Settings.BarCornerRadius, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE9F9;}" Header="频率下限 (Hz)" Description="低于此频率的能量不参与显示。">
                 <controls:SettingsExpander.Footer>
-                    <NumericUpDown MinWidth="140" Minimum="20" Maximum="19000" Increment="10"
+                    <NumericUpDown MinWidth="140" Increment="10"
+                                   Minimum="{x:Static local:SpectrumComponentConfig.FrequencyLowerMinimum}"
+                                   Maximum="{x:Static local:SpectrumComponentConfig.FrequencyLowerMaximum}"
                                    Value="{Binding Settings.MinFrequencyHz, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE9F9;}" Header="频率上限 (Hz)" Description="高于此频率的能量不参与显示。">
                 <controls:SettingsExpander.Footer>
-                    <NumericUpDown MinWidth="140" Minimum="100" Maximum="20000" Increment="100"
+                    <NumericUpDown MinWidth="140" Increment="100"
+                                   Minimum="{x:Static local:SpectrumComponentConfig.FrequencyUpperMinimum}"
+                                   Maximum="{x:Static local:SpectrumComponentConfig.FrequencyUpperMaximum}"
                                    Value="{Binding Settings.MaxFrequencyHz, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
             <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE916;}" Header="回落速度" Description="每秒衰减的比例。值越大回落越快，视觉越「跳」。">
                 <controls:SettingsExpander.Footer>
-                    <NumericUpDown MinWidth="140" Minimum="0.2" Maximum="20" Increment="0.5"
+                    <NumericUpDown MinWidth="140" Increment="0.5"
+                                   Minimum="{x:Static local:SpectrumComponentConfig.DecayMinimum}"
+                                   Maximum="{x:Static local:SpectrumComponentConfig.DecayMaximum}"
                                    Value="{Binding Settings.DecayPerSecond, Mode=TwoWay}" />
                 </controls:SettingsExpander.Footer>
             </controls:SettingsExpander>
