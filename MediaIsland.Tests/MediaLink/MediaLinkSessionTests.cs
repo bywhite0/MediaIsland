@@ -468,6 +468,48 @@ public class MediaLinkSessionTests
         Assert.Equal(WebSocketState.Closed, socket.State);
     }
 
+    /// <summary>
+    /// 停服的后置条件：<c>DisposeAsync</c> 返回即该会话再无后台工作。
+    ///
+    /// 改动前两个写者任务全文无一处 await，Dispose 只 Complete 队列就返回。后果是在测试
+    /// 进程里第 N 条用例的写者可以活进第 N+1 条——那是「随负载出现」的挂起的一个合理来源。
+    ///
+    /// 判据写成「在界内返回」的竞争形式而不是直接 await：等写者若变成无界，
+    /// 直接 await 会让测试挂住而不是变红，那正是本期要消灭的形态在判据里重演。
+    /// </summary>
+    [Fact]
+    public async Task DisposeAsync_DoesNotReturnWhileWritersAreStillRunning()
+    {
+        var socket = new FakeMediaLinkSocket();
+        var session = new MediaLinkSession(socket, new MediaLinkSessionOptions { ExpectedToken = "t" });
+        session.StartWriter(CancellationToken.None);
+
+        // 地基：先钉住写者确实起来了。否则「都完成了」与「压根没起」长得一模一样。
+        Assert.NotNull(session.WriterTaskForTest);
+        Assert.NotNull(session.AudioWriterTaskForTest);
+
+        var disposing = session.DisposeAsync().AsTask();
+        var winner = await Task.WhenAny(disposing, Task.Delay(TimeSpan.FromSeconds(10)));
+        Assert.True(ReferenceEquals(winner, disposing), "DisposeAsync 没有在 10s 内返回");
+        await disposing;
+
+        Assert.True(session.WriterTaskForTest!.IsCompleted, "DisposeAsync 返回时出站写者仍在飞");
+        Assert.True(session.AudioWriterTaskForTest!.IsCompleted, "DisposeAsync 返回时音频写者仍在飞");
+    }
+
+    /// <summary>
+    /// 排水期限必须从 <see cref="MediaLinkSession.SendTimeout"/> 推导。理由同服务端那条：
+    /// 写者退出前最多还压着一次发送。字面量在 SendTimeout 被调大后不会跟。
+    /// </summary>
+    [Fact]
+    public void WriterDrainTimeout_TracksSendTimeout()
+    {
+        Assert.Equal(
+            MediaLinkSession.SendTimeout + TimeSpan.FromSeconds(1),
+            MediaLinkSession.WriterDrainTimeout);
+        Assert.True(MediaLinkSession.WriterDrainTimeout > MediaLinkSession.SendTimeout);
+    }
+
 private static string AuthJson() =>
         MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeAuth,

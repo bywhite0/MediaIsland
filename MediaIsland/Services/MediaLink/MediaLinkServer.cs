@@ -32,6 +32,21 @@ public sealed class MediaLinkServer : IAsyncDisposable
     /// <summary>停服时等待单个会话完成关闭握手的上限。</summary>
     private static readonly TimeSpan GoingAwayTimeout = TimeSpan.FromSeconds(1);
 
+    /// <summary>
+    /// 停服时等待剩余后台任务排干的上限。
+    ///
+    /// 写成推导式而不是 TimeSpan.FromSeconds(6)：排完队后仍可能在飞的最长单次操作是一次发送，
+    /// 其界就是 MediaLinkSession.SendTimeout。SendTimeout 若被调大，这个界必须跟着大，
+    /// 而字面量不会跟。多出的一秒是循环退出与 Dispose 的余量。
+    ///
+    /// 它只管 accept 循环、会话任务与 DisposeAll 三处；CloseAllGoingAwayAsync 自带
+    /// 逐会话的 GoingAwayTimeout，不受此界约束。
+    ///
+    /// internal 而非 private：判据要能读到它，以确认它确实随 SendTimeout 走。
+    /// </summary>
+    internal static readonly TimeSpan ShutdownDrainTimeout =
+        MediaLinkSession.SendTimeout + TimeSpan.FromSeconds(1);
+
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<MediaLinkSession, Task> _onSubscribedAsync;
     private readonly Func<string> _tokenFactory;
@@ -146,7 +161,17 @@ public sealed class MediaLinkServer : IAsyncDisposable
 
         if (_acceptLoop is not null)
         {
-            try { await _acceptLoop; } catch { /* ignore */ }
+            // 有界等待，而不是 await 到底。这三处等待此前实际上也是有界的，靠上面那次
+            // Cancel 加下游每处 await 都记得带 accept token——但那是跨四个文件的约定，
+            // 新增一处忘带 token 的 await 就静默失效，且失效形态是挂起。
+            // StopAsync 的签名已经承诺了有界，此处是把那个承诺真的兑现。
+            if (await TaskDraining.DrainAsync([_acceptLoop], ShutdownDrainTimeout, cancellationToken) > 0)
+            {
+                _logger?.LogWarning(
+                    "MediaLink 停服：accept 循环未在 {Ms}ms 内退出",
+                    ShutdownDrainTimeout.TotalMilliseconds);
+            }
+
             _acceptLoop = null;
         }
 
@@ -157,8 +182,18 @@ public sealed class MediaLinkServer : IAsyncDisposable
             _sessionTasks.Clear();
         }
 
-        try { await Task.WhenAll(sessions); } catch { /* ignore */ }
-        await _hub.DisposeAllAsync();
+        var unfinished = await TaskDraining.DrainAsync(sessions, ShutdownDrainTimeout, cancellationToken);
+        if (unfinished > 0)
+        {
+            _logger?.LogWarning("MediaLink 停服：{Count} 个会话未在期限内结束", unfinished);
+        }
+
+        // 排水超时不抛、也不跳过后面的清理：停服不能因为没排干就漏掉释放。
+        if (await TaskDraining.DrainAsync([_hub.DisposeAllAsync()], ShutdownDrainTimeout, cancellationToken) > 0)
+        {
+            _logger?.LogWarning("MediaLink 停服：会话释放未在期限内完成");
+        }
+
         _acceptCts?.Dispose();
         _acceptCts = null;
         Volatile.Write(ref _activeSessions, 0);

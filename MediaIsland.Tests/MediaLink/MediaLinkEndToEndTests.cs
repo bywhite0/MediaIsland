@@ -12,6 +12,7 @@ using MediaIsland.Services.MediaLink.Mapping;
 using MediaIsland.Services.MediaLink.Protocol;
 using MediaIsland.Models;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Xunit;
 
@@ -62,7 +63,7 @@ public class MediaLinkEndToEndTests
         // Act: connect a real WebSocket client
         using var client = new ClientWebSocket();
         client.Options.KeepAliveInterval = TimeSpan.FromSeconds(5);
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"));
         Assert.Equal(WebSocketState.Open, client.State);
 
         // Receive server.hello
@@ -139,7 +140,7 @@ public class MediaLinkEndToEndTests
         Assert.Equal(MediaLinkProtocol.TypeUnsubscribeOk, unsubOk.GetProperty("type").GetString());
 
         // Close client
-        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await CloseBoundedAsync(client);
 
         // Stop server
         await server.StopAsync();
@@ -167,7 +168,7 @@ public class MediaLinkEndToEndTests
         var actualPort = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
 
         using var client = new ClientWebSocket();
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"));
 
         // hello
         await ReceiveJsonAsync(client);
@@ -182,7 +183,7 @@ public class MediaLinkEndToEndTests
         Assert.Equal(MediaLinkProtocol.TypePong, pong.GetProperty("type").GetString());
         Assert.Equal("p1", pong.GetProperty("id").GetString());
 
-        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await CloseBoundedAsync(client);
         await server.StopAsync();
     }
 
@@ -195,7 +196,7 @@ public class MediaLinkEndToEndTests
         var actualPort = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
 
         using var client = new ClientWebSocket();
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"));
         await ReceiveJsonAsync(client);
         await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
         await ReceiveJsonAsync(client);
@@ -377,7 +378,7 @@ public class MediaLinkEndToEndTests
         using var upstreamService = new MediaLinkUpstreamHostedService(
             downstreamStore, downstreamCoordinator, () => downstreamSettings);
 
-        await upstreamService.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(upstreamService);
         await WaitUntilAsync(() => upstreamService.IsConnected);
 
         upstreamMedia.Raise(
@@ -392,7 +393,7 @@ public class MediaLinkEndToEndTests
         // 外部优先模式下，合成结果也应当采用上游数据
         Assert.Equal("WiredSong", downstreamCoordinator.ComposeMedia()?.Title);
 
-        await upstreamService.StopAsync(CancellationToken.None);
+        await StopBoundedAsync(upstreamService);
         await server.StopAsync();
     }
 
@@ -456,7 +457,7 @@ public class MediaLinkEndToEndTests
             downstreamStore, downstreamCoordinator, () => downstreamSettings,
             downstreamAudioDemandAccessor: () => true);
 
-        await upstreamService.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(upstreamService);
 
         // 先钉地基再验目标：一条都没连上、或连上了却没走到 subscribe，
         // 在「频道集里没有 audio」这一个断言下与「订阅漏了 audio」长得一模一样。
@@ -471,7 +472,7 @@ public class MediaLinkEndToEndTests
             session.IsSubscribedToAudio,
             $"握手完成后上游未收到 audio 订阅，会话当前频道：[{string.Join(", ", session.Channels)}]");
 
-        await upstreamService.StopAsync(CancellationToken.None);
+        await StopBoundedAsync(upstreamService);
         await server.StopAsync();
     }
 
@@ -544,8 +545,8 @@ public class MediaLinkEndToEndTests
         var demandChanges = 0;
         relayServer.DownstreamAudioDemandChanged += (_, _) => Interlocked.Increment(ref demandChanges);
 
-        await relayServer.StartAsync(CancellationToken.None);
-        await relayUpstream.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(relayServer);
+        await StartBoundedAsync(relayUpstream);
 
         // 前置一：上游那首歌已成为中继节点的生效媒体。仲裁的「生效媒体来自上游」要成立，
         // 且这一步之后媒体不再变化。
@@ -563,7 +564,7 @@ public class MediaLinkEndToEndTests
 
         // 唯一的状态变化：一个下游会话接上来并索要音频。
         using var downstream = new ClientWebSocket();
-        await downstream.ConnectAsync(new Uri(relayServer.Endpoint!), CancellationToken.None);
+        await ConnectBoundedAsync(downstream, new Uri(relayServer.Endpoint!));
         await ReceiveJsonAsync(downstream); // hello
         await SendJsonAsync(downstream, new
         {
@@ -595,9 +596,9 @@ public class MediaLinkEndToEndTests
         // 需求只翻转过一次，通知就该只有一次。大于一说明重算与通知互相触发了起来。
         Assert.Equal(1, Volatile.Read(ref demandChanges));
 
-        try { await downstream.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
-        await relayUpstream.StopAsync(CancellationToken.None);
-        await relayServer.StopAsync(CancellationToken.None);
+        await CloseBoundedAsync(downstream);
+        await StopBoundedAsync(relayUpstream);
+        await StopBoundedAsync(relayServer);
         await upstreamServer.StopAsync();
     }
 
@@ -653,7 +654,7 @@ public class MediaLinkEndToEndTests
             () => downstreamSettings);
         MediaLinkAudioWiring.Connect(upstreamService, localServer, downstreamCoordinator);
 
-        await upstreamService.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(upstreamService);
 
         // 前置：握手已走完，而生效媒体还不是上游的，故此刻不该订阅 audio。
         await WaitUntilAsync(() => hub.Sessions.Count == 1);
@@ -679,7 +680,7 @@ public class MediaLinkEndToEndTests
             session.IsSubscribedToAudio,
             $"生效媒体转为上游后仍未订阅 audio，会话当前频道：[{string.Join(", ", session.Channels)}]");
 
-        await upstreamService.StopAsync(CancellationToken.None);
+        await StopBoundedAsync(upstreamService);
         await server.StopAsync();
     }
 
@@ -709,6 +710,72 @@ public class MediaLinkEndToEndTests
         {
             await Task.Delay(20);
         }
+    }
+
+    /// <summary>
+    /// 以下三个 helper 收口本类里所有传给真实 socket 与真实宿主服务的 token。
+    ///
+    /// 规则：凡传给真实 socket 的 I/O 或真实 HostedService 启停的 token，
+    /// 不得为 CancellationToken.None。它的失效形态是整个测试进程无输出挂起——最难查的
+    /// 一种，且在 CI 上与「跑得慢」无从区分。放进 try 里也挡不住：挂起不抛异常。
+    ///
+    /// 传给假对象的 token 不在射程内，那些不会阻塞，逐个换只会让代码变吵。
+    /// </summary>
+    private static async Task ConnectBoundedAsync(ClientWebSocket socket, Uri uri, int timeoutMs = 5000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await socket.ConnectAsync(uri, cts.Token);
+    }
+
+    /// <summary>带界的正常关闭。清理路径，失败即忽略，但不得无界。</summary>
+    private static async Task CloseBoundedAsync(WebSocket socket, int timeoutMs = 5000)
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(timeoutMs);
+            await socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", cts.Token);
+        }
+        catch
+        {
+            // 对端已死或不回关闭握手：测试的清理不因此失败
+        }
+    }
+
+    /// <summary>带界的宿主服务启停。两者内部都要抢生命周期锁，锁被占住时无界会挂。</summary>
+    private static async Task StartBoundedAsync(IHostedService service, int timeoutMs = 10_000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await service.StartAsync(cts.Token);
+    }
+
+    private static async Task StopBoundedAsync(IHostedService service, int timeoutMs = 10_000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await service.StopAsync(cts.Token);
+    }
+
+    /// <summary>
+    /// 生产适配器版本。它包的是同一个 ClientWebSocket，走的是同一个真 socket，
+    /// 故同样在规则射程内——收发也算 I/O，不只是连接。
+    /// </summary>
+    private static async Task ConnectBoundedAsync(IMediaLinkClientSocket socket, Uri uri, int timeoutMs = 5000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await socket.ConnectAsync(uri, cts.Token);
+    }
+
+    private static async Task<MediaLinkSocketMessage> ReceiveBoundedAsync(
+        IMediaLinkClientSocket socket, int timeoutMs = 5000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        return await socket.ReceiveAsync(cts.Token);
+    }
+
+    private static async Task SendBoundedAsync(
+        IMediaLinkClientSocket socket, string text, int timeoutMs = 5000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await socket.SendTextAsync(text, cts.Token);
     }
 
     [Fact]
@@ -750,7 +817,7 @@ public class MediaLinkEndToEndTests
         using var upstreamService = new MediaLinkUpstreamHostedService(
             downstreamStore, downstreamCoordinator, () => downstreamSettings);
 
-        await upstreamService.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(upstreamService);
         await WaitUntilAsync(() => upstreamService.IsConnected);
 
         // 先换歌。这一条必须被接收端认成会话级变更，否则歌词永远不刷新——
@@ -790,7 +857,7 @@ public class MediaLinkEndToEndTests
             $"地基不成立：时间线更新没走到接收端，只收到 {Volatile.Read(ref timeline)} 条");
         Assert.Equal(0, Volatile.Read(ref sessionLevel));
 
-        await upstreamService.StopAsync(CancellationToken.None);
+        await StopBoundedAsync(upstreamService);
         await server.StopAsync();
     }
 
@@ -805,7 +872,7 @@ public class MediaLinkEndToEndTests
         var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
 
         using var client = new ClientWebSocket();
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{port}/v1/ws"));
         await ReceiveJsonAsync(client); // hello
         await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
         await ReceiveJsonAsync(client); // auth_ok
@@ -842,7 +909,7 @@ public class MediaLinkEndToEndTests
         Assert.Equal(MediaLinkAudioFrameFlags.TrackStart, decodedHeader.Flags);
         Assert.Equal(pcm, decodedPcm);
 
-        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await CloseBoundedAsync(client);
         await server.StopAsync();
     }
 
@@ -868,7 +935,7 @@ public class MediaLinkEndToEndTests
         var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
 
         using var client = new ClientWebSocket();
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{port}/v1/ws"));
         await ReceiveJsonAsync(client); // hello
         await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
         await ReceiveJsonAsync(client); // auth_ok
@@ -879,7 +946,8 @@ public class MediaLinkEndToEndTests
             new MediaLinkAudioFrameHeader(11, 22, 33, 44, "inbound-track", MediaLinkAudioFrameFlags.Silent),
             pcm);
 
-        await client.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
+        using var sendCts = new CancellationTokenSource(5000);
+        await client.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, sendCts.Token);
 
         await WaitUntilAsync(() => receivedPcm is not null);
         Assert.NotNull(receivedPcm);
@@ -887,7 +955,7 @@ public class MediaLinkEndToEndTests
         Assert.Equal(44u, receivedHeader.Value.Seq);
         Assert.Equal(pcm, receivedPcm);
 
-        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await CloseBoundedAsync(client);
         await server.StopAsync();
     }
 
@@ -902,20 +970,20 @@ public class MediaLinkEndToEndTests
         var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
 
         await using var socket = new ClientWebSocketAdapter();
-        await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
-        await socket.ReceiveAsync(CancellationToken.None); // hello
-        await socket.SendTextAsync(
+        await ConnectBoundedAsync(socket, new Uri($"ws://127.0.0.1:{port}/v1/ws"));
+        await ReceiveBoundedAsync(socket); // hello
+        await SendBoundedAsync(
+            socket,
             MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
-                MediaLinkProtocol.TypeAuth, new MediaLinkAuthPayload { Token = "tok" }, id: "a1")),
-            CancellationToken.None);
-        await socket.ReceiveAsync(CancellationToken.None); // auth_ok
-        await socket.SendTextAsync(
+                MediaLinkProtocol.TypeAuth, new MediaLinkAuthPayload { Token = "tok" }, id: "a1")));
+        await ReceiveBoundedAsync(socket); // auth_ok
+        await SendBoundedAsync(
+            socket,
             MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
                 MediaLinkProtocol.TypeSubscribe,
                 new MediaLinkSubscribePayload { Channels = [MediaLinkProtocol.ChannelAudio] },
-                id: "s1")),
-            CancellationToken.None);
-        await socket.ReceiveAsync(CancellationToken.None); // subscribe_ok
+                id: "s1")));
+        await ReceiveBoundedAsync(socket); // subscribe_ok
 
         await WaitUntilAsync(() => hub.Sessions.Count == 1);
         var session = hub.Sessions.First();
@@ -975,7 +1043,7 @@ public class MediaLinkEndToEndTests
         var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
 
         using var client = new ClientWebSocket();
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{port}/v1/ws"));
         await ReceiveJsonAsync(client); // hello
         await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
         await ReceiveJsonAsync(client); // auth_ok
@@ -1065,7 +1133,7 @@ public class MediaLinkEndToEndTests
                 $"media.updated described a track but carried no trackToken: {evt}");
         }
 
-        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await CloseBoundedAsync(client);
         await server.StopAsync();
     }
 
@@ -1101,11 +1169,11 @@ public class MediaLinkEndToEndTests
     {
         var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
         using var client = new ClientWebSocket();
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{port}/v1/ws"));
         var hello = await ReceiveJsonAsync(client);
         Assert.Equal(MediaLinkProtocol.EventServerHello, hello.GetProperty("name").GetString());
         var epoch = hello.GetProperty("payload").GetProperty("sessionEpoch").GetInt64();
-        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await CloseBoundedAsync(client);
         return epoch;
     }
 
@@ -1128,7 +1196,7 @@ public class MediaLinkEndToEndTests
         var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
 
         using var client = new ClientWebSocket();
-        await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{port}/v1/ws"));
         await ReceiveJsonAsync(client); // hello
         await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
         await ReceiveJsonAsync(client); // auth_ok
@@ -1142,7 +1210,7 @@ public class MediaLinkEndToEndTests
         var payload = response.GetProperty("payload");
         Assert.False(string.IsNullOrEmpty(payload.GetProperty("trackToken").GetString()));
 
-        try { await client.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
+        await CloseBoundedAsync(client);
         await server.StopAsync();
     }
 
@@ -1255,7 +1323,7 @@ public class MediaLinkEndToEndTests
         for (var i = 0; i < MediaLinkServer.AuthFailureLimit; i++)
         {
             using var bad = new ClientWebSocket();
-            await bad.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+            await ConnectBoundedAsync(bad, new Uri($"ws://127.0.0.1:{port}/v1/ws"));
             await ReceiveJsonAsync(bad); // hello
             await SendJsonAsync(bad, new { type = "auth", id = "a", v = 1, ts = NowMs(), payload = new { token = "wrong" } });
             try { await ReceiveJsonAsync(bad); } catch { /* auth_fail 后立即关闭 */ }
@@ -1356,8 +1424,8 @@ public class MediaLinkEndToEndTests
 
         var relayServer = provider.GetRequiredService<MediaLinkHostedService>();
         var relayUpstream = provider.GetRequiredService<MediaLinkUpstreamHostedService>();
-        await relayServer.StartAsync(CancellationToken.None);
-        await relayUpstream.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(relayServer);
+        await StartBoundedAsync(relayUpstream);
 
         await WaitUntilAsync(() =>
             provider.GetRequiredService<MediaSourceCoordinator>().IsExternalMediaEffective);
@@ -1371,7 +1439,7 @@ public class MediaLinkEndToEndTests
 
         // C：第三跳。用裸 socket 而非 MediaLinkClient——要验的是线上字节。
         using var thirdHop = new ClientWebSocket();
-        await thirdHop.ConnectAsync(new Uri(relayServer.Endpoint!), CancellationToken.None);
+        await ConnectBoundedAsync(thirdHop, new Uri(relayServer.Endpoint!));
         await ReceiveJsonAsync(thirdHop); // hello
         await SendJsonAsync(thirdHop, new
         {
@@ -1427,9 +1495,9 @@ public class MediaLinkEndToEndTests
         Assert.Equal(9012, header.ServerTimeMs);
         Assert.Equal(pcm, decodedPcm);
 
-        try { await thirdHop.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); } catch { }
-        await relayUpstream.StopAsync(CancellationToken.None);
-        await relayServer.StopAsync(CancellationToken.None);
+        await CloseBoundedAsync(thirdHop);
+        await StopBoundedAsync(relayUpstream);
+        await StopBoundedAsync(relayServer);
         await originServer.StopAsync();
     }
 
@@ -1454,7 +1522,10 @@ public class MediaLinkEndToEndTests
     {
         var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         var bytes = Encoding.UTF8.GetBytes(json);
-        await ws.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, CancellationToken.None);
+        // 本类里每条用例都经这里发消息，故它是射程内最要紧的一处：
+        // 无界的话，任何一次对端不读的发送都会让整个测试进程静默挂住。
+        using var cts = new CancellationTokenSource(5000);
+        await ws.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cts.Token);
     }
 
     private static long NowMs() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();

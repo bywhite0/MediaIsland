@@ -366,8 +366,19 @@ internal sealed class MediaLinkOutboundQueue
 
 public sealed class MediaLinkSession : IAsyncDisposable
 {
-    /// <summary>单帧发送超时；超时视同该会话故障。</summary>
-    private static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(5);
+    /// <summary>
+    /// 单帧发送超时；超时视同该会话故障。
+    ///
+    /// internal 而非 private：停服的排水期限由它推导（见 MediaLinkServer.ShutdownDrainTimeout）。
+    /// 那个期限必须随它变，写成字面量就不会跟。
+    /// </summary>
+    internal static readonly TimeSpan SendTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>
+    /// 等写者退出的上限。与 MediaLinkServer.ShutdownDrainTimeout 同一条推导：
+    /// 写者退出前最多还压着一次发送，其界是 SendTimeout，另加一秒余量给循环退出。
+    /// </summary>
+    internal static readonly TimeSpan WriterDrainTimeout = SendTimeout + TimeSpan.FromSeconds(1);
 
     private readonly IMediaLinkSocket _socket;
     private readonly MediaLinkSessionOptions _options;
@@ -1417,15 +1428,35 @@ public sealed class MediaLinkSession : IAsyncDisposable
         }
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
         _closed = true;
-        // 只 Complete，不 Dispose：写者任务可能仍在 await 信号量、发送方仍在 await _sendLock，
-        // 此刻释放它们会让对方拿到 ObjectDisposedException。Complete 足以让写者退出。
+        // 只 Complete，不 Dispose：发送方可能仍在 await _sendLock，此刻释放它会让对方
+        // 拿到 ObjectDisposedException。Complete 足以让写者从队列上退出。
         _outbound.Complete();
         _audioOutbound.Complete();
-        return ValueTask.CompletedTask;
+
+        // 等写者真的退出。不等的话，本方法返回不等于该会话再无后台工作——
+        // 在测试进程里那意味着上一条用例的写者可以活进下一条，表现为「随负载出现」的挂起。
+        var writers = new List<Task>(2);
+        if (_writerTask is not null)
+        {
+            writers.Add(_writerTask);
+        }
+
+        if (_audioWriterTask is not null)
+        {
+            writers.Add(_audioWriterTask);
+        }
+
+        await TaskDraining.DrainAsync(writers, WriterDrainTimeout).ConfigureAwait(false);
     }
+
+    /// <summary>本会话的出站写者任务。判据用：Dispose 返回时它必须已完成。</summary>
+    internal Task? WriterTaskForTest => _writerTask;
+
+    /// <summary>本会话的音频写者任务。判据用，同 <see cref="WriterTaskForTest"/>。</summary>
+    internal Task? AudioWriterTaskForTest => _audioWriterTask;
 }
 
 public sealed class MediaLinkSessionHub
@@ -1590,11 +1621,29 @@ public sealed class MediaLinkSessionHub
         await Task.WhenAll(closes);
     }
 
+    /// <summary>
+    /// 并发而非串行：会话之间没有依赖，而 DisposeAsync 现在会等写者退出，
+    /// 串行会把每会话的界累加成 N 倍——32 个会话按 6s/个 就是 192s，远超宿主留给停服的窗口。
+    /// 并发后总耗时收敛为单会话的界。与上面 CloseAllGoingAwayAsync 同形。
+    /// </summary>
     public async Task DisposeAllAsync()
     {
-        foreach (var session in _sessions.Keys)
+        var sessions = _sessions.Keys.ToArray();
+
+        await Task.WhenAll(sessions.Select(async session =>
         {
-            await session.DisposeAsync();
+            try
+            {
+                await session.DisposeAsync();
+            }
+            catch
+            {
+                // 单会话释放失败不影响其余会话，也不阻塞停服
+            }
+        }));
+
+        foreach (var session in sessions)
+        {
             _sessions.TryRemove(session, out _);
         }
     }

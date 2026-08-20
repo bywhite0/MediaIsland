@@ -36,7 +36,7 @@ public class MediaLinkSettingsTests
         settings.MediaLinkToken = string.Empty;
         using var host = NewHost(settings);
 
-        await host.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(host);
 
         Assert.True(host.IsRunning);
         Assert.False(string.IsNullOrWhiteSpace(settings.MediaLinkToken));
@@ -50,7 +50,7 @@ public class MediaLinkSettingsTests
         settings.MediaLinkListenAddress = "not-an-ip";
         using var host = NewHost(settings);
 
-        await host.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(host);
 
         Assert.False(host.IsRunning);
         Assert.False(string.IsNullOrWhiteSpace(host.LastError));
@@ -63,7 +63,7 @@ public class MediaLinkSettingsTests
         settings.MediaLinkIsEnabled = false;
         using var host = NewHost(settings);
 
-        await host.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(host);
 
         Assert.False(host.IsRunning);
         Assert.Null(host.Endpoint);
@@ -75,7 +75,7 @@ public class MediaLinkSettingsTests
         // 节流值是热读取的：在设置页拖动它不得断开任何连接（规格 §14.7）。
         var settings = NewSettings();
         using var host = NewHost(settings);
-        await host.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(host);
         var endpointBefore = host.Endpoint;
 
         using var client = await ConnectAsync(endpointBefore!);
@@ -92,7 +92,7 @@ public class MediaLinkSettingsTests
     {
         var settings = NewSettings();
         using var host = NewHost(settings);
-        await host.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(host);
         var endpointBefore = host.Endpoint;
 
         using var client = await ConnectAsync(endpointBefore!);
@@ -110,7 +110,7 @@ public class MediaLinkSettingsTests
         // Token 轮换必须踢掉所有会话，否则旧 Token 的连接能继续用下去。
         var settings = NewSettings();
         using var host = NewHost(settings);
-        await host.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(host);
 
         using var client = await ConnectAsync(host.Endpoint!);
         Assert.Equal(WebSocketState.Open, client.State);
@@ -129,7 +129,7 @@ public class MediaLinkSettingsTests
         // 断言重建次数而非仅看最终端口：后者在无防抖时也成立，无法证伪。
         var settings = NewSettings();
         using var host = NewHost(settings);
-        await host.StartAsync(CancellationToken.None);
+        await StartBoundedAsync(host);
 
         var rebuilds = 0;
         host.PropertyChanged += (_, e) =>
@@ -182,7 +182,7 @@ public class MediaLinkSettingsTests
     private static async Task<ClientWebSocket> ConnectAsync(string endpoint)
     {
         var client = new ClientWebSocket();
-        await client.ConnectAsync(new Uri(endpoint), CancellationToken.None);
+        await ConnectBoundedAsync(client, new Uri(endpoint));
         // 收下 server.hello，确保会话已完全建立
         var buffer = new byte[4096];
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -198,6 +198,23 @@ public class MediaLinkSettingsTests
         MediaLinkToken = MediaLinkAuth.GenerateToken(),
         MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly
     };
+
+    /// <summary>
+    /// 带界的宿主启动与连接。规则：凡传给真实 socket 的 I/O 或真实 HostedService 启停的
+    /// token，不得为 CancellationToken.None——那样的失效形态是测试进程无输出挂起。
+    /// 本类里的 host 是真的 MediaLinkHostedService，会真的监听端口。
+    /// </summary>
+    private static async Task StartBoundedAsync(MediaLinkHostedService host, int timeoutMs = 10_000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await host.StartAsync(cts.Token);
+    }
+
+    private static async Task ConnectBoundedAsync(ClientWebSocket socket, Uri uri, int timeoutMs = 5000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await socket.ConnectAsync(uri, cts.Token);
+    }
 
     private static MediaLinkHostedService NewHost(PluginSettings settings)
     {

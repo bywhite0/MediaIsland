@@ -81,7 +81,7 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
         try
         {
             using var client = new ClientWebSocket();
-            await client.ConnectAsync(new Uri($"ws://127.0.0.1:{port}/v1/ws"), CancellationToken.None);
+            await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{port}/v1/ws"));
 
             await ReceiveTextAsync(client); // server.hello
             await SendAsync(client, """{"type":"auth","id":"a1","v":1,"ts":0,"payload":{"token":"e2e-audio-token"}}""");
@@ -135,21 +135,45 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
         }
         finally
         {
-            await server.StopAsync(CancellationToken.None);
+            await StopBoundedAsync(server);
             await server.DisposeAsync();
         }
     }
 
     private const int Channels = MediaLinkProtocol.AudioChannels;
 
-    private static async Task SendAsync(ClientWebSocket client, string json) =>
+    /// <summary>
+    /// 以下三个 helper 给真 socket 的 I/O 与服务端停机加界。
+    /// 规则：凡传给真实 socket 的 I/O 或真实服务端启停的 token，不得为 CancellationToken.None。
+    /// 无界的失效形态是整个测试进程无输出挂起，且在门控开启的真机跑里最难查。
+    ///
+    /// 上面那处 SetCaptureDemandAsync 的 None 不在射程内：它是采集需求回调，
+    /// 走的是 native 启停而不是 socket，本身不会因对端不读而阻塞。
+    /// </summary>
+    private static async Task ConnectBoundedAsync(ClientWebSocket client, Uri uri, int timeoutMs = 5000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await client.ConnectAsync(uri, cts.Token);
+    }
+
+    private static async Task StopBoundedAsync(MediaLinkServer server, int timeoutMs = 10_000)
+    {
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await server.StopAsync(cts.Token);
+    }
+
+    private static async Task SendAsync(ClientWebSocket client, string json)
+    {
+        using var cts = new CancellationTokenSource(5000);
         await client.SendAsync(
-            Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, CancellationToken.None);
+            Encoding.UTF8.GetBytes(json), WebSocketMessageType.Text, true, cts.Token);
+    }
 
     private static async Task<string> ReceiveTextAsync(ClientWebSocket client)
     {
         var buffer = new byte[64 * 1024];
-        var result = await client.ReceiveAsync(buffer, CancellationToken.None);
+        using var cts = new CancellationTokenSource(5000);
+        var result = await client.ReceiveAsync(buffer, cts.Token);
         return Encoding.UTF8.GetString(buffer, 0, result.Count);
     }
 
