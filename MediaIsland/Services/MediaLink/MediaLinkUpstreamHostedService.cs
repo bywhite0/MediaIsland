@@ -1,7 +1,6 @@
 using MediaIsland.Models;
 using MediaIsland.Services.Audio;
 using MediaIsland.Services.Audio.Visualization;
-using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink.Mapping;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -349,9 +348,16 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             // 回补从收帧到此刻的耗时，否则本机进度会比上游落后这一段。
             var elapsed = _tickProvider() - e.ReceivedAtTick;
             var payload = MediaLinkDtoMapper.ToInjectPayload(e.Media, elapsed);
-            if (_injectionStore.TrySetMedia(payload, out var error))
+            // 种类取自上游那条 media.updated，不能在此写死。写死成 MediaProperties 的后果是
+            // 上游每 200ms 一条位置更新都被下游当成「媒体属性变了」，歌词组件据此走整条重载
+            // 路径，把高亮行与间奏动画每 200ms 清零一次——表现为歌词不断刷新。
+            //
+            // 写入即经存储的 Changed 驱动协调器重算，故此处不得再显式重算一次。
+            // 那次重算不是无害的重复：注入媒体的位置是按时钟推算的，第二次重算必然算出
+            // 一个不同的位置，于是再发一次事件——重复的重算本身就是一次多余的刷新。
+            if (_injectionStore.TrySetMedia(
+                    payload, out var error, MediaLinkDtoMapper.ParseChangeKind(e.Media.ChangeKind)))
             {
-                _coordinator.Recompute(MediaInfoChangeKind.MediaProperties);
                 return;
             }
 
@@ -369,7 +375,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         {
             if (_injectionStore.TrySetLyrics(e.Lyrics, out var error))
             {
-                _coordinator.Recompute(MediaInfoChangeKind.CurrentSession);
+                // 同 OnMediaReceived：TrySetLyrics 已经经 Changed 驱动过一次重算。
                 return;
             }
 

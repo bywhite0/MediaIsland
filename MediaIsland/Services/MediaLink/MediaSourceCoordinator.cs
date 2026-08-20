@@ -245,8 +245,8 @@ public sealed class MediaSourceCoordinator : IEffectiveMediaSource, IDisposable
     private void OnLyricsChanged(object? sender, LyricsSearchResultChangedEventArgs e) =>
         Recompute(MediaInfoChangeKind.CurrentSession);
 
-    private void OnStoreChanged(object? sender, EventArgs e) =>
-        Recompute(MediaInfoChangeKind.CurrentSession);
+    private void OnStoreChanged(object? sender, MediaLinkInjectionChangedEventArgs e) =>
+        Recompute(e.ChangeKind);
 
     private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {

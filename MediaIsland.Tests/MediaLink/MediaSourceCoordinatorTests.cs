@@ -260,6 +260,54 @@ public class MediaSourceCoordinatorTests
         Assert.Equal("platform-lyrics", c.GetLyricsForPush()!.Id);
     }
 
+    [Theory]
+    [InlineData(MediaInfoChangeKind.Timeline)]
+    [InlineData(MediaInfoChangeKind.Playback)]
+    [InlineData(MediaInfoChangeKind.MediaProperties)]
+    [InlineData(MediaInfoChangeKind.CurrentSession)]
+    public void StoreChange_ForwardsChangeKind_InsteadOfAssumingSessionChange(MediaInfoChangeKind kind)
+    {
+        // 协调器过去在这条边上写死 CurrentSession。后果是转发链的接收侧把上游每一条
+        // 位置更新都当成换歌，歌词组件据此走整条重载路径——歌词不断刷新的直接来源。
+        var media = new FakeMediaService { CurrentMediaInfo = Sample("platform") };
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        using var c = new MediaSourceCoordinator(
+            media, lyrics, store, () => Settings(MediaLinkMediaSourceMode.ExternalPreferred));
+
+        var seen = new List<MediaInfoChangeKind>();
+        c.EffectiveMediaChanged += (_, e) => seen.Add(e.ChangeKind);
+
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "ext", PlaybackState = "Playing"
+        }, out _, kind));
+
+        Assert.Equal([kind], seen);
+    }
+
+    [Fact]
+    public void StoreChange_RaisesExactlyOneEffectiveMediaEvent()
+    {
+        // 一次写入只该产生一次通知。多余的那次重算不是无害的重复：
+        // 注入媒体的位置按时钟推算，第二次重算必然算出不同的位置，于是再发一次事件。
+        var media = new FakeMediaService { CurrentMediaInfo = Sample("platform") };
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var store = new MediaLinkInjectionStore();
+        using var c = new MediaSourceCoordinator(
+            media, lyrics, store, () => Settings(MediaLinkMediaSourceMode.ExternalPreferred));
+
+        var hits = 0;
+        c.EffectiveMediaChanged += (_, _) => hits++;
+
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "ext", PositionMs = 1000, PlaybackState = "Playing"
+        }, out _, MediaInfoChangeKind.Timeline));
+
+        Assert.Equal(1, hits);
+    }
+
     private static MediaInfo Sample(string title) => new(
         "app", title, "a", null,
         TimeSpan.Zero, TimeSpan.FromMinutes(3),

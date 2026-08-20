@@ -712,6 +712,89 @@ public class MediaLinkEndToEndTests
     }
 
     [Fact]
+    public async Task UpstreamTimelineUpdates_DoNotLookLikeTrackChangesDownstream()
+    {
+        // 接收端歌词不断刷新的判据。上游播放时每 200ms 推一条位置更新，接收端若把它们
+        // 当成换歌，歌词组件就会每 200ms 走一次整条重载路径，把高亮行与间奏动画清零。
+        //
+        // 验收落在「接收端看到的变更种类」而非最终状态：位置一直在前进，
+        // 修好前与修好后的最终状态完全一样，只有种类分得开。
+        var upstreamMedia = new E2EFakeMediaService();
+        var lyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var upstreamSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var upstreamCoordinator = new MediaSourceCoordinator(
+            upstreamMedia, lyrics, new MediaLinkInjectionStore(), () => upstreamSettings);
+        var hub = new MediaLinkSessionHub();
+        using var publisher = new MediaLinkStatePublisher(upstreamCoordinator, hub, timelineMinIntervalMs: () => 0);
+        publisher.Start();
+
+        var server = new MediaLinkServer(
+            hub, s => publisher.PublishSnapshotAsync(s), () => "tl-tok", coordinator: upstreamCoordinator);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        var downstreamSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.ExternalPreferred,
+            MediaLinkUpstreamIsEnabled = true,
+            MediaLinkUpstreamEndpoint = $"127.0.0.1:{port}",
+            MediaLinkUpstreamToken = "tl-tok"
+        };
+        var downstreamStore = new MediaLinkInjectionStore();
+        using var downstreamCoordinator = new MediaSourceCoordinator(
+            new E2EFakeMediaService(), lyrics, downstreamStore, () => downstreamSettings);
+        using var upstreamService = new MediaLinkUpstreamHostedService(
+            downstreamStore, downstreamCoordinator, () => downstreamSettings);
+
+        await upstreamService.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => upstreamService.IsConnected);
+
+        // 先换歌。这一条必须被接收端认成会话级变更，否则歌词永远不刷新——
+        // 那是本修复的反向失效，比刷太多更坏，故与刷太多同用一条判据钉住。
+        var track = new MediaInfo("upstream-app", "TimelineSong", "TimelineArtist", null,
+            TimeSpan.Zero, TimeSpan.FromMinutes(4),
+            new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
+        upstreamMedia.Raise(track, MediaInfoChangeKind.CurrentSession);
+        await WaitUntilAsync(() => downstreamStore.GetMediaSnapshot()?.Title == "TimelineSong");
+
+        var sessionLevel = 0;
+        var timeline = 0;
+        downstreamCoordinator.EffectiveMediaChanged += (_, e) =>
+        {
+            if (e.ChangeKind is MediaInfoChangeKind.CurrentSession or MediaInfoChangeKind.MediaProperties)
+            {
+                Interlocked.Increment(ref sessionLevel);
+            }
+            else if (e.ChangeKind == MediaInfoChangeKind.Timeline)
+            {
+                Interlocked.Increment(ref timeline);
+            }
+        };
+
+        // 同一首歌走时间线前进五次。
+        for (var i = 1; i <= 5; i++)
+        {
+            upstreamMedia.Raise(
+                track with { Position = TimeSpan.FromSeconds(i) },
+                MediaInfoChangeKind.Timeline);
+        }
+
+        await WaitUntilAsync(() => Volatile.Read(ref timeline) >= 5);
+
+        Assert.True(
+            Volatile.Read(ref timeline) >= 5,
+            $"地基不成立：时间线更新没走到接收端，只收到 {Volatile.Read(ref timeline)} 条");
+        Assert.Equal(0, Volatile.Read(ref sessionLevel));
+
+        await upstreamService.StopAsync(CancellationToken.None);
+        await server.StopAsync();
+    }
+
+    [Fact]
     public async Task AudioFrame_OverRealWebSocket_ArrivesByteIdentical()
     {
         // 用真实回环连接而非 fake：这条路径上的分片组装、ToArray() 副本语义与编解码

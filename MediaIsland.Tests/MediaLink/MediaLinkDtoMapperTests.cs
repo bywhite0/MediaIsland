@@ -52,6 +52,48 @@ public class MediaLinkDtoMapperTests
         Assert.Contains("\"trackToken\":", json, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(MediaInfoChangeKind.CurrentSession)]
+    [InlineData(MediaInfoChangeKind.MediaProperties)]
+    [InlineData(MediaInfoChangeKind.Playback)]
+    [InlineData(MediaInfoChangeKind.Timeline)]
+    public void ParseChangeKind_RoundTripsEveryKind(MediaInfoChangeKind kind)
+    {
+        // 往返不变性是这条链路的地基：发送侧编码的种类必须被接收侧无损还原。
+        // 少还原一种就够了——那一种会静默落到回落值上。
+        Assert.Equal(kind, MediaLinkDtoMapper.ParseChangeKind(MediaLinkDtoMapper.MapChangeKind(kind)));
+    }
+
+    [Theory]
+    [InlineData("timeline")]
+    [InlineData("TIMELINE")]
+    public void ParseChangeKind_IsCaseInsensitive(string raw)
+    {
+        Assert.Equal(MediaInfoChangeKind.Timeline, MediaLinkDtoMapper.ParseChangeKind(raw));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("Unknown")]
+    [InlineData("garbage")]
+    public void ParseChangeKind_UnknownOrMissing_FallsBackToMediaProperties(string? raw)
+    {
+        // 保守侧：当作真的变了。不带该字段的旧版对端因此行为不变。
+        // 回落成 Timeline 会让切歌不刷新歌词，那是静默失效，比多刷一次坏得多。
+        Assert.Equal(MediaInfoChangeKind.MediaProperties, MediaLinkDtoMapper.ParseChangeKind(raw));
+    }
+
+    [Fact]
+    public void ParseChangeKind_RejectsNumericWireValues()
+    {
+        // "3" 不是协议里的合法取值。Enum.TryParse 默认接受数字串，
+        // 少了 Enum.IsDefined 这一道就会把它当成 Timeline——那是协议外的输入被静默接受。
+        Assert.Equal(MediaInfoChangeKind.MediaProperties, MediaLinkDtoMapper.ParseChangeKind("3"));
+        Assert.Equal(MediaInfoChangeKind.MediaProperties, MediaLinkDtoMapper.ParseChangeKind("99"));
+    }
+
     [Fact]
     public void ToMediaDto_HasThumbnailTrue_WhenThumbnailSourcePresent()
     {

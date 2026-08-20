@@ -1,3 +1,4 @@
+using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink;
 using MediaIsland.Services.MediaLink.Protocol;
 using Xunit;
@@ -211,5 +212,81 @@ public class MediaLinkInjectionStoreTests
     {
         var store = new MediaLinkInjectionStore();
         Assert.False(store.TryVirtualPlay(out _));
+    }
+
+    [Theory]
+    [InlineData(MediaInfoChangeKind.Timeline)]
+    [InlineData(MediaInfoChangeKind.Playback)]
+    [InlineData(MediaInfoChangeKind.MediaProperties)]
+    [InlineData(MediaInfoChangeKind.CurrentSession)]
+    public void SetMedia_CarriesChangeKindToSubscribers(MediaInfoChangeKind kind)
+    {
+        // 种类必须随写入一起送出去。订阅方无法从存储的最终状态反推它——
+        // 「换歌」与「位置前进了 20ms」在状态上长得一模一样。
+        var store = new MediaLinkInjectionStore();
+        var seen = new List<MediaInfoChangeKind>();
+        store.Changed += (_, e) => seen.Add(e.ChangeKind);
+
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "A", PlaybackState = "Playing"
+        }, out _, kind));
+
+        Assert.Equal([kind], seen);
+    }
+
+    [Fact]
+    public void SetMedia_WithoutChangeKind_DefaultsToCurrentSession()
+    {
+        // 兼容既有调用方：不传种类时行为与本参数引入前一致。
+        var store = new MediaLinkInjectionStore();
+        var seen = new List<MediaInfoChangeKind>();
+        store.Changed += (_, e) => seen.Add(e.ChangeKind);
+
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "A", PlaybackState = "Playing"
+        }, out _));
+
+        Assert.Equal([MediaInfoChangeKind.CurrentSession], seen);
+    }
+
+    [Fact]
+    public void RejectedSetMedia_RaisesNothing()
+    {
+        var store = new MediaLinkInjectionStore();
+        var hits = 0;
+        store.Changed += (_, _) => hits++;
+
+        Assert.False(store.TrySetMedia(
+            new MediaLinkMediaInjectPayload { Title = " " }, out _, MediaInfoChangeKind.Timeline));
+
+        Assert.Equal(0, hits);
+    }
+
+    [Fact]
+    public void LyricsAndClearAndVirtualTransport_ReportSessionLevelChange()
+    {
+        // 这三类写入都不是「位置前进」，必须走整条重载路径，故一律报 CurrentSession。
+        var store = new MediaLinkInjectionStore();
+        Assert.True(store.TrySetMedia(new MediaLinkMediaInjectPayload
+        {
+            Title = "A", PlaybackState = "Paused"
+        }, out _, MediaInfoChangeKind.Timeline));
+
+        var seen = new List<MediaInfoChangeKind>();
+        store.Changed += (_, e) => seen.Add(e.ChangeKind);
+
+        Assert.True(store.TryVirtualPlay(out _));
+        Assert.True(store.TryVirtualPause(out _));
+        Assert.True(store.TryClear(null, out _));
+
+        Assert.Equal(
+            [
+                MediaInfoChangeKind.CurrentSession,
+                MediaInfoChangeKind.CurrentSession,
+                MediaInfoChangeKind.CurrentSession
+            ],
+            seen);
     }
 }

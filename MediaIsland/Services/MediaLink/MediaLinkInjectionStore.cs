@@ -65,9 +65,19 @@ public sealed class MediaLinkInjectionStore
         }
     }
 
-    public event EventHandler? Changed;
+    public event EventHandler<MediaLinkInjectionChangedEventArgs>? Changed;
 
-    public bool TrySetMedia(MediaLinkMediaInjectPayload payload, out string? error)
+    /// <param name="changeKind">
+    /// 本次写入代表哪一类变更。默认 <see cref="MediaInfoChangeKind.CurrentSession"/>，
+    /// 即「当作换了会话」——注入方没有更好的信息时的保守侧。
+    ///
+    /// 转发链上的接收侧必须显式传入上游告知的种类：连续的位置更新若以默认值写入，
+    /// 下游会把每一条都当成换歌。
+    /// </param>
+    public bool TrySetMedia(
+        MediaLinkMediaInjectPayload payload,
+        out string? error,
+        MediaInfoChangeKind changeKind = MediaInfoChangeKind.CurrentSession)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
@@ -129,7 +139,7 @@ public sealed class MediaLinkInjectionStore
         }
 
         error = null;
-        RaiseChanged();
+        RaiseChanged(changeKind);
         return true;
     }
 
@@ -149,7 +159,8 @@ public sealed class MediaLinkInjectionStore
         }
 
         error = null;
-        RaiseChanged();
+        // 歌词内容本身换了，必须走整条重载路径。
+        RaiseChanged(MediaInfoChangeKind.CurrentSession);
         return true;
     }
 
@@ -208,7 +219,7 @@ public sealed class MediaLinkInjectionStore
         error = null;
         if (changed)
         {
-            RaiseChanged();
+            RaiseChanged(MediaInfoChangeKind.CurrentSession);
         }
 
         return true;
@@ -270,7 +281,7 @@ public sealed class MediaLinkInjectionStore
         }
 
         error = null;
-        RaiseChanged();
+        RaiseChanged(MediaInfoChangeKind.CurrentSession);
         return true;
     }
 
@@ -299,7 +310,7 @@ public sealed class MediaLinkInjectionStore
         }
 
         error = null;
-        RaiseChanged();
+        RaiseChanged(MediaInfoChangeKind.CurrentSession);
         return true;
     }
 
@@ -340,8 +351,17 @@ public sealed class MediaLinkInjectionStore
         _isPlaying = false;
     }
 
-    private void RaiseChanged()
+    private void RaiseChanged(MediaInfoChangeKind changeKind)
     {
-        Changed?.Invoke(this, EventArgs.Empty);
+        Changed?.Invoke(this, new MediaLinkInjectionChangedEventArgs(changeKind));
     }
+}
+
+/// <summary>
+/// 一次注入写入所代表的变更种类。它必须随写入一起传出去，不能由订阅方推断——
+/// 只有写入方知道这是换歌还是仅仅位置前进，而两者在存储的最终状态上无从区分。
+/// </summary>
+public sealed class MediaLinkInjectionChangedEventArgs(MediaInfoChangeKind changeKind) : EventArgs
+{
+    public MediaInfoChangeKind ChangeKind { get; } = changeKind;
 }

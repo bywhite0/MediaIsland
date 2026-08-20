@@ -381,6 +381,37 @@ public static class MediaLinkDtoMapper
         MediaInfoChangeKind.Timeline => nameof(MediaInfoChangeKind.Timeline),
         _ => "Unknown"
     };
+
+    /// <summary>
+    /// <see cref="MapChangeKind"/> 的逆。接收侧据此还原发送侧的变更种类，
+    /// 而不是自己编一个——只有发送侧知道某条 <c>media.updated</c> 是换歌还是走时间线。
+    /// </summary>
+    /// <remarks>
+    /// 实现为「逐个反查 <see cref="MapChangeKind"/>」而不是 <c>Enum.TryParse</c>，有两条理由：
+    /// 一、<c>Enum.TryParse</c> 连数字串也认（<c>"3"</c> 会变成 Timeline），
+    /// 而协议里的合法取值只有那四个名字，数字串是协议外输入，静默接受它没有道理；
+    /// 二、反查使两个方向共用同一张表，枚举成员改名时不可能只改一边。
+    ///
+    /// 未知值与缺失一律回落 <see cref="MediaInfoChangeKind.MediaProperties"/>，即「当作真的变了」。
+    /// 这是保守侧：不带该字段的旧版对端行为与本函数引入前完全一致。
+    /// 回落成 <see cref="MediaInfoChangeKind.Timeline"/> 则会让切歌不刷新歌词——
+    /// 那是静默失效，比多刷一次坏得多。
+    /// </remarks>
+    internal static MediaInfoChangeKind ParseChangeKind(string? raw)
+    {
+        foreach (var kind in ChangeKinds)
+        {
+            if (string.Equals(raw, MapChangeKind(kind), StringComparison.OrdinalIgnoreCase))
+            {
+                return kind;
+            }
+        }
+
+        return MediaInfoChangeKind.MediaProperties;
+    }
+
+    private static readonly MediaInfoChangeKind[] ChangeKinds = Enum.GetValues<MediaInfoChangeKind>();
+
     private static long ToMilliseconds(TimeSpan value) =>
         (long)Math.Round(value.TotalMilliseconds, MidpointRounding.AwayFromZero);
 }

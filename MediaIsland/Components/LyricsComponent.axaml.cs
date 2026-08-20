@@ -591,9 +591,24 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
 
     private void ApplyExternalLyrics(LyricsSearchResult? result)
     {
+        var document = result?.Document;
+
+        // 同一份歌词重复套用必须是空操作。下面那段会把高亮行与间奏动画状态清零，
+        // 重复执行的可见表现就是歌词不断从头闪一遍——注入源每报一次变更就闪一次。
+        //
+        // 比引用而非比值是刻意的：LyricsDocument 是 record，但其 Lines 是 List，
+        // 值相等本就退化为引用相等；而注入存储在收到新歌词前一直返回同一实例。
+        // document 为 null 时不走这条捷径：首次「未找到歌词」的状态文案还没设过。
+        lock (_syncLock)
+        {
+            if (document is not null && ReferenceEquals(_currentLyrics, document))
+            {
+                return;
+            }
+        }
+
         Interlocked.Increment(ref _searchVersion);
         CancelCurrentSearch();
-        var document = result?.Document;
         lock (_syncLock)
         {
             _currentLyrics = document;
