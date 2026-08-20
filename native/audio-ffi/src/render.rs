@@ -251,7 +251,7 @@ impl RenderStatsCell {
 }
 
 #[cfg(windows)]
-pub use wasapi::{RenderError, WasapiRenderer};
+pub use wasapi::WasapiRenderer;
 
 /// WASAPI 互操作。整段只在 Windows 编译，故用一处 cfg 门而非逐项标注；
 /// 上面的纯逻辑不带门，这样它在任何平台都被编译与测试。
@@ -283,32 +283,18 @@ mod wasapi {
         target_frames, PrefillState, RenderStatsCell, MAX_RELATIVE_RATIO, RING_CAPACITY_FRAMES,
         SINC_LEN,
     };
-    use crate::capture::{parse_mix_format, wait_for_any, MixFormat, StopEvent, WaitObject};
     use crate::convert;
+    use crate::convert::MixFormat;
     use crate::ring::PlaybackRing;
+    use crate::wasapi_common::{parse_mix_format, wait_for_any, StopEvent, WaitObject};
     use crate::{
-        PlayedFrame, PlayedFrameCallback, OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE,
-        STATUS_ALREADY_RUNNING, STATUS_DEVICE_ERROR, STATUS_PANIC,
+        AudioError, PlayedFrame, PlayedFrameCallback, OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE,
+        STATUS_ALREADY_RUNNING, STATUS_PANIC,
     };
     use crate::run_guarded;
 
     /// 20ms 缓冲，与采集侧同量级。共享模式下的实用下限。
     const BUFFER_DURATION_100NS: i64 = 20 * 10_000;
-
-    #[derive(Debug)]
-    pub struct RenderError {
-        pub message: String,
-        pub status: i32,
-    }
-
-    impl RenderError {
-        fn device(message: impl Into<String>) -> Self {
-            Self {
-                message: message.into(),
-                status: STATUS_DEVICE_ERROR,
-            }
-        }
-    }
 
     /// 线程句柄与停止事件。**收进 `Mutex` 是为了让 `start` / `stop` 只需 `&self`。**
     ///
@@ -357,18 +343,18 @@ mod wasapi {
         ///
         /// 必须等：设备被独占、混音格式不受支持这些失败只有线程里知道，不等就只能靠
         /// 「声音没出来」感知，而那与「上游没在发」无从区分——两者的排查方向相反。
-        pub fn start(&self, target_ms: u32) -> Result<(), RenderError> {
+        pub fn start(&self, target_ms: u32) -> Result<(), AudioError> {
             // 持锁贯穿整个启动：并发两次 start 时，后者应当看到前者已把线程装好，
             // 从而走 ALREADY_RUNNING，而不是各起一个线程抢同一个设备。
             let Ok(mut thread) = self.thread.lock() else {
-                return Err(RenderError {
+                return Err(AudioError {
                     message: "播放状态锁已中毒".to_string(),
                     status: STATUS_PANIC,
                 });
             };
 
             if self.running.load(Ordering::SeqCst) {
-                return Err(RenderError {
+                return Err(AudioError {
                     message: "播放已在运行".to_string(),
                     status: STATUS_ALREADY_RUNNING,
                 });
@@ -377,7 +363,7 @@ mod wasapi {
             let target_ms = clamp_target_ms(target_ms);
 
             let stop_handle = unsafe { CreateEventW(None, true, false, None) }
-                .map_err(|err| RenderError::device(format!("创建停止事件失败：{err}")))?;
+                .map_err(|err| AudioError::device(format!("创建停止事件失败：{err}")))?;
             let stop_event = Arc::new(StopEvent(stop_handle));
 
             // 换目标深度等于换一条流：残留的旧音频按新深度解释会先响一下上次的尾巴。
@@ -390,7 +376,7 @@ mod wasapi {
             // 那些计数是停播后唯一还能读到的诊断信息。
             self.stats.reset();
 
-            let (ready_tx, ready_rx) = mpsc::channel::<Result<(), RenderError>>();
+            let (ready_tx, ready_rx) = mpsc::channel::<Result<(), AudioError>>();
 
             let callback = self.callback;
             let user_data = self.user_data;
@@ -419,7 +405,7 @@ mod wasapi {
                 })
                 .map_err(|err| {
                     self.running.store(false, Ordering::SeqCst);
-                    RenderError::device(format!("创建渲染线程失败：{err}"))
+                    AudioError::device(format!("创建渲染线程失败：{err}"))
                 })?;
 
             // 阻塞等启动结果。线程无论成败都恰好发一次，故这里不会永久挂住；
@@ -443,7 +429,7 @@ mod wasapi {
                 Err(_) => {
                     self.running.store(false, Ordering::SeqCst);
                     let _ = worker.join();
-                    Err(RenderError {
+                    Err(AudioError {
                         message: "渲染线程启动时异常退出".to_string(),
                         status: STATUS_PANIC,
                     })
@@ -521,10 +507,10 @@ mod wasapi {
         running: &AtomicBool,
         stats: &RenderStatsCell,
         stop_event: HANDLE,
-        ready: &mpsc::Sender<Result<(), RenderError>>,
+        ready: &mpsc::Sender<Result<(), AudioError>>,
     ) {
         if let Err(err) = CoInitializeEx(None, COINIT_MULTITHREADED).ok() {
-            let _ = ready.send(Err(RenderError::device(format!(
+            let _ = ready.send(Err(AudioError::device(format!(
                 "CoInitializeEx 失败：{err}"
             ))));
             return;
@@ -541,7 +527,7 @@ mod wasapi {
         running: &AtomicBool,
         stats: &RenderStatsCell,
         stop_event: HANDLE,
-        ready: &mpsc::Sender<Result<(), RenderError>>,
+        ready: &mpsc::Sender<Result<(), AudioError>>,
     ) {
         let session = match open_render_session() {
             Ok(session) => {
@@ -740,23 +726,23 @@ mod wasapi {
         _buffer_event_guard: StopEvent,
     }
 
-    unsafe fn open_render_session() -> Result<RenderSession, RenderError> {
+    unsafe fn open_render_session() -> Result<RenderSession, AudioError> {
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-                .map_err(|err| RenderError::device(format!("创建设备枚举器失败：{err}")))?;
+                .map_err(|err| AudioError::device(format!("创建设备枚举器失败：{err}")))?;
 
         let device = enumerator
             .GetDefaultAudioEndpoint(eRender, eConsole)
-            .map_err(|err| RenderError::device(format!("获取默认输出设备失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("获取默认输出设备失败：{err}")))?;
 
         let client: IAudioClient = device
             .Activate(CLSCTX_ALL, None)
-            .map_err(|err| RenderError::device(format!("激活音频客户端失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("激活音频客户端失败：{err}")))?;
 
         let mix_format_ptr = client
             .GetMixFormat()
-            .map_err(|err| RenderError::device(format!("获取混音格式失败：{err}")))?;
-        let mix = parse_mix_format(mix_format_ptr).map_err(|err| RenderError {
+            .map_err(|err| AudioError::device(format!("获取混音格式失败：{err}")))?;
+        let mix = parse_mix_format(mix_format_ptr).map_err(|err| AudioError {
             message: err.message,
             status: err.status,
         })?;
@@ -771,26 +757,26 @@ mod wasapi {
             None,
         );
         CoTaskMemFree(Some(mix_format_ptr as *const c_void));
-        init_result.map_err(|err| RenderError::device(format!("初始化音频客户端失败：{err}")))?;
+        init_result.map_err(|err| AudioError::device(format!("初始化音频客户端失败：{err}")))?;
 
         let buffer_event = CreateEventW(None, false, false, None)
-            .map_err(|err| RenderError::device(format!("创建缓冲事件失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("创建缓冲事件失败：{err}")))?;
         let guard = StopEvent(buffer_event);
 
         client
             .SetEventHandle(buffer_event)
-            .map_err(|err| RenderError::device(format!("设置事件句柄失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("设置事件句柄失败：{err}")))?;
 
         let render_client: IAudioRenderClient = client
             .GetService()
-            .map_err(|err| RenderError::device(format!("获取播放客户端失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("获取播放客户端失败：{err}")))?;
 
         let buffer_frames = client
             .GetBufferSize()
-            .map_err(|err| RenderError::device(format!("获取缓冲大小失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("获取缓冲大小失败：{err}")))?;
 
         if buffer_frames == 0 {
-            return Err(RenderError::device("设备报告的缓冲大小为零"));
+            return Err(AudioError::device("设备报告的缓冲大小为零"));
         }
 
         // **Start 必须在这里，不能挪到循环里。** 启动结果由调用方同步等待，
@@ -799,7 +785,7 @@ mod wasapi {
         // 那恰好否掉了 `WasapiRenderer::start` 文档声称的性质。
         client
             .Start()
-            .map_err(|err| RenderError::device(format!("启动播放失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("启动播放失败：{err}")))?;
 
         Ok(RenderSession {
             client,
@@ -848,7 +834,7 @@ mod wasapi {
         interleaved: &[i16],
         planar: &mut [Vec<f32>],
         out: &mut [Vec<f32>],
-    ) -> Result<usize, RenderError> {
+    ) -> Result<usize, AudioError> {
         let channels = OUTPUT_CHANNELS as usize;
         let frames = interleaved.len() / channels;
         for channel in planar.iter_mut() {
@@ -869,7 +855,7 @@ mod wasapi {
         let (_, produced) = state
             .inner
             .process_into_buffer(planar, out, None)
-            .map_err(|err| RenderError::device(format!("重采样失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("重采样失败：{err}")))?;
 
         Ok(produced)
     }
@@ -879,18 +865,18 @@ mod wasapi {
     unsafe fn write_silence(
         render_client: &IAudioRenderClient,
         frames: u32,
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), AudioError> {
         if frames == 0 {
             return Ok(());
         }
 
         render_client
             .GetBuffer(frames)
-            .map_err(|err| RenderError::device(format!("取播放缓冲失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("取播放缓冲失败：{err}")))?;
 
         render_client
             .ReleaseBuffer(frames, AUDCLNT_BUFFERFLAGS_SILENT.0 as u32)
-            .map_err(|err| RenderError::device(format!("提交静音缓冲失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("提交静音缓冲失败：{err}")))?;
         Ok(())
     }
 
@@ -902,16 +888,16 @@ mod wasapi {
         resampled: &[Vec<f32>],
         used_resampler: bool,
         frames: usize,
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), AudioError> {
         if frames == 0 || mix.block_align == 0 {
             return Ok(());
         }
 
         let ptr = render_client
             .GetBuffer(frames as u32)
-            .map_err(|err| RenderError::device(format!("取播放缓冲失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("取播放缓冲失败：{err}")))?;
         if ptr.is_null() {
-            return Err(RenderError::device("播放缓冲为空指针"));
+            return Err(AudioError::device("播放缓冲为空指针"));
         }
 
         let bytes = std::slice::from_raw_parts_mut(ptr, frames * mix.block_align);
@@ -945,7 +931,7 @@ mod wasapi {
 
         render_client
             .ReleaseBuffer(frames as u32, 0)
-            .map_err(|err| RenderError::device(format!("提交播放缓冲失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("提交播放缓冲失败：{err}")))?;
         Ok(())
     }
 }

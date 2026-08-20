@@ -22,6 +22,9 @@ pub mod ring;
 #[cfg(windows)]
 pub mod capture;
 
+#[cfg(windows)]
+pub mod wasapi_common;
+
 /// `running` 标志的析构守卫。
 ///
 /// 线程 panic 时 unwind 会跳过函数尾部的语句，故「在末尾把标志置假」这种写法在
@@ -61,6 +64,29 @@ pub const STATUS_UNSUPPORTED_PLATFORM: i32 = 2;
 pub const STATUS_DEVICE_ERROR: i32 = 3;
 pub const STATUS_ALREADY_RUNNING: i32 = 4;
 pub const STATUS_PANIC: i32 = 5;
+
+/// 本 crate 的唯一错误类型。
+///
+/// 住在 crate 根而不在采集或播放任一侧：两者的错误结构完全相同，且 status 装的
+/// 就是上面那六个 STATUS_ 常量之一——一个存在意义就是携带那些码穿过 FFI 的类型，
+/// 归属在它们旁边。
+///
+/// 不带 cfg 门，故它与其构造器在任何平台都被编译与测试。
+/// 不叫 WasapiError：住在平台无关层的类型不该带平台名。
+#[derive(Debug)]
+pub struct AudioError {
+    pub message: String,
+    pub status: i32,
+}
+
+impl AudioError {
+    pub(crate) fn device(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            status: STATUS_DEVICE_ERROR,
+        }
+    }
+}
 
 /// 一块采集到的 PCM。字段布局是 C# 侧 `StructLayout(LayoutKind.Sequential)` 的镜像，
 /// 改动即 ABI 变更，须同步提升 [`ABI_VERSION`]。
@@ -637,6 +663,22 @@ mod tests {
         // ABI 版本是 C# 侧 ExpectedAbiVersion 的对端，改动必须是有意识的。
         // 2 到 3 是本次新增 mediaisland_audio_render_stats 与 RenderStats。
         assert_eq!(mediaisland_audio_abi_version(), 3);
+    }
+
+    #[test]
+    fn device_error_carries_the_device_status_code() {
+        let err = AudioError::device("端点没了");
+        assert_eq!(err.status, STATUS_DEVICE_ERROR);
+        assert!(err.message.contains("端点"));
+    }
+
+    #[test]
+    fn audio_error_is_constructible_with_any_status() {
+        let err = AudioError {
+            message: "x".into(),
+            status: STATUS_ALREADY_RUNNING,
+        };
+        assert_eq!(err.status, STATUS_ALREADY_RUNNING);
     }
 
     #[test]

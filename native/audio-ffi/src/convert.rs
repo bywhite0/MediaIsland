@@ -13,6 +13,8 @@
 
 use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
+use crate::AudioError;
+
 /// 设备混音格式中每样本的存储形态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SampleFormat {
@@ -33,6 +35,29 @@ impl SampleFormat {
             SampleFormat::Pcm24 => 3,
             SampleFormat::Pcm32 | SampleFormat::F32 => 4,
         }
+    }
+}
+
+/// 设备混音格式的解析结果。采集与播放两侧都按它成型输出，故对 crate 内可见。
+///
+/// 住在这里而不在 WASAPI 那一层：四个字段全是纯数据，没有一个 Windows 类型。
+/// 解析它需要 WASAPI（见 wasapi_common::parse_mix_format），但它本身不需要。
+pub(crate) struct MixFormat {
+    pub(crate) sample_rate: u32,
+    pub(crate) channels: u16,
+    pub(crate) format: SampleFormat,
+    pub(crate) block_align: usize,
+}
+
+/// 位深到存储形态的映射。
+///
+/// 纯函数，不带平台门：它认的是 16 / 24 / 32 这三个数，与 WASAPI 无关。
+pub(crate) fn integer_format(bits: u16) -> Result<SampleFormat, AudioError> {
+    match bits {
+        16 => Ok(SampleFormat::Pcm16),
+        24 => Ok(SampleFormat::Pcm24),
+        32 => Ok(SampleFormat::Pcm32),
+        other => Err(AudioError::device(format!("不支持的位深 {other}"))),
     }
 }
 
@@ -242,6 +267,24 @@ impl StereoResampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::STATUS_DEVICE_ERROR;
+
+    #[test]
+    fn integer_formats_are_mapped_by_bit_depth() {
+        assert_eq!(integer_format(16).unwrap(), SampleFormat::Pcm16);
+        assert_eq!(integer_format(24).unwrap(), SampleFormat::Pcm24);
+        assert_eq!(integer_format(32).unwrap(), SampleFormat::Pcm32);
+    }
+
+    #[test]
+    fn unsupported_bit_depth_is_rejected_with_message() {
+        // smtc-suite 在这里直接退出；本实现支持 16/24/32，仅真正未知的位深才失败，
+        // 且错误串要能让用户看懂是格式问题。
+        let err = integer_format(8).unwrap_err();
+
+        assert!(err.message.contains('8'), "错误串应指出实际位深");
+        assert_eq!(err.status, STATUS_DEVICE_ERROR);
+    }
 
     #[test]
     fn pcm16_maps_full_scale_to_unit_range() {

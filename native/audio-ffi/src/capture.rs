@@ -21,25 +21,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDeviceEnumerator, MMDeviceEnumerator,
     AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-    AUDCLNT_STREAMFLAGS_LOOPBACK, WAVEFORMATEX, WAVEFORMATEXTENSIBLE,
+    AUDCLNT_STREAMFLAGS_LOOPBACK,
 };
-use windows::Win32::Media::KernelStreaming::{KSDATAFORMAT_SUBTYPE_PCM, WAVE_FORMAT_EXTENSIBLE};
-use windows::Win32::Media::Multimedia::KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_ALL,
     COINIT_MULTITHREADED,
 };
-use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
+use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 
-use crate::convert::{self, SampleFormat, StereoResampler};
+use crate::convert::{self, MixFormat, StereoResampler};
 use crate::run_guarded;
+use crate::wasapi_common::{parse_mix_format, wait_for_any, StopEvent, WaitObject};
 use crate::{
-    AudioFrame, AudioFrameCallback, OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE, STATUS_ALREADY_RUNNING,
-    STATUS_DEVICE_ERROR,
+    AudioError, AudioFrame, AudioFrameCallback, OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE,
+    STATUS_ALREADY_RUNNING,
 };
 
 /// 20ms 缓冲。这是 WASAPI 共享模式下的实用下限，再降需承担 glitch 风险。
@@ -48,50 +47,12 @@ const BUFFER_DURATION_100NS: i64 = 20 * 10_000;
 /// 重采样的定长块，对应 20ms @ 48kHz。仅非 48kHz 设备走这条路径。
 const RESAMPLE_CHUNK_FRAMES: usize = 960;
 
-#[derive(Debug)]
-pub struct CaptureError {
-    pub message: String,
-    pub status: i32,
-}
-
-impl CaptureError {
-    fn device(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            status: STATUS_DEVICE_ERROR,
-        }
-    }
-}
-
-/// 设备混音格式的解析结果。播放侧同样按它成型输出，故对 crate 内可见。
-pub(crate) struct MixFormat {
-    pub(crate) sample_rate: u32,
-    pub(crate) channels: u16,
-    pub(crate) format: SampleFormat,
-    pub(crate) block_align: usize,
-}
-
 pub struct WasapiLoopbackCapture {
     callback: AudioFrameCallback,
     user_data: usize,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     stop_event: Option<Arc<StopEvent>>,
-}
-
-/// 停止事件的所有权包装，确保句柄只被关闭一次。
-pub(crate) struct StopEvent(pub(crate) HANDLE);
-
-// HANDLE 是裸指针包装，Windows 事件对象本身可跨线程使用。
-unsafe impl Send for StopEvent {}
-unsafe impl Sync for StopEvent {}
-
-impl Drop for StopEvent {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = CloseHandle(self.0);
-        }
-    }
 }
 
 impl WasapiLoopbackCapture {
@@ -105,16 +66,16 @@ impl WasapiLoopbackCapture {
         }
     }
 
-    pub fn start(&mut self) -> Result<(), CaptureError> {
+    pub fn start(&mut self) -> Result<(), AudioError> {
         if self.running.load(Ordering::SeqCst) {
-            return Err(CaptureError {
+            return Err(AudioError {
                 message: "采集已在运行".to_string(),
                 status: STATUS_ALREADY_RUNNING,
             });
         }
 
         let stop_handle = unsafe { CreateEventW(None, true, false, None) }
-            .map_err(|err| CaptureError::device(format!("创建停止事件失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("创建停止事件失败：{err}")))?;
         // 事件句柄由 Arc 共享：采集线程与调用线程都要用，且必须恰好关闭一次。
         let stop_event = Arc::new(StopEvent(stop_handle));
 
@@ -140,7 +101,7 @@ impl WasapiLoopbackCapture {
                     }
                 });
             })
-            .map_err(|err| CaptureError::device(format!("创建采集线程失败：{err}")))?;
+            .map_err(|err| AudioError::device(format!("创建采集线程失败：{err}")))?;
 
         self.worker = Some(worker);
         self.stop_event = Some(stop_event);
@@ -180,10 +141,10 @@ unsafe fn capture_loop(
     user_data: usize,
     running: &AtomicBool,
     stop_event: HANDLE,
-) -> Result<(), CaptureError> {
+) -> Result<(), AudioError> {
     CoInitializeEx(None, COINIT_MULTITHREADED)
         .ok()
-        .map_err(|err| CaptureError::device(format!("CoInitializeEx 失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("CoInitializeEx 失败：{err}")))?;
 
     let result = capture_loop_inner(callback, user_data, running, stop_event);
 
@@ -196,24 +157,24 @@ unsafe fn capture_loop_inner(
     user_data: usize,
     running: &AtomicBool,
     stop_event: HANDLE,
-) -> Result<(), CaptureError> {
+) -> Result<(), AudioError> {
     let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-        .map_err(|err| CaptureError::device(format!("创建设备枚举器失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("创建设备枚举器失败：{err}")))?;
 
     // eRender + LOOPBACK：抓的是默认输出端点的全量混音，包含本机所有正在出声的应用。
     // 进程级 loopback 不做（见 design.md）：它要求 TargetProcessId，而 SMTC 给的是
     // AUMID 字符串，两者之间没有官方映射。
     let device = enumerator
         .GetDefaultAudioEndpoint(eRender, eConsole)
-        .map_err(|err| CaptureError::device(format!("获取默认输出设备失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("获取默认输出设备失败：{err}")))?;
 
     let client: IAudioClient = device
         .Activate(CLSCTX_ALL, None)
-        .map_err(|err| CaptureError::device(format!("激活音频客户端失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("激活音频客户端失败：{err}")))?;
 
     let mix_format_ptr = client
         .GetMixFormat()
-        .map_err(|err| CaptureError::device(format!("获取混音格式失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("获取混音格式失败：{err}")))?;
     let mix = parse_mix_format(mix_format_ptr)?;
 
     let init_result = client.Initialize(
@@ -225,23 +186,23 @@ unsafe fn capture_loop_inner(
         None,
     );
     CoTaskMemFree(Some(mix_format_ptr as *const c_void));
-    init_result.map_err(|err| CaptureError::device(format!("初始化音频客户端失败：{err}")))?;
+    init_result.map_err(|err| AudioError::device(format!("初始化音频客户端失败：{err}")))?;
 
     let buffer_event = CreateEventW(None, false, false, None)
-        .map_err(|err| CaptureError::device(format!("创建缓冲事件失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("创建缓冲事件失败：{err}")))?;
     let _buffer_event_guard = StopEvent(buffer_event);
 
     client
         .SetEventHandle(buffer_event)
-        .map_err(|err| CaptureError::device(format!("设置事件句柄失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("设置事件句柄失败：{err}")))?;
 
     let capture_client: IAudioCaptureClient = client
         .GetService()
-        .map_err(|err| CaptureError::device(format!("获取采集客户端失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("获取采集客户端失败：{err}")))?;
 
     client
         .Start()
-        .map_err(|err| CaptureError::device(format!("启动采集失败：{err}")))?;
+        .map_err(|err| AudioError::device(format!("启动采集失败：{err}")))?;
 
     let mut resampler =
         StereoResampler::new(mix.sample_rate, OUTPUT_SAMPLE_RATE, RESAMPLE_CHUNK_FRAMES);
@@ -299,31 +260,6 @@ unsafe fn capture_loop_inner(
     Ok(())
 }
 
-#[derive(PartialEq, Eq)]
-pub(crate) enum WaitObject {
-    Buffer,
-    Stop,
-    Timeout,
-}
-
-pub(crate) unsafe fn wait_for_any(handles: &[HANDLE; 2], timeout_ms: u32) -> WaitObject {
-    // 逐个轮询而非 WaitForMultipleObjects：停止事件是手动重置的，先查它可保证
-    // 停止请求不会被持续到达的缓冲事件饿死。
-    if WaitForSingleObject(handles[1], 0) == WAIT_OBJECT_0 {
-        return WaitObject::Stop;
-    }
-
-    if WaitForSingleObject(handles[0], timeout_ms) == WAIT_OBJECT_0 {
-        return WaitObject::Buffer;
-    }
-
-    if WaitForSingleObject(handles[1], 0) == WAIT_OBJECT_0 {
-        return WaitObject::Stop;
-    }
-
-    WaitObject::Timeout
-}
-
 /// 把设备原始字节转成传输格式的交错 i16。
 ///
 /// 静音包的 `data_ptr` 内容按 WASAPI 文档是未定义的，故不读它，直接产出等长零值——
@@ -360,56 +296,10 @@ fn build_output_frame(
     convert::f32_to_i16(&resampled)
 }
 
-/// 解析设备混音格式。
-///
-/// `WAVE_FORMAT_EXTENSIBLE` 时真正的格式在 `SubFormat` GUID 里，`wFormatTag` 只是个占位。
-pub(crate) unsafe fn parse_mix_format(ptr: *const WAVEFORMATEX) -> Result<MixFormat, CaptureError> {
-    if ptr.is_null() {
-        return Err(CaptureError::device("混音格式为空"));
-    }
-
-    let wave = &*ptr;
-    let bits = wave.wBitsPerSample;
-
-    let format = if wave.wFormatTag as u32 == WAVE_FORMAT_EXTENSIBLE {
-        let extensible = &*(ptr as *const WAVEFORMATEXTENSIBLE);
-        let sub = extensible.SubFormat;
-        if sub == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT {
-            SampleFormat::F32
-        } else if sub == KSDATAFORMAT_SUBTYPE_PCM {
-            integer_format(bits)?
-        } else {
-            return Err(CaptureError::device(format!(
-                "不支持的混音子格式，位深 {bits}"
-            )));
-        }
-    } else if bits == 32 && wave.wFormatTag == 3 {
-        // WAVE_FORMAT_IEEE_FLOAT = 3
-        SampleFormat::F32
-    } else {
-        integer_format(bits)?
-    };
-
-    Ok(MixFormat {
-        sample_rate: wave.nSamplesPerSec,
-        channels: wave.nChannels,
-        format,
-        block_align: wave.nBlockAlign as usize,
-    })
-}
-
-fn integer_format(bits: u16) -> Result<SampleFormat, CaptureError> {
-    match bits {
-        16 => Ok(SampleFormat::Pcm16),
-        24 => Ok(SampleFormat::Pcm24),
-        32 => Ok(SampleFormat::Pcm32),
-        other => Err(CaptureError::device(format!("不支持的位深 {other}"))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::convert::SampleFormat;
 
     fn mix(sample_rate: u32, channels: u16, format: SampleFormat) -> MixFormat {
         MixFormat {
@@ -481,22 +371,5 @@ mod tests {
         let out = build_output_frame(&[], &mixfmt, true, &mut resampler);
 
         assert!(out.is_empty());
-    }
-
-    #[test]
-    fn integer_formats_are_mapped_by_bit_depth() {
-        assert_eq!(integer_format(16).unwrap(), SampleFormat::Pcm16);
-        assert_eq!(integer_format(24).unwrap(), SampleFormat::Pcm24);
-        assert_eq!(integer_format(32).unwrap(), SampleFormat::Pcm32);
-    }
-
-    #[test]
-    fn unsupported_bit_depth_is_rejected_with_message() {
-        // smtc-suite 在这里直接退出；本实现支持 16/24/32，仅真正未知的位深才失败，
-        // 且错误串要能让用户看懂是格式问题。
-        let err = integer_format(8).unwrap_err();
-
-        assert!(err.message.contains('8'), "错误串应指出实际位深");
-        assert_eq!(err.status, STATUS_DEVICE_ERROR);
     }
 }
