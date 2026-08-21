@@ -243,8 +243,64 @@ public class AudioClockProbeTests
 
         Assert.False(await probe.ProbeOnceAsync(CancellationToken.None));
         Assert.Equal(1, probe.RejectedSamples);
-        Assert.Equal(0, probe.Misses);
+
+        // 被拒也计一次「没成」。两个计数并存而不是二选一：RejectedSamples 说的是
+        // 「坏在哪」，Misses 说的是「连续多少次没成」，后者才是清窗的依据。
+        // 本条断言此前写的是 Misses 恒为 0，那等于把「恒产出坏样本的对端永远不清窗」
+        // 这个缺陷钉成了预期行为。
+        Assert.Equal(1, probe.Misses);
         Assert.False(probe.TryGetOffset(out _, out _));
+    }
+
+    [Fact]
+    public async Task Reset_ClearsTheUnsupportedVerdictSoAnotherPeerGetsAChance()
+    {
+        // 实例跨重连复用，而重连后的对端可以是另一台机器。不清 IsUnsupported 就意味着
+        // 一旦连过一个只实现三时间戳的对端，此后连到任何机器都不再对时，
+        // 且诊断说「对端不支持」——指向的是错误的那一台。
+        var (probe, _, peer) = Build(p => p.AnswersWithoutT2().Answers(offsetMs: 40));
+
+        Assert.False(await probe.ProbeOnceAsync(CancellationToken.None));
+        Assert.True(probe.IsUnsupported);
+
+        probe.Reset();
+
+        Assert.False(probe.IsUnsupported);
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+        Assert.True(probe.TryGetOffset(out var offset, out _));
+        Assert.Equal(40 * Ms, offset);
+        Assert.Equal(2, peer.Calls);
+    }
+
+    [Fact]
+    public async Task PeerThatAlwaysAnswersWithUnusableSamples_EventuallyLosesTheOffset()
+    {
+        // 每次都回应故永不计「无回应」，但回的样本恒被判负往返——形态是对端把 t2 取自
+        // 单调时钟而 t3 取自墙钟。若被拒样本不触发失效，最后一个被接受的 offset 会被
+        // 无限期沿用，而没有任何计数说得出它已经很旧了。
+        var clock = new FakeClock();
+        var good = true;
+        var probe = new AudioClockProbe(
+            (t1, _) =>
+            {
+                var payload = good
+                    ? new MediaLinkAudioClockPayload { T1 = t1, T2 = 40 * Ms, T3 = 40 * Ms }
+                    : new MediaLinkAudioClockPayload { T1 = t1, T2 = 100 * Ms, T3 = 900 * Ms };
+                good = false;
+                return Task.FromResult<MediaLinkAudioClockPayload?>(payload);
+            },
+            clock.Read);
+
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+        Assert.True(probe.TryGetOffset(out _, out _));
+
+        for (var i = 0; i < AudioClockProbe.MaxConsecutiveMisses; i++)
+        {
+            Assert.False(await probe.ProbeOnceAsync(CancellationToken.None));
+        }
+
+        Assert.False(probe.TryGetOffset(out _, out _));
+        Assert.Equal(AudioClockProbe.MaxConsecutiveMisses, probe.RejectedSamples);
     }
 
     [Fact]

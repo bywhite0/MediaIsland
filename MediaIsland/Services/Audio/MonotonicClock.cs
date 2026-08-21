@@ -28,8 +28,13 @@ internal static class MonotonicClock
     /// <summary>
     /// 当前单调时刻，单位 100ns。
     ///
-    /// 与 <see cref="System.TimeSpan.Ticks"/> 同刻度，故两者之间无需换算代码；
-    /// 但它的零点是进程相关的，不代表任何日历时刻，只可用于求差。
+    /// 与 <see cref="System.TimeSpan.Ticks"/> 同刻度，故两者之间无需换算代码。
+    ///
+    /// 零点不是日历时刻，只可用于求差；但它是系统级而非进程级的。Windows 上
+    /// <see cref="Stopwatch.GetTimestamp"/> 就是原始 QPC，零点为系统启动，
+    /// 故同一台机器上跨进程、跨托管与 native 的读数可以直接相减——音频广播把
+    /// 本地时刻减去 native 填的 pu64QPCPosition，成立的正是这一条。
+    /// 跨机器则零点不同，只能靠对时建立映射。
     /// </summary>
     internal static long Now100Ns() =>
         (long)(Stopwatch.GetTimestamp() * (double)TicksPerSecond100Ns / Stopwatch.Frequency);

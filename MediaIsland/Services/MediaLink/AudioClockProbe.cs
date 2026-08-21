@@ -133,6 +133,12 @@ internal sealed class AudioClockProbe
         if (!_estimator.TryAdd(new AudioClockSample(t1, t2, t3, t4)))
         {
             RejectedSamples++;
+
+            // 被拒也算一次「这次没成」。不算的话，一个每次都回应但回的样本恒不可用的
+            // 对端（例如 t2 取自 Stopwatch 而 t3 取自墙钟）会让 _consecutiveMisses
+            // 永远到不了阈值，于是窗口里那个最后一次被接受的 offset 被无限期沿用，
+            // 而没有任何计数或返回值说得出「它已经很旧了」。
+            NoteMiss();
             return false;
         }
 
@@ -164,12 +170,23 @@ internal sealed class AudioClockProbe
         }
     }
 
-    /// <summary>断连后清空。重连时对端可能已重启，其单调时钟零点已变。</summary>
+    /// <summary>
+    /// 断连后清空，包括「对端不支持」这个判定。
+    ///
+    /// 必须一并清掉 IsUnsupported：本类的实例会跨重连复用，而重连后的对端可以是
+    /// 另一台机器。不清就意味着一旦连过一个只实现三时间戳的对端，此后连到任何机器
+    /// 都不再对时，且诊断显示「对端不支持」——指向的是错误的那一台。
+    ///
+    /// 清空的理由不是「对端重启后单调时钟零点变了」。同一台机器上进程重启不改变
+    /// QPC 零点（那是系统级的）；真正的理由是换对端后零点属于另一台机器，
+    /// 旧样本描述的是一段已经不存在的映射关系。
+    /// </summary>
     internal void Reset()
     {
         _estimator.Reset();
         _accepted = 0;
         _consecutiveMisses = 0;
+        IsUnsupported = false;
     }
 
     private void NoteMiss()

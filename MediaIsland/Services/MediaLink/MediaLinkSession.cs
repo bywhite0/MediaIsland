@@ -27,6 +27,20 @@ public interface IMediaLinkSocket
 
     Task SendTextAsync(string text, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// 取得发送权之后才构造报文。供「发出时刻」这类字段使用：它们必须在等到写入权
+    /// 之后才取值，否则等锁的时间会被对端算进网络往返。
+    ///
+    /// 这把写入权是 socket 级的，而音频写者与 JSON 事件写者都只争用它——会话级的
+    /// 那把锁两者都不碰。故「锁内构造」必须发生在这一层，放在会话层等于挡了一把
+    /// 几乎从不阻塞的锁。
+    ///
+    /// 默认实现回落到即刻构造，仅真实 WebSocket 覆写为锁内构造——与
+    /// <see cref="CloseOutputAsync"/> 同一形态。测试桩无争用，回落无害。
+    /// </summary>
+    Task SendTextAsync(Func<string> textFactory, CancellationToken cancellationToken) =>
+        SendTextAsync(textFactory(), cancellationToken);
+
     /// <summary>发送二进制帧。音频帧专用，不走 JSON 信封。</summary>
     Task SendBinaryAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken);
 
@@ -93,6 +107,27 @@ public sealed class WebSocketMediaLinkSocket(WebSocket webSocket) : IMediaLinkSo
         await _sendLock.WaitAsync(cancellationToken);
         try
         {
+            await webSocket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// 锁内构造版本。构造与编码都排在 WaitAsync 之后，故「发出时刻」字段量到的是
+    /// 拿到写入权之后的时刻，而不是排队开始的时刻。
+    ///
+    /// 这把锁与 <see cref="SendBinaryAsync"/> 同一把，音频推流时每帧争用一次
+    /// （约每 10 毫秒），排队等待是毫秒到几十毫秒量级。它正是要被排除在时刻之外的东西。
+    /// </summary>
+    public async Task SendTextAsync(Func<string> textFactory, CancellationToken cancellationToken)
+    {
+        await _sendLock.WaitAsync(cancellationToken);
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(textFactory());
             await webSocket.SendAsync(bytes, WebSocketMessageType.Text, endOfMessage: true, cancellationToken);
         }
         finally
@@ -867,15 +902,15 @@ public sealed class MediaLinkSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// 取得发送权之后才构造报文，供「发出时刻」字段使用。
+    /// 延迟构造报文，供 audio.clock 的 t3 这类「发出时刻」字段使用。
     ///
-    /// audio.clock 的 t3 必须这样取。若在入口处就盖时刻，等 _sendLock 的那段时间
-    /// 会被客户端算进网络往返——而这把锁与音频写者争用，音频推流时每帧一次，
-    /// 也就是每约 10 毫秒一次。那正是 t2 / t3 这一对存在要挡掉的污染，
-    /// 在服务端自己身上重演一遍。
+    /// 工厂本身交给 socket 层执行，那里才是真正会排队的地方：音频写者与 JSON 事件
+    /// 写者都直接走 IMediaLinkSocket，只争用 socket 级的写入权，从不碰本类这把
+    /// _sendLock。本类这把锁的调用方只有串行的接收循环与启动时的一次 hello，
+    /// 几乎从不阻塞——在这一层做锁内构造挡不掉任何东西。
     ///
-    /// 残余误差是构造与序列化本身的耗时，微秒量级，仍会被算进往返。它与要挡的
-    /// 锁等待差三个数量级，不值得为它再加一层。
+    /// 残余误差是构造与编码本身的耗时，微秒量级，仍会被算进往返。它与要挡掉的
+    /// 那段排队等待差三个数量级，不值得为它再加一层。
     /// </summary>
     private async Task SendJsonAsync(Func<string> jsonFactory, CancellationToken cancellationToken)
     {
@@ -896,7 +931,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
             sendCts.CancelAfter(SendTimeout);
             try
             {
-                await _socket.SendTextAsync(jsonFactory(), sendCts.Token);
+                await _socket.SendTextAsync(jsonFactory, sendCts.Token);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
