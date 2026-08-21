@@ -28,6 +28,12 @@ public static class MediaLinkProtocol
     public const string TypeAudioPlayStart = "audio.play_start";
     public const string TypeAudioPlayStop = "audio.play_stop";
 
+    /// <summary>
+    /// 回程对时。请求与应答共用这一个类型名：应答带 <c>for</c>，与 thumbnail 一样
+    /// 是「请求换一份数据」而非「请求换一个确认」，故不走 ok。
+    /// </summary>
+    public const string TypeAudioClock = "audio.clock";
+
     public const string EventMediaUpdated = "media.updated";
     public const string EventLyricsUpdated = "lyrics.updated";
     public const string EventServerHello = "server.hello";
@@ -47,6 +53,12 @@ public static class MediaLinkProtocol
 
     /// <summary>server.hello 的 capabilities 取值。</summary>
     public const string CapabilityAudio = "audio";
+
+    /// <summary>
+    /// 跨机对时能力。取值与 <see cref="TypeAudioClock"/> 同字符串，与 audio 频道
+    /// 同形——能力名即它启用的那个消息名，少一层需要两边同时记住的映射。
+    /// </summary>
+    public const string CapabilityAudioClock = "audio.clock";
 
     /// <summary>
     /// 音频线格式。显式声明而非双方硬编码约定——AMLL 的做法是把 48000/2/i16

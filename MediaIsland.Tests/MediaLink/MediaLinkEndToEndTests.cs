@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using MediaIsland.Services.Audio;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
@@ -773,6 +774,80 @@ public class MediaLinkEndToEndTests
     /// 读到指定 type 的报文为止。中途可能夹着快照与事件推送，
     /// 不能假定下一条就是刚发出去那条请求的应答。
     /// </summary>
+    [Fact]
+    public async Task AudioClock_AnswersWithFourTimestampsInOrder()
+    {
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok");
+        await server.StartAsync("127.0.0.1", 0);
+        var actualPort = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        using var client = new ClientWebSocket();
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"));
+
+        var hello = await ReceiveJsonAsync(client);
+        var capabilities = hello.GetProperty("payload").GetProperty("capabilities")
+            .EnumerateArray().Select(c => c.GetString()).ToList();
+        Assert.Contains(MediaLinkProtocol.CapabilityAudioClock, capabilities);
+
+        await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
+        await ReceiveJsonAsync(client);
+
+        // 本判据能断言 t1 <= t2 <= t3 <= t4，只因为测试里客户端与服务端同进程，
+        // 两侧读的是同一个 MonotonicClock。真实跨机时这四个数分属两个时钟，
+        // 只有 t1 <= t4 与 t2 <= t3 各自成立，跨侧比较无意义。
+        var t1 = MonotonicClock.Now100Ns();
+        await SendJsonAsync(client, new
+        {
+            type = "audio.clock", id = "c1", v = 1, ts = NowMs(), payload = new { t1 }
+        });
+        var reply = await ReceiveJsonAsync(client);
+        var t4 = MonotonicClock.Now100Ns();
+
+        Assert.Equal(MediaLinkProtocol.TypeAudioClock, reply.GetProperty("type").GetString());
+        Assert.Equal("c1", reply.GetProperty("id").GetString());
+        var payload = reply.GetProperty("payload");
+        Assert.Equal(MediaLinkProtocol.TypeAudioClock, payload.GetProperty("for").GetString());
+        Assert.Equal(t1, payload.GetProperty("t1").GetInt64());
+
+        var t2 = payload.GetProperty("t2").GetInt64();
+        var t3 = payload.GetProperty("t3").GetInt64();
+        Assert.True(t1 <= t2, $"t2 {t2} 早于 t1 {t1}");
+        Assert.True(t2 <= t3, $"t3 {t3} 早于 t2 {t2}");
+        Assert.True(t3 <= t4, $"t4 {t4} 早于 t3 {t3}");
+
+        await CloseBoundedAsync(client);
+        await server.StopAsync();
+    }
+
+    [Fact]
+    public async Task AudioClock_WithoutT1_IsRejectedRatherThanAnsweredWithZero()
+    {
+        var hub = new MediaLinkSessionHub();
+        var server = new MediaLinkServer(hub, _ => Task.CompletedTask, () => "tok");
+        await server.StartAsync("127.0.0.1", 0);
+        var actualPort = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        using var client = new ClientWebSocket();
+        await ConnectBoundedAsync(client, new Uri($"ws://127.0.0.1:{actualPort}/v1/ws"));
+        await ReceiveJsonAsync(client);
+        await SendJsonAsync(client, new { type = "auth", id = "a1", v = 1, ts = NowMs(), payload = new { token = "tok" } });
+        await ReceiveJsonAsync(client);
+
+        // 回一个 t1 为 0 的应答会让客户端算出一个巨大的 offset 并当真，
+        // 那比报错难查得多——错值看起来是合法的。
+        await SendJsonAsync(client, new { type = "audio.clock", id = "c1", v = 1, ts = NowMs(), payload = new { } });
+        var reply = await ReceiveJsonAsync(client);
+
+        Assert.Equal(MediaLinkProtocol.TypeError, reply.GetProperty("type").GetString());
+        Assert.Equal(
+            MediaLinkProtocol.ErrorBadRequest,
+            reply.GetProperty("payload").GetProperty("code").GetString());
+
+        await CloseBoundedAsync(client);
+        await server.StopAsync();
+    }
+
     private static async Task<JsonElement> ReceiveUntilTypeAsync(WebSocket ws, string type)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(10);

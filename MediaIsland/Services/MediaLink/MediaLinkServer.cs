@@ -339,7 +339,11 @@ public sealed class MediaLinkServer : IAsyncDisposable
                             ProtocolVersion = MediaLinkProtocol.Version,
                             AuthRequired = true,
                             SessionEpoch = SessionEpoch,
-                            Capabilities = [MediaLinkProtocol.CapabilityAudio],
+                            Capabilities =
+                            [
+                                MediaLinkProtocol.CapabilityAudio,
+                                MediaLinkProtocol.CapabilityAudioClock
+                            ],
                             Audio = new MediaLinkAudioFormatPayload()
                         },
                         name: MediaLinkProtocol.EventServerHello);

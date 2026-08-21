@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using MediaIsland.Services.Audio;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
 using MediaIsland.Services.MediaLink.Mapping;
@@ -748,6 +749,15 @@ public sealed class MediaLinkSession : IAsyncDisposable
 
     public async Task HandleMessageAsync(string text, CancellationToken cancellationToken)
     {
+        // 收到时刻取在解析之前，且对每条消息都取。
+        //
+        // 取在解析之后，JSON 解析耗时就被算进了「网络往返」——而解析耗时随载荷
+        // 大小与 GC 时机波动，正是 audio.clock 要从往返里剔除的那类服务端开销。
+        // 只在类型为 audio.clock 时才取是做不到的：要判类型就得先解析。
+        //
+        // 无条件多读一次单调时钟的代价是几十纳秒，而它换来的是这条时刻的正确性。
+        var receivedAt100Ns = MonotonicClock.Now100Ns();
+
         MediaLinkMessage? message;
         try
         {
@@ -814,6 +824,9 @@ public sealed class MediaLinkSession : IAsyncDisposable
             case MediaLinkProtocol.TypeAudioPlayStop:
                 await HandleAudioPlayAsync(message, start: false, cancellationToken);
                 break;
+            case MediaLinkProtocol.TypeAudioClock:
+                await HandleAudioClockAsync(message, receivedAt100Ns, cancellationToken);
+                break;
             default:
                 await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorBadRequest, $"unknown type: {message.Type}", cancellationToken);
                 break;
@@ -840,14 +853,37 @@ public sealed class MediaLinkSession : IAsyncDisposable
     /// 超时是必需的：对端 TCP 窗口塞满时，无超时的写会连带 socket 锁一起挂住
     /// 接收循环与写者任务，整个会话僵死。
     /// </summary>
-    public async Task SendAsync(MediaLinkMessage message, CancellationToken cancellationToken = default)
+    public Task SendAsync(MediaLinkMessage message, CancellationToken cancellationToken = default)
+    {
+        if (_closed || _socket.State != WebSocketState.Open)
+        {
+            return Task.CompletedTask;
+        }
+
+        // 序列化留在锁外，与本方法此前的行为一致：它不依赖发送时刻，
+        // 而锁内做它只会无谓地延长持锁时间。
+        var json = MediaLinkMessageSerializer.Serialize(message);
+        return SendJsonAsync(() => json, cancellationToken);
+    }
+
+    /// <summary>
+    /// 取得发送权之后才构造报文，供「发出时刻」字段使用。
+    ///
+    /// audio.clock 的 t3 必须这样取。若在入口处就盖时刻，等 _sendLock 的那段时间
+    /// 会被客户端算进网络往返——而这把锁与音频写者争用，音频推流时每帧一次，
+    /// 也就是每约 10 毫秒一次。那正是 t2 / t3 这一对存在要挡掉的污染，
+    /// 在服务端自己身上重演一遍。
+    ///
+    /// 残余误差是构造与序列化本身的耗时，微秒量级，仍会被算进往返。它与要挡的
+    /// 锁等待差三个数量级，不值得为它再加一层。
+    /// </summary>
+    private async Task SendJsonAsync(Func<string> jsonFactory, CancellationToken cancellationToken)
     {
         if (_closed || _socket.State != WebSocketState.Open)
         {
             return;
         }
 
-        var json = MediaLinkMessageSerializer.Serialize(message);
         await _sendLock.WaitAsync(cancellationToken);
         try
         {
@@ -860,7 +896,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
             sendCts.CancelAfter(SendTimeout);
             try
             {
-                await _socket.SendTextAsync(json, sendCts.Token);
+                await _socket.SendTextAsync(jsonFactory(), sendCts.Token);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
@@ -1072,6 +1108,38 @@ public sealed class MediaLinkSession : IAsyncDisposable
                 DataBase64 = png is null ? null : Convert.ToBase64String(png)
             },
             id: message.Id), cancellationToken);
+    }
+
+    /// <summary>
+    /// 回程对时。把两个服务端时刻交给客户端，由客户端算 offset 与往返——
+    /// 服务端不持有任何对时状态，因为它不需要知道自己与谁对齐。
+    /// </summary>
+    private Task HandleAudioClockAsync(
+        MediaLinkMessage message, long receivedAt100Ns, CancellationToken cancellationToken)
+    {
+        var payload = MediaLinkMessageSerializer.DeserializePayload<MediaLinkAudioClockRequestPayload>(
+            message.Payload);
+        if (payload?.T1 is not { } t1)
+        {
+            // 缺 t1 无法配成样本。回错误而不是回一个 t1 为 0 的应答：
+            // 后者会让客户端算出一个巨大的 offset 并当真。
+            return SendErrorAsync(
+                message.Id, MediaLinkProtocol.ErrorBadRequest, "audio.clock requires t1", cancellationToken);
+        }
+
+        // t3 在 SendJsonAsync 拿到发送权之后才取，故报文在这里只能是延迟构造的。
+        return SendJsonAsync(
+            () => MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeAudioClock,
+                new MediaLinkAudioClockPayload
+                {
+                    For = MediaLinkProtocol.TypeAudioClock,
+                    T1 = t1,
+                    T2 = receivedAt100Ns,
+                    T3 = MonotonicClock.Now100Ns()
+                },
+                id: message.Id)),
+            cancellationToken);
     }
 
     private async Task HandleMediaInjectAsync(MediaLinkMessage message, CancellationToken cancellationToken)

@@ -346,3 +346,51 @@ public sealed class MediaLinkThumbnailPayload
     [JsonPropertyName("dataBase64")]
     public string? DataBase64 { get; set; }
 }
+
+/// <summary>
+/// audio.clock 请求。客户端只带 t1，其余三个时刻由服务端与客户端各自补齐。
+/// </summary>
+public sealed class MediaLinkAudioClockRequestPayload
+{
+    /// <summary>
+    /// 客户端发出时刻，单位 100ns，取自客户端单调时钟。
+    ///
+    /// 必须是单调时钟而非墙钟：offset 要跨分钟级持续维持，而墙钟会被 NTP
+    /// slew 或 step 调整，一次调整就让此前所有样本失效且无从察觉。
+    /// 信封的 ts 是 Unix 毫秒墙钟，与本字段不是同一个时钟，不可互换。
+    /// </summary>
+    [JsonPropertyName("t1")]
+    public long? T1 { get; set; }
+}
+
+/// <summary>
+/// audio.clock 应答。四个时刻缺一不可。
+///
+/// 只有 t1 / t3 / t4 就必须假设服务端处理耗时为零，而服务端一次 GC 或锁竞争
+/// 就是几十毫秒，那段时间会被算进网络往返，同时污染 offset 与它的可信度估计。
+/// ping / pong 只够三个时刻，这也是本消息不复用 ping 的原因。
+///
+/// 三个字段都可空，是为了让「对端没实现」与「对端报了 0」可区分：
+/// 缺字段时客户端按不支持处理，而不是退化成三时间戳估计——那会给出一个
+/// 看起来可用的错值，比报不可用坏得多。
+/// </summary>
+public sealed class MediaLinkAudioClockPayload
+{
+    [JsonPropertyName("for")]
+    public string? For { get; set; }
+
+    /// <summary>
+    /// 回显请求里的 t1。客户端因此不必维护 id 到 t1 的映射，
+    /// 且迟到或重复的应答无法与错误的 t1 配成一个样本。
+    /// </summary>
+    [JsonPropertyName("t1")]
+    public long? T1 { get; set; }
+
+    /// <summary>服务端收到请求的时刻，取在解析 JSON 之前。</summary>
+    [JsonPropertyName("t2")]
+    public long? T2 { get; set; }
+
+    /// <summary>服务端发出应答的时刻，取在拿到发送权之后。</summary>
+    [JsonPropertyName("t3")]
+    public long? T3 { get; set; }
+}
