@@ -23,13 +23,19 @@ public class AudioClockOffsetTests
     }
 
     [Fact]
-    public void Tick_IsTheSameUnitAsTimeSpanTicks()
+    public void SampleCarriesTimeSpanTicks_NotSomeOtherUnit()
     {
-        // 协议把单位定成 100ns tick，理由之一是它与 TimeSpan.Ticks 一一对应，
-        // 托管侧零换算。这条判据钉的是那个「一一对应」，不是某个字面量——
-        // 若哪天有人把单位改成微秒，这里必红。
-        Assert.Equal(10_000_000L, TimeSpan.TicksPerSecond);
-        Assert.Equal(500_000L, AudioClockOffsetEstimator.MaxAcceptableRoundTrip.Ticks);
+        // 协议把单位定成 100ns tick，理由是它与 TimeSpan.Ticks 一一对应、托管侧零换算。
+        // 这条判据钉的是「本类型携带的数就是 TimeSpan 的 tick」：入参用 TimeSpan 造，
+        // 出参用 TimeSpan 读，两端都不出现 100ns 这个数。
+        //
+        // 本条此前写的是断言 TimeSpan.TicksPerSecond 等于 10000000、以及上限常量的
+        // tick 形式等于 500000。前者断言的是 BCL 的事实，与本仓代码无关；后者是同义
+        // 反复——把上限改成 60 毫秒的同时把 500000 改成 600000 即可全绿。两条都钉不住东西。
+        var sample = Sample(offsetMs: 40, outboundMs: 3, inboundMs: 3);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(40), TimeSpan.FromTicks(sample.OffsetTicks));
+        Assert.Equal(TimeSpan.FromMilliseconds(6), TimeSpan.FromTicks(sample.RoundTripTicks));
     }
 
     [Fact]

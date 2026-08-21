@@ -148,22 +148,47 @@ public class AudioClockProbeTests
             await probe.ProbeOnceAsync(CancellationToken.None);
         }
 
+        // 先钉住「探测确实跑了」再断言阶段。FastInterval 同时也是初始值，
+        // 少了这一条地基，一个压根不执行探测的实现同样能让下面那条断言为真。
+        Assert.Equal(AudioClockProbe.FastProbeCount * 2, probe.Misses);
+        Assert.Equal(0, probe.AcceptedSamples);
         Assert.Equal(AudioClockProbe.FastInterval, probe.NextInterval);
     }
 
     [Fact]
     public async Task MissingT2_IsTreatedAsUnsupportedRatherThanDegraded()
     {
-        var (probe, _, peer) = Build(p => p.AnswersWithoutT2().Answers(offsetMs: 40));
+        var (probe, _, peer) = Build(p => p.AnswersWithoutT2());
 
         Assert.False(await probe.ProbeOnceAsync(CancellationToken.None));
+
+        // 地基：对端确实被调过一次。少了它，一个压根不发探测的实现也能让
+        // 下面三条断言全为真（IsUnsupported 若被误置、TryGetOffset 空窗本就为假）。
+        Assert.Equal(1, peer.Calls);
         Assert.True(probe.IsUnsupported);
         Assert.False(probe.TryGetOffset(out _, out _));
 
         // 确认不支持之后不再打扰对端。
-        var callsBefore = peer.Calls;
         Assert.False(await probe.ProbeOnceAsync(CancellationToken.None));
-        Assert.Equal(callsBefore, peer.Calls);
+        Assert.Equal(1, peer.Calls);
+    }
+
+    [Fact]
+    public async Task MissingT3_IsAlsoTreatedAsUnsupported()
+    {
+        // 「四时间戳缺一不可」有两个分支，此前只测了缺 t2 那个。缺 t3 的判定走的是
+        // 同一个条件式的后半段，把它删掉时缺 t2 那条判据仍然全绿。
+        var clock = new FakeClock();
+        var probe = new AudioClockProbe(
+            (t1, _) => Task.FromResult<MediaLinkAudioClockPayload?>(new MediaLinkAudioClockPayload
+            {
+                T1 = t1, T2 = 10 * Ms, T3 = null
+            }),
+            clock.Read);
+
+        Assert.False(await probe.ProbeOnceAsync(CancellationToken.None));
+        Assert.True(probe.IsUnsupported);
+        Assert.False(probe.TryGetOffset(out _, out _));
     }
 
     [Fact]
@@ -386,6 +411,8 @@ public class AudioClockProbeTests
         }, cts.Token);
 
         Assert.Equal(20, waits);
+        // 同样是地基：20 次等待可能来自 20 次什么都没做的空转。
+        Assert.Equal(20, probe.Misses);
         Assert.False(probe.IsUnsupported);
         Assert.False(probe.TryGetOffset(out _, out _));
     }
