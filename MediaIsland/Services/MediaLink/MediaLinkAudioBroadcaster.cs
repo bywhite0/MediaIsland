@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using MediaIsland.Services.Audio;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink.Mapping;
@@ -16,10 +15,6 @@ namespace MediaIsland.Services.MediaLink;
 /// </summary>
 internal sealed class MediaLinkAudioBroadcaster : IAudioFrameSink
 {
-    /// <summary>QPC 的名义单位：100ns，即 1 秒 = 10^7 个刻度。WASAPI 的 pu64QPCPosition 用的就是它。</summary>
-    private const long TicksPerSecond100Ns = 10_000_000;
-    private const long TicksPerMs100Ns = 10_000;
-
     private readonly MediaLinkSessionHub _hub;
     private readonly Func<MediaInfo?> _mediaAccessor;
     private readonly Func<long> _nowUnixMs;
@@ -39,19 +34,12 @@ internal sealed class MediaLinkAudioBroadcaster : IAudioFrameSink
         _hub = hub ?? throw new ArgumentNullException(nameof(hub));
         _mediaAccessor = mediaAccessor ?? throw new ArgumentNullException(nameof(mediaAccessor));
         _nowUnixMs = nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        _nowQpc100Ns = nowQpc100Ns ?? DefaultQpc100Ns;
+        _nowQpc100Ns = nowQpc100Ns ?? MonotonicClock.Now100Ns;
         _logger = logger;
     }
 
     /// <summary>累计因无当前曲目而丢弃的帧数。用于诊断，不参与协议行为。</summary>
     public long DroppedWithoutTrack { get; private set; }
-
-    /// <summary>
-    /// <see cref="Stopwatch"/> 与 WASAPI 的 QPC 同源，但 <see cref="Stopwatch.Frequency"/>
-    /// 不保证等于 10^7，故须显式归一到 100ns 而非假定两者刻度相同。
-    /// </summary>
-    private static long DefaultQpc100Ns() =>
-        (long)(Stopwatch.GetTimestamp() * (double)TicksPerSecond100Ns / Stopwatch.Frequency);
 
     public async ValueTask OnFrameAsync(AudioFrame frame, CancellationToken cancellationToken)
     {
@@ -67,7 +55,7 @@ internal sealed class MediaLinkAudioBroadcaster : IAudioFrameSink
             media.SourceApp, media.Title, media.Artist, media.AlbumTitle);
 
         var nowMs = _nowUnixMs();
-        var ageMs = Math.Max(0, (_nowQpc100Ns() - frame.QpcPosition100Ns) / TicksPerMs100Ns);
+        var ageMs = Math.Max(0, (_nowQpc100Ns() - frame.QpcPosition100Ns) / MonotonicClock.TicksPerMs100Ns);
         var capturedAtMs = nowMs - ageMs;
 
         // 位置是「现在」的读数，而本帧采于 ageMs 之前，故往回拨。

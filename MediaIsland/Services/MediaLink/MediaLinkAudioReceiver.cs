@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using MediaIsland.Services.Audio;
 using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Logging;
@@ -31,8 +30,6 @@ public enum MediaLinkAudioRejectReason
 /// </summary>
 public sealed class MediaLinkAudioReceiver
 {
-    private const long TicksPerSecond100Ns = 10_000_000;
-
     private readonly IAudioFrameSubmitter _submitter;
     private readonly Func<string?> _currentTrackToken;
     private readonly ILogger? _logger;
@@ -48,7 +45,7 @@ public sealed class MediaLinkAudioReceiver
         _currentTrackToken = currentTrackTokenAccessor
             ?? throw new ArgumentNullException(nameof(currentTrackTokenAccessor));
         _logger = logger;
-        _nowQpc100Ns = nowQpc100NsProvider ?? DefaultQpc100Ns;
+        _nowQpc100Ns = nowQpc100NsProvider ?? MonotonicClock.Now100Ns;
     }
 
     public long AcceptedFrames { get; private set; }
@@ -57,13 +54,6 @@ public sealed class MediaLinkAudioReceiver
 
     /// <summary>最近一次通过校验的帧头。三时间戳本期不消费（它们服务于抖动缓冲），仅供诊断。</summary>
     public MediaLinkAudioFrameHeader? LastHeader { get; private set; }
-
-    /// <summary>
-    /// <see cref="Stopwatch"/> 与 WASAPI 的 QPC 同源，但 <see cref="Stopwatch.Frequency"/>
-    /// 不保证等于 10^7，故须显式归一到 100ns 而非假定两者刻度相同。
-    /// </summary>
-    private static long DefaultQpc100Ns() =>
-        (long)(Stopwatch.GetTimestamp() * (double)TicksPerSecond100Ns / Stopwatch.Frequency);
 
     public MediaLinkAudioRejectReason Handle(ReadOnlySpan<byte> frame)
     {

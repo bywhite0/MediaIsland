@@ -20,8 +20,6 @@ internal sealed class WasapiRenderer : IAudioRenderer
     /// <summary>每帧字节数：2 声道 × i16。</summary>
     private const int BytesPerFrame = sizeof(short) * 2;
 
-    private const long TicksPerSecond100Ns = 10_000_000;
-
     private readonly ILogger? _logger;
     private readonly object _gate = new();
 
@@ -278,15 +276,15 @@ internal sealed class WasapiRenderer : IAudioRenderer
         var pcm = new byte[byteCount];
         new ReadOnlySpan<byte>((void*)frame->Samples, byteCount).CopyTo(pcm);
 
-        // native 的 PlayedFrame 不带 QPC 读数，故填本地观测时刻，算法与
-        // MediaLinkAudioReceiver.DefaultQpc100Ns 一致——Stopwatch.Frequency
-        // 不保证等于 10^7，须显式归一到 100ns 而非假定两者刻度相同。
+        // native 的 PlayedFrame 不带 QPC 读数，故填本地观测时刻。换算收在
+        // MonotonicClock 一处：Stopwatch.Frequency 不保证等于 10^7，
+        // 须显式归一到 100ns 而非假定两者刻度相同。
         //
         // IsSilent 恒假：已播出的块即使内容全零也代表「这一刻扬声器在按时间轴前进」，
         // 静音标志是上游给的语义，播放侧无从判断也不该猜。
         handler(new AudioFrame(
             pcm,
-            (long)(Stopwatch.GetTimestamp() * (double)TicksPerSecond100Ns / Stopwatch.Frequency),
+            MonotonicClock.Now100Ns(),
             (int)frame->SampleRate,
             frame->Channels,
             IsSilent: false));
