@@ -147,6 +147,18 @@ public sealed class MediaLinkLyricsReceivedEventArgs(MediaLinkLyricsDto lyrics) 
     public MediaLinkLyricsDto Lyrics { get; } = lyrics;
 }
 
+/// <summary>
+/// 收到一份封面回复。<c>Data</c> 为 null 表示「当前无可用封面」——协议规定
+/// 无封面、超限与 trackToken 失配都走这条，且都不是错误。
+/// </summary>
+public sealed class MediaLinkThumbnailReceivedEventArgs(string? trackToken, byte[]? data) : EventArgs
+{
+    /// <summary>本份封面所属的曲目。请求方据此判断它是否已经过期。</summary>
+    public string? TrackToken { get; } = trackToken;
+
+    public byte[]? Data { get; } = data;
+}
+
 public sealed class MediaLinkAudioFrameReceivedEventArgs(byte[] frame) : EventArgs
 {
     /// <summary>完整的协议二进制帧（含帧头）。解码由 MediaLinkAudioReceiver 负责——
@@ -200,6 +212,9 @@ public sealed class MediaLinkClient : IAsyncDisposable
 
     /// <summary>收到一条二进制消息。本期只有音频帧走二进制通道。</summary>
     public event EventHandler<MediaLinkAudioFrameReceivedEventArgs>? AudioFrameReceived;
+
+    /// <summary>收到 <c>thumbnail</c> 回复。请求由 <see cref="RequestThumbnailAsync"/> 发出。</summary>
+    public event EventHandler<MediaLinkThumbnailReceivedEventArgs>? ThumbnailReceived;
 
     /// <summary>连接状态变化（含重连中断），供 UI 显示。</summary>
     public event EventHandler? ConnectionStateChanged;
@@ -411,6 +426,39 @@ public sealed class MediaLinkClient : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 请求当前封面。回复经 <see cref="ThumbnailReceived"/> 异步到达，不在此处等待——
+    /// 等待需要按 id 配对的挂起表，而封面回复只有一种消费者且天然幂等：
+    /// 收到就装上，没收到就等下一次 media.updated 再问。为一张图引入请求-响应表
+    /// 是不必要的复杂度。
+    ///
+    /// 未连接时静默丢弃：请求本身没有排队价值，下一条 media.updated 会再触发一次。
+    /// </summary>
+    /// <param name="trackToken">
+    /// 期望的曲目。服务端据此校验，失配时回空数据而非上一首的图。
+    /// </param>
+    public async Task RequestThumbnailAsync(string? trackToken, CancellationToken cancellationToken = default)
+    {
+        var socket = _activeSocket;
+        if (socket is null || !IsConnected)
+        {
+            return;
+        }
+
+        try
+        {
+            await SendAsync(socket, MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeThumbnailGet,
+                new MediaLinkThumbnailGetPayload { TrackToken = trackToken },
+                id: "th"), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            // 发送失败即连接已坏，重连后下一条 media.updated 会再问一次，不必在此重试。
+            _logger?.LogDebug(ex, "请求封面失败");
+        }
+    }
+
     private async Task ExpectServerHelloAsync(IMediaLinkClientSocket socket, CancellationToken cancellationToken)
     {
         var message = await ReceiveMessageAsync(socket, cancellationToken)
@@ -495,6 +543,20 @@ public sealed class MediaLinkClient : IAsyncDisposable
             return;
         }
 
+        // 封面回复是响应帧：不带 seq，也不是 event。故必须在下面那两道闸之前接住，
+        // 否则会被「非 event 一律丢弃」那一句静默吃掉。
+        if (message.Type == MediaLinkProtocol.TypeThumbnail)
+        {
+            var thumbnail = MediaLinkMessageSerializer.DeserializePayload<MediaLinkThumbnailPayload>(message.Payload);
+            if (thumbnail is not null)
+            {
+                ThumbnailReceived?.Invoke(this, new MediaLinkThumbnailReceivedEventArgs(
+                    thumbnail.TrackToken, DecodeBase64OrNull(thumbnail.DataBase64)));
+            }
+
+            return;
+        }
+
         // 乱序或重复的事件直接丢弃；控制帧不带 seq，不参与此判断。
         if (message.Seq > 0)
         {
@@ -530,6 +592,22 @@ public sealed class MediaLinkClient : IAsyncDisposable
                 LyricsReceived?.Invoke(this, new MediaLinkLyricsReceivedEventArgs(dto));
             }
         }
+    }
+
+    /// <summary>
+    /// 宽松解码：坏 base64 按「无封面」处理而非抛出。对端的这个字段是可选的，
+    /// 一个畸形值不该把整条连接带下去——协议要求容忍不合规输入。
+    /// </summary>
+    private static byte[]? DecodeBase64OrNull(string? base64)
+    {
+        if (string.IsNullOrEmpty(base64))
+        {
+            return null;
+        }
+
+        return Convert.TryFromBase64String(base64, new byte[base64.Length], out _)
+            ? Convert.FromBase64String(base64)
+            : null;
     }
 
     private static Task SendAsync(IMediaLinkClientSocket socket, MediaLinkMessage message, CancellationToken cancellationToken) =>

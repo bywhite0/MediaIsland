@@ -110,6 +110,35 @@ public class MediaLinkUpstreamHostedServiceTests
         Assert.True(Volatile.Read(ref hits) > 0);
     }
 
+    [Theory]
+    // 新曲目且上游有图 → 问
+    [InlineData("track-a", null, true, true)]
+    [InlineData("track-b", "track-a", true, true)]
+    // 同一曲目已问过 → 不重问。播放期间每几百毫秒一条更新，重问会让同一张图反复过网。
+    [InlineData("track-a", "track-a", true, false)]
+    // 上游声明无封面 → 不问。注定拿到空数据的往返没有价值。
+    [InlineData("track-a", null, false, false)]
+    // 无当前曲目 → 不问：请求要带 token，没有 token 就无从校验归属。
+    [InlineData(null, null, true, false)]
+    [InlineData("", null, true, false)]
+    public void ShouldRequestThumbnail_TruthTable(
+        string? currentToken, string? requestedToken, bool hasThumbnail, bool expected)
+    {
+        Assert.Equal(expected, MediaLinkUpstreamHostedService.ShouldRequestThumbnail(
+            currentToken, requestedToken, hasThumbnail));
+    }
+
+    [Fact]
+    public void ShouldRequestThumbnail_NoThumbnailThenAvailable_AsksOnce()
+    {
+        // 上游先推一条无封面的更新、随后封面才就绪：那条无封面的更新不得记下已问，
+        // 否则这首歌被永久钉在无封面状态。
+        Assert.False(MediaLinkUpstreamHostedService.ShouldRequestThumbnail(
+            "track-a", requestedToken: null, hasThumbnail: false));
+        Assert.True(MediaLinkUpstreamHostedService.ShouldRequestThumbnail(
+            "track-a", requestedToken: null, hasThumbnail: true));
+    }
+
     private static PluginSettings NewSettings() => new()
     {
         MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.ExternalPreferred

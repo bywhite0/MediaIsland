@@ -684,6 +684,91 @@ public class MediaLinkEndToEndTests
         await server.StopAsync();
     }
 
+    [Fact]
+    public async Task Thumbnail_FlowsFromServerToInjectionStore_OverRealSocket()
+    {
+        // 封面走完整条真实链路：服务端 media.updated → 内置客户端问 thumbnail.get
+        // → 服务端回 thumbnail → 写进注入存储。此前客户端从不发那个请求，
+        // 接收端的组件因此永远拿不到封面。
+        //
+        // 曲目声明有封面但加载返回 null：服务端编码真图需要 IPlatformRenderInterface，
+        // 测试进程没有。这个组合让 hasThumbnail 为真（客户端因此会问），
+        // 而服务端编码时拿到 null 回空数据——往返完整发生，只是载荷为空。
+        var upstreamMedia = new E2EFakeMediaService();
+        var upstreamLyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var upstreamStore = new MediaLinkInjectionStore();
+        var upstreamSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.PlatformOnly,
+            MediaLinkPushUsesEffective = true
+        };
+        using var upstreamCoordinator = new MediaSourceCoordinator(
+            upstreamMedia, upstreamLyrics, upstreamStore, () => upstreamSettings);
+
+        var hub = new MediaLinkSessionHub();
+        using var publisher = new MediaLinkStatePublisher(
+            upstreamCoordinator, hub, timelineMinIntervalMs: () => 0);
+        publisher.Start();
+        const string token = "thumb-e2e-token";
+        var server = new MediaLinkServer(
+            hub,
+            session => publisher.PublishSnapshotAsync(session),
+            () => token,
+            coordinator: upstreamCoordinator,
+            logger: null);
+        await server.StartAsync("127.0.0.1", 0);
+        var port = int.Parse(server.Endpoint!.Split(':')[2].Split('/')[0]);
+
+        // 上游先有曲目，客户端连上即会收到一条 media.updated。
+        upstreamMedia.Raise(
+            new MediaInfo(
+                "upstream.exe", "E2E Song", "E2E Artist", "Album",
+                TimeSpan.FromSeconds(10), TimeSpan.FromMinutes(3),
+                new MediaPlaybackInfo(MediaPlaybackState.Playing, 1.0),
+                Thumbnail: null,
+                ThumbnailSource: new MediaThumbnail(
+                    (_, _) => Task.FromResult<Avalonia.Media.Imaging.Bitmap?>(null))),
+            MediaInfoChangeKind.CurrentSession);
+
+        // 接收侧：真正的内置客户端 + 真正的上游宿主服务。
+        var downMedia = new E2EFakeMediaService();
+        var downLyrics = new LyricsSearchService([], [], () => new LyricsSourceSettings());
+        var downStore = new MediaLinkInjectionStore();
+        var downSettings = new PluginSettings
+        {
+            MediaLinkMediaSourceMode = MediaLinkMediaSourceMode.ExternalPreferred,
+            MediaLinkUpstreamIsEnabled = true,
+            MediaLinkUpstreamEndpoint = $"127.0.0.1:{port}",
+            MediaLinkUpstreamToken = token
+        };
+        using var downCoordinator = new MediaSourceCoordinator(
+            downMedia, downLyrics, downStore, () => downSettings);
+        using var upstreamService = new MediaLinkUpstreamHostedService(
+            downStore, downCoordinator, () => downSettings);
+
+        try
+        {
+            await upstreamService.StartAsync(CancellationToken.None);
+
+            // 先等曲目注入，再等封面解析——两者是两条消息，顺序即链路的形状。
+            await WaitUntilAsync(() => downStore.HasExternalMedia);
+            Assert.True(downStore.HasExternalMedia, "上游媒体未注入，封面链路无从开始");
+
+            await WaitUntilAsync(() => downStore.ResolvedThumbnailToken is not null);
+
+            // token 相等即证明：请求带对了曲目、服务端按同一曲目作答、接收侧认下了它。
+            // 三者中任一环失配，这个值都会留在 null。
+            var expected = MediaLinkDtoMapper.ComputeTrackToken(
+                "upstream.exe", "E2E Song", "E2E Artist", "Album");
+            Assert.Equal(expected, downStore.ResolvedThumbnailToken);
+        }
+        finally
+        {
+            await upstreamService.StopAsync(CancellationToken.None);
+            await server.StopAsync();
+        }
+    }
+
     /// <summary>
     /// 读到指定 type 的报文为止。中途可能夹着快照与事件推送，
     /// 不能假定下一条就是刚发出去那条请求的应答。

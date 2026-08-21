@@ -330,6 +330,18 @@ internal sealed class ScriptedClientSocket : IMediaLinkClientSocket
             name: MediaLinkProtocol.EventMediaUpdated,
             seq: seq)));
 
+    /// <summary>入队一条 thumbnail 回复。它是响应帧：不带 seq，也不是 event。</summary>
+    public void QueueThumbnail(string? trackToken, string? dataBase64) =>
+        QueueRaw(MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
+            MediaLinkProtocol.TypeThumbnail,
+            new MediaLinkThumbnailPayload
+            {
+                TrackToken = trackToken,
+                MimeType = dataBase64 is null ? null : MediaLinkThumbnail.MimeType,
+                DataBase64 = dataBase64
+            },
+            id: "th")));
+
     public void QueueLyricsUpdated(long seq, string trackToken) =>
         QueueRaw(MediaLinkMessageSerializer.Serialize(MediaLinkMessageSerializer.Create(
             MediaLinkProtocol.TypeEvent,

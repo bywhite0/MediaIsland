@@ -1,10 +1,13 @@
+using Avalonia.Media.Imaging;
 using MediaIsland.Models;
 using MediaIsland.Services.Audio;
 using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.MediaLink.Mapping;
+using MediaIsland.Services.MediaLink.Protocol;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.ComponentModel;
+using System.IO;
 
 namespace MediaIsland.Services.MediaLink;
 
@@ -34,6 +37,16 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     private CancellationTokenSource? _debounceCts;
     private bool _upstreamAudioEnabled;
     private bool _disposed;
+
+    /// <summary>
+    /// 已发出过封面请求的曲目。上游的 media.updated 在播放期间每几百毫秒一条，
+    /// 每条都问会让一张几百 KB 的图反复过网——而同一曲目的封面不会变。
+    ///
+    /// 记「已请求」而非「已拿到」：回复可能是空的（上游那首确实没图），
+    /// 按「拿到」记会让无封面的曲目被无休止重问。
+    /// 单线程访问（客户端的接收循环），故不加锁。
+    /// </summary>
+    private string? _requestedThumbnailToken;
 
     public MediaLinkUpstreamHostedService(
         MediaLinkInjectionStore injectionStore,
@@ -258,6 +271,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
 
             client.MediaReceived += OnMediaReceived;
             client.LyricsReceived += OnLyricsReceived;
+            client.ThumbnailReceived += OnThumbnailReceived;
             client.ConnectionStateChanged += OnClientConnectionStateChanged;
 
             if (_visualization is not null)
@@ -358,6 +372,9 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             if (_injectionStore.TrySetMedia(
                     payload, out var error, MediaLinkDtoMapper.ParseChangeKind(e.Media.ChangeKind)))
             {
+                // 注入成功后才问封面：请求要带 trackToken，而那个 token 必须与存储里
+                // 当前曲目算出的一致，否则回复到达时会被判为过期而丢弃。
+                RequestThumbnailIfNeeded(e.Media);
                 return;
             }
 
@@ -384,6 +401,98 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         catch (Exception ex)
         {
             _logger?.LogDebug(ex, "处理上游歌词失败");
+        }
+    }
+
+    /// <summary>
+    /// 按需请求封面。同一曲目只问一次：上游在播放期间每几百毫秒推一条 media.updated，
+    /// 每条都问会让同一张图反复过网，而封面在曲目内是不变的。
+    /// </summary>
+    private void RequestThumbnailIfNeeded(MediaLinkMediaDto dto)
+    {
+        var client = _client;
+        if (client is null)
+        {
+            return;
+        }
+
+        // token 从注入存储的当前快照算，而非直接用 dto.TrackToken：后者由上游计算，
+        // 上游漏发或算法不同时会与本机存储失配，使回复被丢弃。本机自己算必然一致。
+        var token = _injectionStore.GetMediaSnapshot() is { } media
+            ? MediaLinkDtoMapper.ComputeTrackToken(
+                media.SourceApp, media.Title, media.Artist, media.AlbumTitle)
+            : null;
+        if (!ShouldRequestThumbnail(token, _requestedThumbnailToken, dto.HasThumbnail))
+        {
+            return;
+        }
+
+        _requestedThumbnailToken = token;
+        _ = client.RequestThumbnailAsync(token);
+    }
+
+    /// <summary>
+    /// 该不该为这条 media.updated 问一次封面。抽成静态纯函数，让三个条件的组合
+    /// 可以被逐格锁死——端到端驱动它需要真实 socket 与真实上游，而它的全部内容
+    /// 就是三个值的比较。
+    ///
+    /// <paramref name="hasThumbnail"/> 为假时不问：注定拿到空数据的往返没有价值。
+    /// 此时也不记「已问」——上游可能先推一条无封面的位置更新、随后封面才就绪，
+    /// 记下就会把那首歌永久钉在无封面状态。代价是这种曲目每条更新都要重跑一次
+    /// 本函数，而它只是三个比较，不过网。
+    /// </summary>
+    internal static bool ShouldRequestThumbnail(
+        string? currentToken,
+        string? requestedToken,
+        bool hasThumbnail) =>
+        hasThumbnail
+        && !string.IsNullOrEmpty(currentToken)
+        && !string.Equals(currentToken, requestedToken, StringComparison.Ordinal);
+
+    /// <summary>
+    /// 装上收到的封面。解码放在这里而不是客户端里：客户端只搬字节，
+    /// 让它认识 Avalonia 的位图会把协议层绑到 UI 框架上。
+    /// </summary>
+    private void OnThumbnailReceived(object? sender, MediaLinkThumbnailReceivedEventArgs e)
+    {
+        try
+        {
+            // 空数据是协议规定的正常回复（无封面、超限、失配）。照样写入：
+            // 它会把存储里可能残留的旧图清掉，而残留的表现就是新曲目顶着上一首的封面。
+            var bitmap = Decode(e.Data);
+            if (!_injectionStore.TrySetThumbnail(e.TrackToken, bitmap))
+            {
+                // 失配即这份封面已经过期（回复在途中又切了歌）。丢弃即可：
+                // 新曲目那条 media.updated 已经或即将触发它自己的请求。
+                _logger?.LogDebug("丢弃过期的上游封面：{Token}", e.TrackToken);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "处理上游封面失败");
+        }
+    }
+
+    /// <summary>
+    /// PNG 字节 → 位图。解码失败按「无封面」处理而非抛出：对端给了张坏图
+    /// 不该让本机的媒体显示整体失效。
+    /// </summary>
+    private Bitmap? Decode(byte[]? data)
+    {
+        if (data is null || data.Length == 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var stream = new MemoryStream(data);
+            return new Bitmap(stream);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "上游封面解码失败");
+            return null;
         }
     }
 
@@ -457,12 +566,15 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
 
         _client.MediaReceived -= OnMediaReceived;
         _client.LyricsReceived -= OnLyricsReceived;
+        _client.ThumbnailReceived -= OnThumbnailReceived;
         _client.ConnectionStateChanged -= OnClientConnectionStateChanged;
         _client.AudioFrameReceived -= OnAudioFrameReceived;
         await _client.StopAsync();
         _client = null;
         _audioRelay = null;
         _upstreamAudioEnabled = false;
+        // 忘掉已问记录：换了连接就得重新问，否则重连后当前曲目的封面永远补不上。
+        _requestedThumbnailToken = null;
         RaiseAudioSourceChanged();
     }
 
