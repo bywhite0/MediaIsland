@@ -50,6 +50,13 @@
     border-radius: 6px; cursor: pointer; font-weight: 600;
   }
   button:disabled { background: var(--panel); color: var(--dim); cursor: default; }
+  /* 次要按钮：与「连接」区分主次。开关态走 aria-pressed，读屏器与样式共用一个事实。 */
+  button.ghost {
+    background: var(--panel); color: var(--fg);
+    border: 1px solid rgba(255, 255, 255, 0.2); backdrop-filter: blur(16px);
+  }
+  button.ghost[aria-pressed="true"] { background: var(--accent); color: #000; border-color: transparent; }
+  button.ghost:disabled { color: var(--dim); border-color: rgba(255, 255, 255, 0.12); }
 
   #stage {
     flex: 1; display: flex; gap: 32px; align-items: center;
@@ -107,6 +114,7 @@
     <input id="url" value="ws://127.0.0.1:21757/v1/ws" aria-label="服务地址，也可直接粘贴配置码">
     <input id="token" type="password" placeholder="Token" aria-label="Token">
     <button id="go" type="button">连接</button>
+    <button id="audio" type="button" class="ghost" aria-pressed="false" disabled>声音</button>
   </div>
 
   <div id="stage">
@@ -124,10 +132,17 @@
 
   <div id="status">
     <b id="state-line"></b>
+    <div id="audio-line"></div>
     <div>
       浏览器一律发送 <code>Origin</code> 请求头，服务端会按白名单校验。用 <code>file://</code> 打开本页时 Origin 为
       <code>null</code>，从本地 HTTP 服务打开则是 <code>http://localhost:端口</code>；两者都需要先在 ClassIsland
       设置页加入「允许的 Origin」，否则握手会被 403 拒绝。
+    </div>
+    <div>
+      「声音」把远端机器的系统输出放到本机，仅在服务端于 <code>server.hello</code> 声明了
+      <code>audio</code> 能力时可用。它只能由点击开启——浏览器的自动播放策略要求
+      <code>AudioContext</code> 在用户手势里启动。开启后背景会随低频鼓点跳动，
+      歌词与进度也会整体后移一个抖动缓冲的深度，以对齐本机喇叭而非远端的实时位置。
     </div>
   </div>
 </div>
@@ -157,6 +172,35 @@ const state = {
   futureLyrics: null,   // trackToken 领先于 media.updated 的歌词，暂存待配
   reconnect: null,
   closedByUser: false
+};
+
+// 抖动缓冲目标深度。与本仓渲染器的默认值一致：低于一个设备周期加一次重传的量级，
+// 缓冲会持续欠载，表现为断续。
+const TARGET_BUFFER_MS = 200;
+
+// 缓冲深度上限。超过即丢帧——发送端时钟比本机设备快时深度会单调增长，
+// 不设上限就是把延迟永久背下去。
+const MAX_BUFFER_MS = 600;
+
+const audio = {
+  ctx: null,
+  format: { sampleRate: 48000, channels: 2 },  // 由 server.hello 的 audio 字段覆盖
+  supported: false,     // 服务端声明了 audio 能力，且线格式本页认得
+  reason: '',           // 不支持的具体原因，供状态行说清是哪一种
+  wanted: false,        // 用户要求出声。与连接解耦，重连后自动恢复
+  playing: false,       // 真的排出过帧
+  lastFrameAt: 0,       // 最近一帧到达的本地时刻
+  nextTime: 0,          // 下一块 PCM 的排程时刻，AudioContext 时钟
+  sources: new Set(),   // 已排程未播完的节点，重置时要停掉
+  frames: 0,
+  dropped: 0,
+  underruns: 0,
+  frameMs: 0,           // 最近一帧的实际时长，按 PCM 字节数算出
+  serverDelayMs: 0,     // 服务端内部从采样到发送的延迟
+  bandPeak: 0,          // 自上次呈现以来的低频带 RMS 峰值
+  bandMax: 0,           // 缓慢衰减的峰值，自适应增益的分母
+  bandLevel: 1,         // 平滑后喂给 AMLL 的低频音量
+  biquad: { fs: 0, c: null, x1: 0, x2: 0, y1: 0, y2: 0 }
 };
 
 // ---------- AMLL ----------
@@ -238,6 +282,8 @@ $('go').addEventListener('click', () => {
   connect();
 });
 
+$('audio').addEventListener('click', toggleAudio);
+
 // 粘贴配置码到地址栏时自动拆成地址与 Token，省去手抄 32 字节密钥。
 $('url').addEventListener('input', () => {
   const parsed = parseConfigCode($('url').value);
@@ -272,11 +318,14 @@ function connect() {
     return;
   }
   state.ws = ws;
+  ws.binaryType = 'arraybuffer';   // 音频帧走二进制，默认的 Blob 只能异步读
   $('go').textContent = '断开';
   setStatus('连接中…');
 
   ws.onopen = () => setStatus('已连接，等待 server.hello…');
   ws.onmessage = (e) => {
+    // 不走 JSON 信封的入站帧只有音频，按类型分流即可。
+    if (e.data instanceof ArrayBuffer) { onAudioFrame(e.data); return; }
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
     handle(msg);
@@ -286,6 +335,11 @@ function connect() {
     state.ws = null;
     state.media = null;
     player.pause();
+    // 只收掉输出，不动 audio.wanted：意愿与连接解耦，重连后自动恢复，
+    // 否则断一次线用户就得再点一次「声音」。
+    stopAudio();
+    audio.supported = false;
+    syncAudio();
     $('go').textContent = '连接';
     if (state.closedByUser) {
       setStatus('已断开');
@@ -322,14 +376,14 @@ function handle(msg) {
 
   switch (msg.type) {
     case 'auth_ok':
-      send('subscribe', { channels: ['media', 'lyrics'] });
+      requestChannels();
       break;
     case 'auth_fail':
       state.closedByUser = true;   // Token 错了，重连也没用
       setStatus('认证失败：Token 不正确');
       break;
     case 'subscribe_ok':
-      setStatus('已订阅 media / lyrics');
+      setStatus('已订阅 ' + (msg.payload?.channels || []).join(' / '));
       break;
     case 'thumbnail':
       onThumbnail(msg.payload || {});
@@ -352,7 +406,50 @@ function onHello(p) {
     state.coverToken = null;
     state.pendingCover = null;
   }
+
+  // hello 不止握手时来一次，同一条连接上可以再发，每条都是一份完整声明。
+  // 故能力以最新一条为准整体覆盖，只在握手时记一次会让中途的能力变化无从察觉。
+  //
+  // 「没声音」的两种原因要分开记：能力缺失是对端不懂这个协议，格式不认得是懂但
+  // 说的方言不同。混成一句会把排查方向指错——前者该换服务端，后者该改客户端。
+  const caps = p.capabilities || [];
+  audio.supported = false;
+  if (!caps.includes('audio')) {
+    audio.reason = '服务端未声明 audio 能力，无法输出声音';
+  } else if (!formatAccepted(p.audio)) {
+    audio.reason = `服务端声明的线格式 ${p.audio.format} 本页不认得（只支持 s16le）`;
+  } else {
+    audio.supported = true;
+    audio.reason = '';
+  }
+  if (p.audio) {
+    audio.format = {
+      sampleRate: p.audio.sampleRate || audio.format.sampleRate,
+      channels: p.audio.channels || audio.format.channels
+    };
+  }
+  if (!audio.supported) stopAudio();
+  syncAudio();
+
   send('auth', { token: $('token').value });
+}
+
+// subscribe 是整体替换语义，故每次都发全量频道列表而非增量。
+//
+// audio 只在服务端声明支持时才带上：向不认识该频道的旧服务端请求它，
+// 整个 subscribe 会以 bad_request 被拒——media 与 lyrics 一起没了。
+// 用户为了听声音连歌词都会失去，故能力未知时一律不请求。
+function requestChannels() {
+  const wantsAudio = audio.wanted && audio.supported;
+  const channels = wantsAudio ? ['media', 'lyrics', 'audio'] : ['media', 'lyrics'];
+  if (!send('subscribe', { channels })) return;
+
+  // 订阅只是让帧有路可走，采集与否另由这对指令表达。两者缺一都不会有帧。
+  send(wantsAudio ? 'audio.play_start' : 'audio.play_stop', null);
+
+  // 断线时挂起过上下文，重连后要唤回来。此时页面早已有过用户手势，
+  // 自动播放策略不再拦——首次开启那一下才必须在点击里完成。
+  if (wantsAudio) audio.ctx?.resume().catch(() => {});
 }
 
 function onError(p) {
@@ -370,6 +467,8 @@ function onMedia(p) {
     setCover(null);
     setLyrics([], 0, '无播放中的媒体');
     player.pause();
+    // 不必动音频：无曲目后所有帧都对不上 trackToken 而被判过期，
+    // 而重新有曲目时排程会发现锚点已过期并自行重新预填充。
     return;
   }
 
@@ -413,15 +512,20 @@ function render(p) {
 }
 
 // 位置插值：不假设两台机器时钟同步。
-// serverTimeMs - positionCapturedAtMs 是服务端内部的采样延迟；
+// serverTimeMs - capturedAtMs 是服务端内部的采样延迟；
 // performance.now() - recvAt 是本地收到后经过的时间。两段都用各自时钟内的差值。
+//
+// 末尾再减去本机音频输出延迟：出声时喇叭放的是抖动缓冲里的旧内容，
+// 呈现要跟着后移才对得上听觉。钳到非负——歌曲刚起播、位置还小于缓冲深度时
+// 减出来是负值，而负位置会让选行落到第一行之前，表现为开头几百毫秒没有歌词。
 function positionNow() {
   const m = state.media;
   if (!m) return 0;
-  if (m.playbackState !== 'Playing') return m.positionMs;
-  const elapsed = (m.serverTimeMs - m.capturedAtMs) + (performance.now() - state.recvAt);
-  const pos = m.positionMs + elapsed * m.rate;
-  return Math.min(Math.max(0, pos), m.durationMs > 0 ? m.durationMs : pos);
+  const base = m.playbackState !== 'Playing'
+    ? m.positionMs
+    : m.positionMs + ((m.serverTimeMs - m.capturedAtMs) + (performance.now() - state.recvAt)) * m.rate;
+  const pos = Math.max(0, base - outputLatencyMs());
+  return Math.min(pos, m.durationMs > 0 ? m.durationMs : pos);
 }
 
 // ---------- 封面 ----------
@@ -475,9 +579,289 @@ function onLyrics(p) {
   setLyrics(toAmllLines(p.document), positionNow());
 }
 
+// ---------- 音频输出 ----------
+
+// 帧头常量。定长头 34 字节，之后是变长 trackToken 与裸 PCM，全部小端。
+const A_MAGIC0 = 0xa1, A_MAGIC1 = 0x01, A_VERSION = 1, A_HEADER = 34;
+const A_FLAG_SILENT = 1;
+
+const utf8 = new TextDecoder();
+
+// 只解 s16le。服务端将来若声明别的格式，宁可不出声也不能按错的格式解释字节——
+// 那是刺耳的噪声，而噪声比静默更难归因。
+function formatAccepted(fmt) {
+  return !fmt
+    || ((!fmt.format || fmt.format === 's16le')
+      && (!fmt.channels || fmt.channels >= 1)
+      && (!fmt.sampleRate || fmt.sampleRate >= 8000));
+}
+
+// AudioContext 必须在用户手势里创建并 resume，否则一直停在 suspended。
+// 这是浏览器的自动播放策略，不是可绕过的实现细节——故音频只能由按钮开启。
+function ensureContext() {
+  if (audio.ctx) return true;
+  const Ctor = window.AudioContext || window.webkitAudioContext;
+  if (!Ctor) return false;
+  try {
+    // 让上下文跑在线格式的采样率上，PCM 就不必逐块重采样。
+    audio.ctx = new Ctor({ sampleRate: audio.format.sampleRate });
+  } catch {
+    // 设备不支持该速率时退回原生速率。此时由 AudioBuffer 自带的采样率声明
+    // 触发浏览器重采样，音高正确，只是多一道插值。
+    try { audio.ctx = new Ctor(); } catch { return false; }
+  }
+  return true;
+}
+
+// 收掉输出：停掉在途帧、清空时间锚点、挂起上下文。
+// 在途帧必须停——不停的话，缓冲里那 200ms 会在下次开播时先放出来，
+// 听上去是上一首的尾巴。
+function stopAudio() {
+  for (const src of audio.sources) {
+    try { src.stop(); } catch { /* 已播完的节点再 stop 会抛，忽略 */ }
+  }
+  audio.sources.clear();
+  audio.nextTime = 0;
+  audio.playing = false;
+  audio.lastFrameAt = 0;
+  audio.frames = audio.dropped = audio.underruns = 0;
+  audio.frameMs = audio.serverDelayMs = 0;
+  audio.ctx?.suspend();
+  releaseBackground();
+}
+
+async function toggleAudio() {
+  if (audio.wanted) {
+    audio.wanted = false;
+    stopAudio();
+    syncAudio();
+    requestChannels();
+    return;
+  }
+  if (!audio.supported) return;
+  if (!ensureContext()) {
+    setStatus('本浏览器不支持 Web Audio，无法输出声音');
+    return;
+  }
+  try {
+    await audio.ctx.resume();
+  } catch (err) {
+    setStatus('无法启动音频输出：' + err.message);
+    return;
+  }
+  audio.wanted = true;
+  syncAudio();
+  requestChannels();
+}
+
+// 按钮的文字与按下态跟随**生效**状态，而 audio.wanted 只是意愿：
+// 服务端不支持时按钮显示未按下且禁用，但意愿留着，换到支持的服务端会自动生效。
+function syncAudio() {
+  const on = audio.wanted && audio.supported;
+  const btn = $('audio');
+  btn.disabled = !audio.supported || !state.ws;
+  btn.setAttribute('aria-pressed', String(on));
+  btn.textContent = on ? '静音' : '声音';
+}
+
+// 一帧入站二进制即一帧音频。整条函数的失败路径全是「丢帧但不断连」：
+// 未知 magic 可能是未来版本的其他二进制帧类型，按协议的「必须容忍未知」处理。
+function onAudioFrame(buf) {
+  if (buf.byteLength < A_HEADER) return;
+  const view = new DataView(buf);
+  if (view.getUint8(0) !== A_MAGIC0 || view.getUint8(1) !== A_MAGIC1) return;
+  if (view.getUint8(2) !== A_VERSION) return;
+
+  const flags = view.getUint8(3);
+  const capturedAtMs = Number(view.getBigInt64(12, true));
+  const serverTimeMs = Number(view.getBigInt64(20, true));
+  const tokenLen = view.getUint16(32, true);
+  if (buf.byteLength < A_HEADER + tokenLen) return;
+
+  const token = utf8.decode(new Uint8Array(buf, A_HEADER, tokenLen));
+  const pcmAt = A_HEADER + tokenLen;
+  const pcmBytes = buf.byteLength - pcmAt;
+
+  // i16 要求偶数字节，奇数说明上游编码有误。
+  if (pcmBytes % 2 !== 0) { audio.dropped++; return; }
+
+  // 与歌词同源的规则：切歌后过期曲目的 PCM 直接丢弃。当前无曲目时也不接受——
+  // 无从校验即不可信，而 media.updated 紧随 subscribe_ok 到达，这个窗口很短。
+  if (!state.trackToken || token !== state.trackToken) { audio.dropped++; return; }
+
+  // 协议的免对时公式：两个值同出自发送端时钟，差值才有意义。
+  // 不要拿 serverTimeMs 与本地时钟直接相减。
+  audio.serverDelayMs = serverTimeMs - capturedAtMs;
+  audio.lastFrameAt = performance.now();
+
+  // 刻意不理 TrackStart 标志。协议说接收端「可」据此重置缓冲，那是给可视化用的：
+  // 它要的是别把上一首的波形画到新曲目上。而播放侧的采集流本身是连续的，
+  // 切歌处丢掉缓冲里那 200ms 真实音频只会换来一个断口。
+  if (audio.wanted && audio.ctx) schedule(view, pcmAt, pcmBytes, flags);
+}
+
+// 排程一块 PCM 到 AudioContext 时间轴上。
+//
+// 抖动缓冲就是「排在 currentTime 之前多远」这一个量：排得越远越抗网络抖动，
+// 也越晚出声。这里不做重采样调速（本仓的 native 渲染器用 ±0.1% 的比率把深度
+// 拉回目标），示例改用两条硬边界——够用，且读者不必先读懂一个控制律。
+function schedule(view, pcmAt, pcmBytes, flags) {
+  const ctx = audio.ctx;
+  const { sampleRate, channels } = audio.format;
+  const bytesPerFrame = 2 * channels;
+  const frameCount = Math.floor(pcmBytes / bytesPerFrame);
+  if (frameCount < 1) return;   // 帧合法，只是没有内容
+
+  // 帧时长按实际字节数算，绝不写死 10ms：采集设备一变，写死的下游会静默漂移。
+  audio.frameMs = frameCount / sampleRate * 1000;
+
+  const depth = audio.nextTime - ctx.currentTime;
+  if (depth > MAX_BUFFER_MS / 1000) {
+    // 深度只增不减说明发送端时钟比本机设备快。丢最新的一帧，
+    // 否则这份延迟会一直背着走。
+    audio.dropped++;
+    return;
+  }
+
+  if (depth < 0.005) {
+    // 落后了（或刚开播）。start() 会把过期时刻当成「立即」，缓冲深度再也长不回来，
+    // 表现为持续断续，故必须重新把锚点推到目标深度处。
+    if (audio.frames > 0) audio.underruns++;
+    audio.nextTime = ctx.currentTime + TARGET_BUFFER_MS / 1000;
+  }
+
+  const startAt = audio.nextTime;
+  audio.nextTime += frameCount / sampleRate;
+  audio.frames++;
+  audio.playing = true;
+
+  // 静音帧携带的是全长的零值 PCM。不必解也不必排节点，但时间轴照常推进——
+  // 少推一帧，此后每一帧都会早放一帧的时长。
+  if (flags & A_FLAG_SILENT) return;
+
+  const buffer = ctx.createBuffer(channels, frameCount, sampleRate);
+  if (mono.length < frameCount) mono = new Float32Array(frameCount);
+  for (let ch = 0; ch < channels; ch++) {
+    const out = buffer.getChannelData(ch);
+    let at = pcmAt + ch * 2;
+    for (let i = 0; i < frameCount; i++, at += bytesPerFrame) {
+      // 逐样本走 DataView 而不是套一层 Int16Array：后者要求字节偏移是 2 的倍数，
+      // 而 PCM 的起点是 34 + trackToken 长度，协议并未保证它是偶数。
+      // 且 Int16Array 按平台字节序解释，而线格式恒为小端。
+      const s = view.getInt16(at, true) / 32768;
+      out[i] = s;
+      // 顺手攒单声道供低频分析。低音基本居中，取平均比只取左声道更接近实听能量。
+      mono[i] = ch === 0 ? s : mono[i] + s;
+    }
+  }
+  if (channels > 1) {
+    for (let i = 0; i < frameCount; i++) mono[i] /= channels;
+  }
+  // 峰值保持：音频约 100 帧每秒而动画只有 60，直接取最新值会漏掉鼓点。
+  audio.bandPeak = Math.max(audio.bandPeak, bandRms(frameCount, sampleRate));
+
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(ctx.destination);
+  src.onended = () => audio.sources.delete(src);
+  audio.sources.add(src);
+  src.start(startAt);
+}
+
+// ---------- 低频音量（驱动 AMLL 背景跳动） ----------
+
+// AMLL 的 setLowFreqVolume 要的是 50–120Hz 的能量，取值 [0,1]。
+//
+// 这里刻意不用 FFT：一帧只有 10ms，而 50Hz 的一个周期就是 20ms——比整帧还长。
+// 对单帧做 FFT 的频率分辨率约 100Hz，根本分不开这个带，加窗补零也变不出
+// 采样时长里不存在的信息。真正需要的是一个**状态跨帧延续**的滤波器，
+// 双二阶带通只要四个系数和四个状态量就够。
+const BAND_HZ = 80;      // 50–120 的几何中心附近
+const BAND_Q = 1.2;      // 中心频率 / 带宽 ≈ 80 / 70
+const BAND_FLOOR = 0.002;
+
+let mono = new Float32Array(0);
+
+// RBJ 带通（constant 0dB peak gain），系数按 a0 归一后存。b1 恒为 0，不必存。
+function designBandpass(fs) {
+  const w0 = 2 * Math.PI * BAND_HZ / fs;
+  const alpha = Math.sin(w0) / (2 * BAND_Q);
+  const a0 = 1 + alpha;
+  return { b0: alpha / a0, b2: -alpha / a0, a1: -2 * Math.cos(w0) / a0, a2: (1 - alpha) / a0 };
+}
+
+// 带内 RMS。滤波器状态留在 audio.biquad 里跨帧延续，这正是它能分辨
+// 比帧长还长的周期的原因。
+function bandRms(count, fs) {
+  const f = audio.biquad;
+  if (!f.c || f.fs !== fs) {
+    f.c = designBandpass(fs);
+    f.fs = fs;
+    f.x1 = f.x2 = f.y1 = f.y2 = 0;
+  }
+  const { b0, b2, a1, a2 } = f.c;
+  let sum = 0;
+  for (let i = 0; i < count; i++) {
+    const x = mono[i];
+    const y = b0 * x + b2 * f.x2 - a1 * f.y1 - a2 * f.y2;
+    f.x2 = f.x1; f.x1 = x;
+    f.y2 = f.y1; f.y1 = y;
+    sum += y * y;
+  }
+  return Math.sqrt(sum / count);
+}
+
+// 把峰值保持的带内能量转成 AMLL 要的 [0,1] 并推给背景。
+//
+// 自适应增益而非固定增益：不同曲目、不同系统音量下鼓点的绝对能量能差一个数量级，
+// 固定增益会让安静的曲子完全不跳、吵的曲子一直贴顶。分母取缓慢衰减的历史峰值，
+// 并设下限——否则安静段落里分母衰到近零，底噪也会被归一成满幅跳动。
+//
+// 起跳快、回落慢：鼓点的听感是「砸下去再松开」，对称的平滑会把它抹成蠕动。
+// 两个时间常数都按 delta 折算，故与动画帧率无关。
+function driveBackground(delta) {
+  audio.bandMax = Math.max(audio.bandPeak, audio.bandMax * Math.exp(-delta / 4000), BAND_FLOOR);
+  const target = Math.min(1, audio.bandPeak / audio.bandMax);
+  audio.bandPeak = 0;   // 峰值保持窗口到此为止，下一段重新攒
+
+  const tau = target > audio.bandLevel ? 30 : 180;
+  audio.bandLevel += (target - audio.bandLevel) * (1 - Math.exp(-delta / tau));
+  background.setLowFreqVolume(audio.bandLevel);
+}
+
+// 交回 AMLL 的默认值。不出声时我们拿不到低频数据，而据其文档，
+// 此时应当传 1.0——留在最后一个跳动值上会让背景僵在半跳的姿态。
+function releaseBackground() {
+  audio.bandPeak = audio.bandMax = 0;
+  audio.bandLevel = 1;
+  background.setLowFreqVolume(1);
+}
+
+// 帧是否还在来。正常时每秒约 100 帧，静默半秒即可判定停了。
+//
+// 需要这个判据是因为「开着音频」不等于「有声音」：服务端原生音频库缺失时
+// audio.play_start 照样回 ok 却永远不推帧。少了它，上游一停采集，
+// 歌词会永久偏在补偿后的位置上，背景也会僵在最后那个跳动值。
+function streaming() {
+  return audio.playing && performance.now() - audio.lastFrameAt < 500;
+}
+
+// 本机出声引入的延迟。喇叭此刻放的是抖动缓冲里攒了一段的内容，
+// 而媒体时钟给的是服务端的实时位置，故呈现必须后移同样多才对得上听觉。
+//
+// 取目标深度而非实测占用：后者在目标值附近持续波动，直接用会让进度与歌词来回抖，
+// 而恒定偏一点远比来回跳好看。没在出声时为零——那时没有本机引入的延迟，
+// 减一个缓冲深度只会把歌词推到听觉后面。
+function outputLatencyMs() {
+  if (!streaming()) return 0;
+  const device = audio.ctx?.outputLatency || audio.ctx?.baseLatency || 0;
+  return TARGET_BUFFER_MS + device * 1000;
+}
+
 // ---------- 渲染循环 ----------
 
 let lastFrame = -1;
+let statusAt = 0;
 function tick(frameTime) {
   const delta = lastFrame < 0 ? 0 : frameTime - lastFrame;
   lastFrame = frameTime;
@@ -491,9 +875,43 @@ function tick(frameTime) {
   if (state.media) player.setCurrentTime(Math.round(pos));
   player.update(delta);
 
+  // 出声时背景跟着鼓点跳。帧停了就交回 AMLL 的默认值，
+  // 否则背景会僵在最后那个跳动值上。
+  if (streaming()) driveBackground(delta);
+  else if (audio.bandLevel !== 1) releaseBackground();
+
+  // 音频诊断按 4Hz 刷。每帧写 textContent 只是让肉眼读不出的数字抖得更快。
+  if (frameTime - statusAt > 250) {
+    statusAt = frameTime;
+    renderAudioLine();
+  }
+
   requestAnimationFrame(tick);
 }
 requestAnimationFrame(tick);
+
+// 把抖动缓冲摊开给读者看：帧长是算出来的而非约定的，深度是排在 currentTime 之前
+// 多远，欠载与丢帧分别对应缓冲见底和积压超限两条边界。
+function renderAudioLine() {
+  const el = $('audio-line');
+  if (!streaming()) {
+    // 三种「没声音」要分开说，否则用户无从判断该改设置、该装库，还是该等一等。
+    el.textContent = !state.ws ? ''
+      : !audio.supported ? audio.reason
+      : audio.wanted ? '已请求音频，但没有收到帧——服务端的原生音频库可能不可用'
+      : '';
+    return;
+  }
+  const depth = Math.max(0, (audio.nextTime - audio.ctx.currentTime) * 1000);
+  el.textContent =
+    `声音 ${audio.format.sampleRate}Hz/${audio.format.channels}ch`
+    + ` · 帧长 ${audio.frameMs.toFixed(1)}ms`
+    + ` · 缓冲 ${depth.toFixed(0)}ms`
+    + ` · 服务端内部延迟 ${audio.serverDelayMs}ms`
+    + ` · 已放 ${audio.frames} 帧`
+    + ` · 丢 ${audio.dropped}`
+    + ` · 欠载 ${audio.underruns}`;
+}
 
 function fmt(ms) {
   const s = Math.floor(Math.max(0, ms) / 1000);
