@@ -180,13 +180,18 @@ public sealed class MediaLinkClient : IAsyncDisposable
 
     private long _sessionEpoch = -1;
     private long _lastSeq;
-    private IReadOnlyCollection<string> _serverCapabilities = [];
-    private long _serverAudioClockBudgetMs = NoBudgetDeclared;
-
-    /// <summary>播放延迟预算的空值哨兵。见 <see cref="ServerAudioClockBudgetMs"/>。</summary>
-    private const long NoBudgetDeclared = long.MinValue;
+    private MediaLinkServerDeclaration _serverDeclaration = MediaLinkServerDeclaration.None;
     private volatile bool _audioSubscriptionWanted;
     private IMediaLinkClientSocket? _activeSocket;
+
+    /// <summary>
+    /// 服务端最近一条 server.hello 的声明，一次读取即取到成组的两个值。
+    ///
+    /// 判定对齐要同时吃「有没有 audio.clock 能力」与「预算是多少」，而下面那几个属性
+    /// 各读一次快照：分两次读回来的两半可能来自两条 hello，于是归因会指错方向。
+    /// 要同时用到两者的调用方读这一个属性，不要读下面那几个。
+    /// </summary>
+    internal MediaLinkServerDeclaration ServerDeclaration => Volatile.Read(ref _serverDeclaration);
 
     /// <summary>
     /// 服务端在 server.hello 声明的可选能力。第 3 期据此决定是否订阅 audio——
@@ -195,12 +200,11 @@ public sealed class MediaLinkClient : IAsyncDisposable
     /// 用 Volatile 读写：写入发生在握手线程，而本属性会被需求变化线程读取来决定订阅内容。
     /// 第 1 期判定「当前无消费者，暂不加屏障」，本期那两条线程真实存在了。
     /// </summary>
-    public IReadOnlyCollection<string> ServerCapabilities => Volatile.Read(ref _serverCapabilities);
+    public IReadOnlyCollection<string> ServerCapabilities => ServerDeclaration.Capabilities;
 
     public bool SupportsAudio => ServerCapabilities.Contains(MediaLinkProtocol.CapabilityAudio);
 
-    public bool SupportsAudioClock =>
-        ServerCapabilities.Contains(MediaLinkProtocol.CapabilityAudioClock);
+    public bool SupportsAudioClock => ServerDeclaration.SupportsAudioClock;
 
     /// <summary>
     /// 服务端声明的播放延迟预算，毫秒。未声明时为 null。
@@ -208,16 +212,8 @@ public sealed class MediaLinkClient : IAsyncDisposable
     /// 缺失不回落到默认值：两端各自默认成同一个数看起来一致，实则是两份各自为真的
     /// 声明，改了一端就静默失配，而症状是两台机器差一个固定的量、像硬件延迟。
     /// 判定见 <see cref="MediaLinkAlignmentPolicy"/>。
-    ///
-    /// 用哨兵而不是 <c>long?</c> 存内部字段：可空类型没有原子读写，而这个值写在握手
-    /// 线程、读在播放线程。哨兵取 <see cref="long.MinValue"/> 而不是 -1——负预算是
-    /// 「声明了一个办不到的值」，与「没声明」的排查方向不同（改服务端配置 / 查服务端版本），
-    /// 拿 -1 当空值会把前者吞成后者。
     /// </summary>
-    public long? ServerAudioClockBudgetMs =>
-        Volatile.Read(ref _serverAudioClockBudgetMs) is var value && value != NoBudgetDeclared
-            ? value
-            : null;
+    public long? ServerAudioClockBudgetMs => ServerDeclaration.AudioClockBudgetMs;
 
     public MediaLinkClient(MediaLinkClientOptions options, ILogger? logger = null, Func<long>? tickProvider = null)
     {
@@ -520,17 +516,21 @@ public sealed class MediaLinkClient : IAsyncDisposable
     /// </summary>
     private void ApplyServerHello(MediaLinkServerHelloPayload? payload)
     {
-        Volatile.Write(ref _serverCapabilities, payload?.Capabilities is { } capabilities
-            ? new HashSet<string>(capabilities, StringComparer.Ordinal)
-            : []);
-
+        // 能力与预算合成一份声明后一次写入，而不是各写一次：判定对齐要同时吃这两个值，
+        // 分两次写就有一瞬间是新能力配旧预算，读到那一瞬的人会把「服务端版本太老」
+        // 归因成「服务端配置不全」——两条提示指向完全不同的排查方向。
+        //
         // server.hello 可以在连接存活期间重发并改 D，故这里是无条件覆写而非「仅首次」：
         // 重发把预算改小时接收端要能退回，改大时要能重新进入。
         // 只有字段真的缺失才记空值；声明出来的数原样保留，哪怕它办不到——
         // 「声明了 0」与「没声明」的排查方向不同。
         Volatile.Write(
-            ref _serverAudioClockBudgetMs,
-            payload?.AudioClock?.BudgetMs ?? NoBudgetDeclared);
+            ref _serverDeclaration,
+            new MediaLinkServerDeclaration(
+                payload?.Capabilities is { } capabilities
+                    ? new HashSet<string>(capabilities, StringComparer.Ordinal)
+                    : [],
+                payload?.AudioClock?.BudgetMs));
 
         HandleEpoch(payload?.SessionEpoch ?? 0);
     }

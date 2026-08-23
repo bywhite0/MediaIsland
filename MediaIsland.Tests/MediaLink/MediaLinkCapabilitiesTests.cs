@@ -229,6 +229,72 @@ public class MediaLinkClientCapabilityTests
         Assert.False(harness.Client.SupportsAudio);
         Assert.Empty(harness.Client.ServerCapabilities);
     }
+
+    [Fact]
+    public async Task Client_HelloFlippingTheDeclaration_NeverExposesAHalfAppliedPair()
+    {
+        // 能力与预算若各写一次，重发那一瞬读者会拿到「新能力配旧预算」：撤掉 audio.clock
+        // 的那条 hello 已经生效，预算却还是上一条留下的，于是归因从「服务端版本太老」
+        // 变成「服务端配置不全」——两条提示指向完全不同的排查方向。
+        //
+        // 这里只投两种 hello：能力与预算齐备，或两者皆无。故「没有 audio.clock 能力却有
+        // 预算」这个读数不可能出自其中任何一条，只可能是读到了半份写入。
+        const string withClock = ""","capabilities":["audio","audio.clock"],"audioClock":{"dMs":300}""";
+
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(withClock);
+
+        using var stop = new CancellationTokenSource();
+        MediaLinkServerDeclaration? torn = null;
+        var sawDeclared = false;
+        var sawWithdrawn = false;
+
+        // 读者自旋而不是隔一会儿看一眼：撕裂窗口只有两次写之间那几纳秒宽。
+        var reader = Task.Factory.StartNew(
+            () =>
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    var declaration = harness.Client.ServerDeclaration;
+                    if (declaration.SupportsAudioClock)
+                    {
+                        sawDeclared = true;
+                    }
+                    else if (declaration.AudioClockBudgetMs is null)
+                    {
+                        sawWithdrawn = true;
+                    }
+                    else
+                    {
+                        torn = declaration;
+                        return;
+                    }
+                }
+            },
+            TaskCreationOptions.LongRunning);
+
+        for (var i = 0; i < 400; i++)
+        {
+            harness.QueueServerHello(epoch: 2 + i, capabilitiesJson: i % 2 == 0 ? "" : withClock);
+        }
+
+        // 末条给一个独一无二的预算值，据此确认前面那 400 条都处理完了。拿「能力在不在」
+        // 当收尾条件会在第一条带能力的 hello 处就提前满足，那时压力还没真正加上去。
+        harness.QueueServerHello(
+            epoch: 1000,
+            capabilitiesJson: ""","capabilities":["audio.clock"],"audioClock":{"dMs":999}""");
+        await harness.WaitUntilAsync(
+            () => harness.Client.ServerAudioClockBudgetMs == 999 || torn is not null);
+
+        stop.Cancel();
+        await reader;
+
+        Assert.Null(torn);
+        // 负向条件不得靠「什么都没发生」满足：读者必须真的见过声明存在与声明撤掉两种状态，
+        // 否则这条判据在一个从未翻转过的客户端上也是绿的。
+        Assert.True(sawDeclared);
+        Assert.True(sawWithdrawn);
+        Assert.Equal(999, harness.Client.ServerAudioClockBudgetMs);
+    }
 }
 
 /// <summary>
