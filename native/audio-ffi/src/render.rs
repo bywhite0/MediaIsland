@@ -1011,7 +1011,7 @@ mod wasapi {
     mod device_clock_probe {
         use std::time::{Duration, Instant};
 
-        use windows::Win32::Media::Audio::IAudioClock;
+        use windows::Win32::Media::Audio::{IAudioClock, DEVICE_STATE_ACTIVE};
 
         use super::*;
         use crate::timeline::TICKS_PER_MS;
@@ -1030,6 +1030,118 @@ mod wasapi {
                 }
             }
             started.elapsed()
+        }
+
+        /// 逐个输出端点看流延迟与引擎周期各报什么。
+        ///
+        /// 默认端点报 0 之后需要分清：0 是这个 API 的普遍行为，还是虚拟端点没有硬件链
+        /// 因而无可报。两者对代码的结论相同（0 一律当无信息），但对误差预算的表述不同。
+        ///
+        /// 只读，不改系统默认端点。端点名不在这里取——`PKEY_Device_FriendlyName` 要开
+        /// `Win32_Devices_FunctionDiscovery` 特性，而那会改动 `Cargo.toml` 的依赖段。
+        /// 打出端点 ID，名字由注册表侧对照。
+        #[test]
+        #[ignore = "需要真实音频设备，会逐个初始化并短暂启动每个输出端点"]
+        fn survey_every_render_endpoint() {
+            unsafe {
+                CoInitializeEx(None, COINIT_MULTITHREADED)
+                    .ok()
+                    .expect("CoInitializeEx");
+
+                {
+                    let enumerator: IMMDeviceEnumerator =
+                        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                            .expect("创建设备枚举器");
+                    let collection = enumerator
+                        .EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE)
+                        .expect("枚举输出端点");
+                    let count = collection.GetCount().expect("端点数");
+
+                    println!("--- 活动输出端点共 {count} 个 ---");
+                    let mut reported = 0u32;
+
+                    for index in 0..count {
+                        let device = collection.Item(index).expect("取端点");
+                        let id_ptr = device.GetId().expect("取端点 ID");
+                        let id = id_ptr.to_string().unwrap_or_default();
+                        CoTaskMemFree(Some(id_ptr.0 as *const c_void));
+
+                        let client: IAudioClient = match device.Activate(CLSCTX_ALL, None) {
+                            Ok(client) => client,
+                            Err(err) => {
+                                println!("[{index}] {id}
+     激活失败：{err}");
+                                continue;
+                            }
+                        };
+
+                        let Ok(mix_ptr) = client.GetMixFormat() else {
+                            println!("[{index}] {id}
+     取混音格式失败");
+                            continue;
+                        };
+                        let mix = parse_mix_format(mix_ptr);
+                        // 事件回调模式要先 SetEventHandle 才能 Start，这里不需要事件，故传 0。
+                        let init = client.Initialize(
+                            AUDCLNT_SHAREMODE_SHARED,
+                            0,
+                            BUFFER_DURATION_100NS,
+                            0,
+                            mix_ptr,
+                            None,
+                        );
+                        CoTaskMemFree(Some(mix_ptr as *const c_void));
+                        if let Err(err) = init {
+                            println!("[{index}] {id}
+     初始化失败：{err}");
+                            continue;
+                        }
+
+                        let after_init = client.GetStreamLatency().unwrap_or(-1);
+                        let mut default_period = 0i64;
+                        let mut min_period = 0i64;
+                        let periods = client
+                            .GetDevicePeriod(Some(&mut default_period), Some(&mut min_period));
+                        let buffer_frames = client.GetBufferSize().unwrap_or(0);
+
+                        let after_start = match client.Start() {
+                            Ok(()) => {
+                                let value = client.GetStreamLatency().unwrap_or(-1);
+                                let _ = client.Stop();
+                                value
+                            }
+                            Err(_) => -1,
+                        };
+
+                        let rate = mix.as_ref().map(|m| m.sample_rate).unwrap_or(0);
+                        let align = mix.as_ref().map(|m| m.block_align).unwrap_or(0);
+                        println!("[{index}] {id}");
+                        println!(
+                            "     混音 {rate} Hz / block_align {align}，缓冲 {buffer_frames} 帧"
+                        );
+                        println!(
+                            "     流延迟 init={} start={} (100ns)",
+                            after_init, after_start
+                        );
+                        if periods.is_ok() {
+                            println!(
+                                "     引擎周期 默认 {:.3} ms / 最小 {:.3} ms",
+                                default_period as f64 / f64::from(TICKS_PER_MS as i32),
+                                min_period as f64 / f64::from(TICKS_PER_MS as i32)
+                            );
+                        }
+
+                        if after_init > 0 || after_start > 0 {
+                            reported += 1;
+                        }
+                    }
+
+                    println!("--- 报出非零流延迟的端点：{reported} / {count} ---");
+                    assert!(count > 0, "本机没有活动的输出端点，这条实测无从进行");
+                }
+
+                CoUninitialize();
+            }
         }
 
         #[test]
