@@ -294,7 +294,9 @@ mod wasapi {
     use crate::run_guarded;
 
     /// 20ms 缓冲，与采集侧同量级。共享模式下的实用下限。
-    const BUFFER_DURATION_100NS: i64 = 20 * 10_000;
+    ///
+    /// 单位由 `timeline` 导出，理由同采集侧：REFERENCE_TIME 就是 100ns tick。
+    const BUFFER_DURATION_100NS: i64 = 20 * crate::timeline::TICKS_PER_MS;
 
     /// 线程句柄与停止事件。**收进 `Mutex` 是为了让 `start` / `stop` 只需 `&self`。**
     ///

@@ -42,7 +42,10 @@ use crate::{
 };
 
 /// 20ms 缓冲。这是 WASAPI 共享模式下的实用下限，再降需承担 glitch 风险。
-const BUFFER_DURATION_100NS: i64 = 20 * 10_000;
+///
+/// 单位由 `timeline` 导出：REFERENCE_TIME 就是 100ns tick，而那个单位在本 crate 里
+/// 只有一处定义。自己写一个 10_000 等于让同一个约定多出一份各自为真的声明。
+const BUFFER_DURATION_100NS: i64 = 20 * crate::timeline::TICKS_PER_MS;
 
 /// 重采样的定长块，对应 20ms @ 48kHz。仅非 48kHz 设备走这条路径。
 const RESAMPLE_CHUNK_FRAMES: usize = 960;

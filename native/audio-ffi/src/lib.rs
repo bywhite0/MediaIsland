@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub mod convert;
 pub mod render;
 pub mod ring;
+pub mod timeline;
 
 #[cfg(windows)]
 pub mod capture;
