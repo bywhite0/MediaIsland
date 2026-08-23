@@ -318,8 +318,8 @@ mod tests {
 
         // 真值来自数据本身：读游标落在第几帧，那一帧自称的时刻就是答案。
         let read_cursor = rounds * frames_u64(FRAME_FRAMES) - buffered_frames;
-        let want = i64::try_from(read_cursor / frames_u64(FRAME_FRAMES)).unwrap()
-            * drifted_frame_ticks;
+        let round_at_cursor = i64::try_from(read_cursor / frames_u64(FRAME_FRAMES)).unwrap();
+        let want = round_at_cursor * drifted_frame_ticks;
         let got = timeline.sender_ticks_at(read_cursor).unwrap();
 
         // 缓冲深度上的 200ppm 即 0.06 毫秒；整段播放时长上的 200ppm 是 12 毫秒。

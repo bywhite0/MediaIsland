@@ -12,7 +12,7 @@
 //! **`played_cb` 送的是重采样前的 48k i16**，不是写进设备缓冲的那一份：
 //! C# 侧的分析器只认 48000/2ch/i16。
 
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
 use crate::OUTPUT_SAMPLE_RATE;
 
@@ -63,6 +63,12 @@ pub struct PrefillState {
 }
 
 impl PrefillState {
+    /// 目标帧数是构造时定下的一个数，不是对某处当前值的引用。
+    /// prefill 是一次性粗调，外环是持续微调，前者不跟着后者走。
+    pub fn target_frames(&self) -> usize {
+        self.target_frames
+    }
+
     pub fn new(target_frames: usize) -> Self {
         Self {
             target_frames,
@@ -174,6 +180,36 @@ pub fn ratio_to_ppm(ratio: f64) -> u64 {
     ppm as u64
 }
 
+/// 目标深度的可写载体。
+///
+/// 抽成独立结构与 [`RenderStatsCell`] 同理：它要脱离 WASAPI 被测。
+/// 之前这个值是 render 循环外读一次的 u32 快照，于是外环算出多少都没有载体可写。
+///
+/// Relaxed 够用的理由与 stats 那段相同：这个值不参与同步任何其他内存访问，
+/// 读者最终看到即可。它也绝不去抢 ring 那把互斥量——对面等那把锁的是 WASAPI 实时线程。
+pub struct TargetDepthCell(AtomicU32);
+
+impl TargetDepthCell {
+    /// 起播前无人读它，[`WasapiRenderer::start`] 必定覆写。
+    /// 初值给下界而不是 0：0 不在合法区间内，读到它的人会以为配置坏了。
+    pub fn new(raw_ms: u32) -> Self {
+        Self(AtomicU32::new(clamp_target_ms(raw_ms)))
+    }
+
+    /// 写入侧的唯一入口，一律过 [`clamp_target_ms`]。
+    ///
+    /// 夹紧放在写入侧而不是读出侧：读在 WASAPI 实时线程上每轮一次，而写来自外环，
+    /// 频率低两个数量级；更要紧的是越界值若能存进来，此后每一次读都要重新判一遍它。
+    pub fn set_ms(&self, raw_ms: u32) {
+        let clamped = clamp_target_ms(raw_ms);
+        self.0.store(clamped, AtomicOrdering::Relaxed);
+    }
+
+    pub fn current_ms(&self) -> u32 {
+        self.0.load(AtomicOrdering::Relaxed)
+    }
+}
+
 /// 渲染线程的统计量。
 ///
 /// 全部原子且只用 Relaxed。Relaxed 够用的理由：这些值不参与同步任何其他内存访问，
@@ -279,9 +315,9 @@ mod wasapi {
     use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 
     use super::{
-        clamp_target_ms, frames_to_ms, prefill_silence_frames, ratio_to_ppm, resample_ratio,
-        target_frames, PrefillState, RenderStatsCell, MAX_RELATIVE_RATIO, RING_CAPACITY_FRAMES,
-        SINC_LEN,
+        frames_to_ms, prefill_silence_frames, ratio_to_ppm, resample_ratio, target_frames,
+        PrefillState, RenderStatsCell, TargetDepthCell, MAX_RELATIVE_RATIO, MIN_TARGET_MS,
+        RING_CAPACITY_FRAMES, SINC_LEN,
     };
     use crate::convert;
     use crate::convert::MixFormat;
@@ -318,6 +354,8 @@ mod wasapi {
         /// 与渲染线程共享。只有渲染线程写、FFI 只读，故不需要锁——
         /// 尤其不能去抢上面那把 ring 的互斥量，对面等它的是 WASAPI 实时线程。
         stats: Arc<RenderStatsCell>,
+        /// 与渲染线程共享。渲染线程每轮读一次，外环与 start 写它。
+        target: Arc<TargetDepthCell>,
         thread: Mutex<RenderThread>,
     }
 
@@ -329,6 +367,7 @@ mod wasapi {
                 ring: Arc::new(Mutex::new(PlaybackRing::new(RING_CAPACITY_FRAMES))),
                 running: Arc::new(AtomicBool::new(false)),
                 stats: Arc::new(RenderStatsCell::default()),
+                target: Arc::new(TargetDepthCell::new(MIN_TARGET_MS)),
                 thread: Mutex::new(RenderThread {
                     worker: None,
                     stop_event: None,
@@ -339,6 +378,14 @@ mod wasapi {
         /// 读运行时统计。未起播的句柄返回全零，`device_sample_rate` 为 0 即未起播。
         pub fn stats(&self) -> crate::RenderStats {
             self.stats.snapshot()
+        }
+
+        /// 播放中改目标深度。渲染循环下一轮即读到，越界值被夹到支持区间内。
+        ///
+        /// 本期不导出到 FFI：新增导出是 ABI 变更，而 ABI 只在一处升一次。
+        /// 这里先把内部表示改成可写的，供 crate 内的外环使用。
+        pub fn set_target_ms(&self, raw_ms: u32) {
+            self.target.set_ms(raw_ms);
         }
 
         /// 起渲染线程，**同步等它汇报启动结果**再返回。
@@ -362,7 +409,8 @@ mod wasapi {
                 });
             }
 
-            let target_ms = clamp_target_ms(target_ms);
+            // 夹紧在 cell 的写入侧，这里只管把起播值交给它。
+            self.target.set_ms(target_ms);
 
             let stop_handle = unsafe { CreateEventW(None, true, false, None) }
                 .map_err(|err| AudioError::device(format!("创建停止事件失败：{err}")))?;
@@ -385,6 +433,7 @@ mod wasapi {
             let ring = Arc::clone(&self.ring);
             let running = Arc::clone(&self.running);
             let stats = Arc::clone(&self.stats);
+            let target = Arc::clone(&self.target);
             let thread_stop = Arc::clone(&stop_event);
 
             self.running.store(true, Ordering::SeqCst);
@@ -395,7 +444,7 @@ mod wasapi {
                     let context = LoopContext {
                         callback,
                         user_data,
-                        target_ms,
+                        target,
                     };
                     // 守卫的理由与写法见 crate::run_guarded：panic 时 unwind 会跳过
                     // 尾部语句，而 running 卡在真会让此后的 start 一直报已在运行。
@@ -491,7 +540,7 @@ mod wasapi {
     struct LoopContext {
         callback: PlayedFrameCallback,
         user_data: usize,
-        target_ms: u32,
+        target: Arc<TargetDepthCell>,
     }
 
     /// 渲染主循环。COM 在本线程初始化并在退出前反初始化——COM 单元是线程局部的。
@@ -557,8 +606,10 @@ mod wasapi {
         // 大于 48k 的设备曾在首轮渲染即 panic，而那时 render_start 已经返回过 OK。
         stats.set_device_rate(session.mix.sample_rate);
 
-        let target_ms = context.target_ms;
-        let mut prefill = PrefillState::new(target_frames(target_ms));
+        // prefill 用起播那一刻的目标深度，此后不跟着外环变。这不是漏改一处：
+        // prefill 是一次性粗调，外环是持续微调，两者若在同一时间尺度上互相追，
+        // 正是双环分层要避免的形态。
+        let mut prefill = PrefillState::new(target_frames(context.target.current_ms()));
         let mut resampler = build_resampler(session.mix.sample_rate, session.buffer_frames);
 
         // 三块缓冲一次分配到位。渲染是实时线程，循环内分配会引入不可预测的停顿，
@@ -622,6 +673,10 @@ mod wasapi {
                 emit_played(context, &staging[..silent]);
                 continue;
             }
+
+            // 每轮重读目标深度。读成循环外的一次快照，外环算出多少都没有载体可写——
+            // 那正是本处此前的形态。
+            let target_ms = context.target.current_ms();
 
             // 本次要吃多少输入：重采样时由 rubato 说，比率与输出块都会改变它，
             // 故两者都要先设好再问。
@@ -955,6 +1010,47 @@ mod tests {
         assert_eq!(clamp_target_ms(10), MIN_TARGET_MS);
         assert_eq!(clamp_target_ms(200), 200);
         assert_eq!(clamp_target_ms(9_999), MAX_TARGET_MS);
+    }
+
+    #[test]
+    fn target_depth_reads_back_what_was_written() {
+        // 这是外环唯一的载体：写不进去，外环算出多少都落不了地。
+        let target = TargetDepthCell::new(200);
+        assert_eq!(target.current_ms(), 200);
+
+        target.set_ms(320);
+        assert_eq!(target.current_ms(), 320);
+    }
+
+    #[test]
+    fn target_depth_writes_go_through_the_clamp() {
+        // 夹紧在写入侧：越界值若能存进来，此后每一次读都要重新判一遍它，
+        // 而读在 WASAPI 实时线程上每轮一次。
+        let target = TargetDepthCell::new(200);
+
+        target.set_ms(0);
+        assert_eq!(target.current_ms(), MIN_TARGET_MS);
+        target.set_ms(u32::MAX);
+        assert_eq!(target.current_ms(), MAX_TARGET_MS);
+        // 起播值走同一道闸门。
+        assert_eq!(TargetDepthCell::new(0).current_ms(), MIN_TARGET_MS);
+        assert_eq!(TargetDepthCell::new(9_999).current_ms(), MAX_TARGET_MS);
+    }
+
+    #[test]
+    fn prefill_target_is_a_snapshot_not_a_live_read() {
+        // prefill 是一次性粗调，外环是持续微调。prefill 跟着外环变，两者就在同一
+        // 时间尺度上互相追，正是双环分层要避免的形态。
+        let target = TargetDepthCell::new(200);
+        let prefill = PrefillState::new(target_frames(target.current_ms()));
+
+        target.set_ms(400);
+        assert_eq!(prefill.target_frames(), target_frames(200));
+        assert_ne!(
+            prefill.target_frames(),
+            target_frames(target.current_ms()),
+            "prefill 的目标不该随运行时改动而变"
+        );
     }
 
     #[test]
