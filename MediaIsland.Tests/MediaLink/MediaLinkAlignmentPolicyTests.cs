@@ -81,6 +81,38 @@ public class MediaLinkAlignmentPolicyTests
     }
 
     [Fact]
+    public void AnAbsurdlyLargeBudgetIsInfeasibleRatherThanAligned()
+    {
+        // 极大的预算与太小的预算同类，都是「声明了一个办不到的值」。10^15 毫秒是三万年，
+        // 它在下界那一关绰绰有余，没有上界就一路走成「正在对齐」。
+        Assert.Equal(
+            MediaLinkAlignmentState.BudgetTooSmall,
+            Decide(budgetMs: 1_000_000_000_000_000).State);
+
+        // 边界成对：恰好等于上界要对齐，超出一毫秒就不对齐。
+        Assert.True(Decide(budgetMs: MediaLinkAlignmentPolicy.MaxBudgetMs).IsAligned);
+        Assert.Equal(
+            MediaLinkAlignmentState.BudgetTooSmall,
+            Decide(budgetMs: MediaLinkAlignmentPolicy.MaxBudgetMs + 1).State);
+    }
+
+    [Fact]
+    public void TheUpperBoundSitsBelowWhereTheTickConversionOverflows()
+    {
+        // 算出声时刻要把预算换成 100 纳秒计次，即乘 TicksPerMillisecond。预算超过
+        // long.MaxValue / TicksPerMillisecond 时这个乘法溢出，结果是负数——而负预算本该
+        // 判「办不到」。上界必须落在溢出点之前，否则判定说「能对齐」，换算却交出一个负数目标。
+        const long overflowsAbove = long.MaxValue / TimeSpan.TicksPerMillisecond;
+        Assert.True(MediaLinkAlignmentPolicy.MaxBudgetMs < overflowsAbove);
+
+        // 溢出点附近与 long 极值本身都不得走成对齐。
+        Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, Decide(budgetMs: overflowsAbove - 1).State);
+        Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, Decide(budgetMs: overflowsAbove).State);
+        Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, Decide(budgetMs: overflowsAbove + 1).State);
+        Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, Decide(budgetMs: long.MaxValue).State);
+    }
+
+    [Fact]
     public void AMissingClockOffset_IsReportedAsSuchAndOnlyLast()
     {
         var decision = Decide(offsetAvailable: false);
@@ -109,12 +141,15 @@ public class MediaLinkAlignmentPolicyTests
     {
         // 四条出路的差别只在归因上——四条都让声音照常出。合成一条「对齐不可用」，
         // 用户就无从知道该查服务端版本、服务端配置、自己的设备、还是网络。
+        // 预算办不到的两个方向共用一个状态，故它们的差别只剩 Reason 那句话：它必须分得开，
+        // 否则「把预算调大」与「把预算调小」看起来是同一条提示。
         var reasons = new[]
         {
             Decide().Reason,
             Decide(capability: false).Reason,
             Decide(budgetMs: null).Reason,
             Decide(budgetMs: 55).Reason,
+            Decide(budgetMs: MediaLinkAlignmentPolicy.MaxBudgetMs + 1).Reason,
             Decide(offsetAvailable: false).Reason
         };
 
