@@ -33,6 +33,22 @@ public interface IAudioRenderer : IDisposable
     /// </summary>
     event Action<AudioFrame>? FramePlayed;
 
+    /// <summary>
+    /// 下发跨机对齐参数。
+    ///
+    /// 必须在 <see cref="Start"/> 之前至少调用一次：48kHz 端点的内环在起播那一刻按
+    /// enabled 决定建不建重采样器，起播时若对齐是关的，该端点此后就没有执行器可用，
+    /// 而那时声音照出、判据照绿，只是永远对不齐。
+    ///
+    /// 播放中调用是允许的，用于更新 offsetTicks 与 manualOffsetTicks 这两个会随对时结果
+    /// 变化的量；但把 enabled 由假改真不会给 48kHz 端点追补内环。
+    /// </summary>
+    /// <param name="enabled">用户的对齐设置。它只表示用户开没开，不兼作 offset 的可用性。</param>
+    /// <param name="dTicks">发送端声明的播放延迟预算，100 纳秒计次。</param>
+    /// <param name="offsetTicks">本机单调时钟减发送端时钟；0 表示 offset 此刻不可用。</param>
+    /// <param name="manualOffsetTicks">用户为本设备手调的偏移。</param>
+    void SetAlignment(bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks);
+
     void Start(int targetBufferMs);
 
     void Stop();

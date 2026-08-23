@@ -44,6 +44,17 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
 
     private bool _requestedEnabled;
     private int _requestedTargetMs;
+
+    /// <summary>
+    /// 用户的对齐设置与三个对齐参数，全部在 <c>_gate</c> 下读写。
+    ///
+    /// 单独存一份而不是每次起播时去问别人：起播前必须把它们下发给渲染器
+    /// （48kHz 端点的内环在那一刻定型），而起播可能由深度变更触发，那时上游未必在场。
+    /// </summary>
+    private bool _alignmentEnabled;
+    private long _alignmentDTicks;
+    private long _alignmentOffsetTicks;
+    private long _alignmentManualOffsetTicks;
     private long _rejectedFrames;
     private volatile bool _playing;
     private bool _disposed;
@@ -159,6 +170,10 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
 
             try
             {
+                // 必须在 Start 之前：48kHz 端点的内环在起播那一刻按 enabled 决定建不建
+                // 重采样器，起播时若对齐是关的，该端点此后没有执行器，而那时声音照出、
+                // 判据照绿，只是永远对不齐。
+                ApplyAlignmentUnlocked();
                 _renderer.Start(targetBufferMs);
                 _playing = true;
                 LastError = null;
@@ -170,6 +185,44 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
             }
         }
     }
+
+    /// <summary>
+    /// 下发跨机对齐参数。
+    ///
+    /// <paramref name="enabled"/> 只表示用户开没开对齐，不兼作 offset 的可用性——
+    /// offset 不可用由 <paramref name="offsetTicks"/> 为 0 表示。两者分开是因为它们的
+    /// 生命周期不同：开关在起播那一刻决定要不要建内环的执行器，而 offset 随对时结果
+    /// 每秒都可能变。把「offset 还没算出来」写成「对齐关着」，起播时就不会建执行器，
+    /// 几秒后 offset 到了也无处施力。
+    ///
+    /// 播放中调用即时生效，用于更新 offset 与手动偏移。把 enabled 由假改真不会给 48kHz
+    /// 端点追补内环——那需要一次停播重启，由调用方决定值不值得。
+    /// </summary>
+    public void ConfigureAlignment(
+        bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks)
+    {
+        lock (_gate)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _alignmentEnabled = enabled;
+            _alignmentDTicks = dTicks;
+            _alignmentOffsetTicks = offsetTicks;
+            _alignmentManualOffsetTicks = manualOffsetTicks;
+
+            // 未起播时只存着：起播路径会在 Start 之前下发。
+            if (_playing)
+            {
+                ApplyAlignmentUnlocked();
+            }
+        }
+    }
+
+    private void ApplyAlignmentUnlocked() => _renderer.SetAlignment(
+        _alignmentEnabled, _alignmentDTicks, _alignmentOffsetTicks, _alignmentManualOffsetTicks);
 
     public void Submit(AudioFrame frame)
     {

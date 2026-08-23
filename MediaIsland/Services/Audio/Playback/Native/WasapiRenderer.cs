@@ -40,6 +40,36 @@ internal sealed class WasapiRenderer : IAudioRenderer
 
     public string? FailureReason => AudioRenderNative.FailureReason;
 
+    public void SetAlignment(bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks)
+    {
+        if (_handle == nint.Zero)
+        {
+            return;
+        }
+
+        // 失败不抛也不停播：对齐是增强项，拿不到它应当退回非对齐而不是断声。
+        var status = AudioRenderNative.NativeMethods.RenderSetAlignment(
+            _handle, enabled, dTicks, offsetTicks, manualOffsetTicks);
+        if (status != 0)
+        {
+            _logger?.LogDebug("[音频:播放] 下发对齐参数失败，状态 {Status}，按不对齐继续。", status);
+        }
+    }
+
+    /// <summary>
+    /// 抖动缓冲目标深度的受支持区间，取自 native 侧的编译期常量。
+    ///
+    /// 托管侧要下界来算「本机最小可达延迟」。经 FFI 取而不是在托管侧也写一个 50：
+    /// 同一个数分散成两份各自为真的声明时，改一处而漏另一处不会让任何判据变红。
+    /// </summary>
+    internal static unsafe (uint MinMs, uint MaxMs) TargetMsBounds()
+    {
+        uint min = 0;
+        uint max = 0;
+        AudioRenderNative.NativeMethods.RenderTargetMsBounds(&min, &max);
+        return (min, max);
+    }
+
     public void Start(int targetBufferMs)
     {
         lock (_gate)

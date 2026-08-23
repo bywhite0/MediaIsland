@@ -58,6 +58,15 @@ public class AudioPlaybackServiceTests
         public int StopCount { get; private set; }
         public int? LastTargetMs { get; private set; }
 
+        /// <summary>按发生顺序记下的调用名。顺序本身是契约，故不能只记次数。</summary>
+        public List<string> Calls { get; } = [];
+
+        public (bool Enabled, long DTicks, long OffsetTicks, long ManualOffsetTicks)? LastAlignment
+        {
+            get;
+            private set;
+        }
+
         public event Action<AudioFrame>? FramePlayed;
 
         public void Start(int targetBufferMs)
@@ -69,6 +78,14 @@ public class AudioPlaybackServiceTests
 
             StartCount++;
             LastTargetMs = targetBufferMs;
+            Calls.Add("Start");
+        }
+
+        public void SetAlignment(
+            bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks)
+        {
+            LastAlignment = (enabled, dTicks, offsetTicks, manualOffsetTicks);
+            Calls.Add("SetAlignment");
         }
 
         public void Stop() => StopCount++;
@@ -90,6 +107,43 @@ public class AudioPlaybackServiceTests
         var pcm = new byte[samples.Length * sizeof(short)];
         Buffer.BlockCopy(samples, 0, pcm, 0, pcm.Length);
         return new AudioFrame(pcm, 0, 48_000, 2, IsSilent: false);
+    }
+
+    [Fact]
+    public void Starting_SetsAlignmentBeforeStart()
+    {
+        // 顺序本身是契约，不是巧合：48kHz 端点的内环在起播那一刻按 enabled 决定建不建
+        // 重采样器。起播时若对齐是关的，该端点此后就没有执行器，而那时声音照出、判据照绿，
+        // 只是永远对不齐——这种失败没有任何症状指向顺序。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 7, manualOffsetTicks: -5);
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        Assert.Equal(new[] { "SetAlignment", "Start" }, renderer.Calls);
+        Assert.Equal((true, 3_000_000L, 7L, -5L), renderer.LastAlignment);
+    }
+
+    [Fact]
+    public void ConfiguringAlignmentWhilePlaying_PushesItThroughImmediately()
+    {
+        // offset 随对时结果每秒都可能变，故播放中必须能改；而它改的只是参数，
+        // 不该引起一次停播重启。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        var startsBefore = renderer.StartCount;
+
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 42, manualOffsetTicks: 0);
+
+        Assert.Equal((true, 3_000_000L, 42L, 0L), renderer.LastAlignment);
+        Assert.Equal(startsBefore, renderer.StartCount);
+        Assert.Equal("SetAlignment", renderer.Calls[^1]);
     }
 
     [Fact]
