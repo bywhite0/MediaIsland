@@ -20,10 +20,11 @@ internal struct NativePlayedFrame
 /// <summary>
 /// 播放统计的原始载荷。字段布局是 Rust <c>#[repr(C)] RenderStats</c> 的镜像。
 ///
-/// 六个字段全用 <c>ulong</c> 是刻意的：混用 32 位与 64 位会让布局出现中间 padding，
+/// 字段一律取 8 字节宽是刻意的：混用 32 位与 64 位会让布局出现 padding，
 /// 而跨 FFI 的布局错位是静默的——读到的是别的字段的值。
-/// <c>AudioRenderStatsTests.NativeLayout_MatchesRustRepr</c> 与 Rust 侧的
-/// <c>render_stats_layout_has_no_padding</c> 一起钉住这一点。
+/// <c>AudioRenderStatsTests.NativeLayout_PinsEveryFieldOffset</c> 与 Rust 侧的
+/// <c>render_stats_layout_has_no_padding</c> 一起钉住这一点，且两条各钉自己那一侧的
+/// 逐字段偏移——只钉一侧时，两侧的字段顺序可以在两条判据都绿的情况下不一致。
 /// </summary>
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeRenderStats
@@ -34,6 +35,22 @@ internal struct NativeRenderStats
     public ulong DeviceFramesRendered;
     public ulong DeviceSampleRate;
     public ulong ResampleRatioPpm;
+    public ulong DevicePositionFrames;
+    public ulong DevicePositionQpc;
+    public ulong DeviceLatencyUs;
+
+    /// <summary>
+    /// 外环误差，微秒。唯一的有符号字段——不用「加偏置存成无符号」那种编码：
+    /// 偏置是一个必须两侧同时记得的约定，而 long 与 i64 在两侧都是原生类型。
+    /// </summary>
+    public long PlayTimeErrorUs;
+    public ulong TargetMsCurrent;
+
+    /// <summary>
+    /// 0 或 1。本来一个 uint 就够，取 ulong 是为了不引入尾部填充——
+    /// 填充的大小两端各自按对齐规则推，那是又一处不必存在的约定。
+    /// </summary>
+    public ulong ClockOffsetAvailable;
 }
 
 /// <summary>
@@ -48,7 +65,7 @@ internal struct NativeRenderStats
 /// </summary>
 internal static partial class AudioRenderNative
 {
-    public const uint ExpectedAbiVersion = 3;
+    public const uint ExpectedAbiVersion = 4;
 
     public const int StatusOk = 0;
     public const int StatusInvalidArg = 1;
@@ -230,7 +247,20 @@ internal static partial class AudioRenderNative
 
         [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_push")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        public static unsafe partial int RenderPush(nint handle, short* samples, nuint frameCount);
+        public static unsafe partial int RenderPush(
+            nint handle,
+            short* samples,
+            nuint frameCount,
+            long senderTicks);
+
+        [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_set_alignment")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        public static partial int RenderSetAlignment(
+            nint handle,
+            [MarshalAs(UnmanagedType.U1)] bool enabled,
+            long dTicks,
+            long offsetTicks,
+            long manualOffsetTicks);
 
         [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_stop")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

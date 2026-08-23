@@ -101,7 +101,7 @@ internal sealed class WasapiRenderer : IAudioRenderer
         }
     }
 
-    public unsafe void Push(byte[] pcm)
+    public unsafe void Push(byte[] pcm, long senderTicks)
     {
         // volatile 快速拒：未播放时不进锁，热路径与启停不争抢。
         var frameCount = FramesToPush(pcm, Volatile.Read(ref _running));
@@ -130,7 +130,7 @@ internal sealed class WasapiRenderer : IAudioRenderer
             // 故这里是一次 memcpy 而非格式转换。
             fixed (byte* raw = pcm)
             {
-                AudioRenderNative.NativeMethods.RenderPush(_handle, (short*)raw, frameCount);
+                AudioRenderNative.NativeMethods.RenderPush(_handle, (short*)raw, frameCount, senderTicks);
             }
         }
     }
@@ -178,7 +178,13 @@ internal sealed class WasapiRenderer : IAudioRenderer
                 (long)native.HardResetCount,
                 (long)native.DeviceFramesRendered,
                 (int)native.DeviceSampleRate,
-                (long)native.ResampleRatioPpm);
+                (long)native.ResampleRatioPpm,
+                (long)native.DevicePositionFrames,
+                (long)native.DevicePositionQpc,
+                (long)native.DeviceLatencyUs,
+                native.PlayTimeErrorUs,
+                (int)native.TargetMsCurrent,
+                native.ClockOffsetAvailable != 0);
         }
     }
 

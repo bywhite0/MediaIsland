@@ -53,7 +53,7 @@ pub(crate) fn run_guarded(running: &AtomicBool, body: impl FnOnce()) {
     body();
 }
 
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 4;
 
 /// 传输格式恒为 48000Hz / 2 声道 / i16，与 `server.hello` 的 `audio` 声明一致。
 pub const OUTPUT_SAMPLE_RATE: u32 = 48_000;
@@ -163,11 +163,16 @@ pub type PlayedFrameCallback = extern "C" fn(*const PlayedFrame, *mut c_void);
 
 /// 播放侧的运行时统计。
 ///
-/// 全字段 u64 是刻意的：混用 u32 与 u64 会让 C 布局出现中间 padding，而跨 FFI 的
+/// 字段一律取 8 字节宽是刻意的：混用 u32 与 u64 会让 C 布局出现 padding，而跨 FFI 的
 /// 布局错位是静默的——读到的是别的字段的值，表现为「数值不对」，与「逻辑算错了」
-/// 无从区分。全 u64 时 6 乘 8 等于 48 字节，无 padding，两端布局无歧义。
+/// 无从区分。12 乘 8 等于 96 字节，无 padding，两端布局无歧义。可用性标志本来一个 u32
+/// 就够，取 u64 是为了不引入尾部填充——填充的大小两端各自按对齐规则推，
+/// 那是又一处不必存在的约定。
 ///
-/// 六个字段不保证是同一瞬间的快照（见 render::RenderStatsCell）。
+/// [`RenderStats::play_time_error_us`] 是唯一的有符号字段。不用「加偏置存成无符号」
+/// 那种编码：偏置是一个必须两侧同时记得的约定，而 i64 与 long 在两侧都是原生类型。
+///
+/// 十二个字段不保证是同一瞬间的快照（见 render::RenderStatsCell）。
 ///
 /// 改动即 ABI 变更，须同步提升 [`ABI_VERSION`]。
 #[repr(C)]
@@ -185,6 +190,25 @@ pub struct RenderStats {
     pub device_sample_rate: u64,
     /// 当前重采样比，ppm。为 0 表示尚未算出或输入非有限。
     pub resample_ratio_ppm: u64,
+    /// `IAudioClock::GetPosition` 的位置，已归一为 48000Hz 域的帧数。
+    ///
+    /// 归一一律经 `GetFrequency`，不按 `nBlockAlign` 推：实测某端点的
+    /// `GetFrequency` 恰等于采样率乘 `nBlockAlign`，故按后者算也对——那是巧合。
+    /// 错的是常数因子时，误差看起来是稳定的，不容易暴露。
+    pub device_position_frames: u64,
+    /// 取上一项位置时的 QPC 时刻，100ns。与 `Stopwatch.GetTimestamp` 同源。
+    pub device_position_qpc: u64,
+    /// 设备取走数据之后到出声那段固定尾段的估计，微秒。
+    ///
+    /// 0 的含义是「没有估计」，不是「零延迟」。共享模式下 `GetStreamLatency` 实测
+    /// 在本机全部 14 个输出端点（含真实硬件）上都报 0，故这个值的主体是引擎周期。
+    pub device_latency_us: u64,
+    /// 外环误差：出声时刻减目标时刻，微秒。为正表示放晚了。
+    pub play_time_error_us: i64,
+    /// 渲染循环当前实际在用的目标深度，毫秒。区别于起播时请求的值。
+    pub target_ms_current: u64,
+    /// 跨机时钟 offset 是否可用，0 或 1。不可用时只能退回非对齐模式。
+    pub clock_offset_available: u64,
 }
 
 /// 采集句柄。跨 FFI 传递的是它的裸指针。
@@ -451,9 +475,17 @@ pub unsafe extern "C" fn mediaisland_audio_render_start(
 
 /// 送入交错 i16 立体声。
 ///
-/// `frame_count` 是**每声道**采样数，故样本总数为 `frame_count * 2`。
-/// 调用方按字节数算帧数时**必须向下取整到整帧**：环形缓冲不跨调用结转半帧，
+/// `frame_count` 是每声道采样数，故样本总数为 `frame_count * 2`。
+/// 调用方按字节数算帧数时必须向下取整到整帧：环形缓冲不跨调用结转半帧，
 /// 多出来的样本会被丢弃。
+///
+/// `sender_ticks` 是本帧在发送端时间轴上的起始时刻，100ns 单位。
+/// 传 0 表示「本帧没有时刻」——此时时间轴锚点作废，播放逐字走原路径：
+/// 不建时间轴、不按空档补静音、也算不出出声时刻。对齐模式关闭时就该传 0。
+///
+/// 用 0 而不是另加一个 bool 参数：时刻的合法域是发送端墙钟的 100ns 表示，
+/// 1970 年那一瞬之外没有真实帧会落在 0 上，故 0 本身就是不可能值。
+/// 多一个参数就是多一处两侧都要记得的约定。
 ///
 /// # Safety
 /// `handle` 同 [`mediaisland_audio_render_start`]；`samples` 须指向至少
@@ -463,6 +495,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_push(
     handle: *mut RenderHandle,
     samples: *const i16,
     frame_count: usize,
+    sender_ticks: i64,
 ) -> i32 {
     let Some(handle) = handle.as_ref() else {
         return STATUS_INVALID_ARG;
@@ -488,7 +521,9 @@ pub unsafe extern "C" fn mediaisland_audio_render_push(
         let interleaved =
             std::slice::from_raw_parts(samples, frame_count * OUTPUT_CHANNELS as usize);
 
-        match catch_unwind(AssertUnwindSafe(|| handle.inner.push(interleaved))) {
+        match catch_unwind(AssertUnwindSafe(|| {
+            handle.inner.push(interleaved, sender_ticks)
+        })) {
             Ok(()) => STATUS_OK,
             Err(_) => {
                 handle.set_error(Some("送入播放数据时发生 panic".to_string()));
@@ -644,6 +679,47 @@ impl FfiBuffer {
     }
 }
 
+/// 下发对齐参数。
+///
+/// `d_ticks` 是发送端声明的播放延迟预算（`出声时刻 = capturedAt + D`），
+/// `offset_ticks` 是本机单调时钟减发送端时钟，`manual_offset_ticks` 是用户为本设备
+/// 手调的偏移。三者单位均为 100ns。
+///
+/// `enabled` 为假即退回非对齐模式，其余三个参数不再生效。offset 由托管侧算，
+/// native 侧算不出，故「offset 不可用」在这一层就表现为 `enabled` 为假。
+///
+/// 未起播的句柄也可调用：参数存在句柄上，下次起播的渲染循环会读到。
+///
+/// # Safety
+/// `handle` 同 [`mediaisland_audio_render_start`]。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_set_alignment(
+    handle: *mut RenderHandle,
+    enabled: bool,
+    d_ticks: i64,
+    offset_ticks: i64,
+    manual_offset_ticks: i64,
+) -> i32 {
+    let Some(handle) = handle.as_ref() else {
+        return STATUS_INVALID_ARG;
+    };
+
+    #[cfg(not(windows))]
+    {
+        let _ = (enabled, d_ticks, offset_ticks, manual_offset_ticks);
+        handle.set_error(Some("当前平台不支持音频播放".to_string()));
+        STATUS_UNSUPPORTED_PLATFORM
+    }
+
+    #[cfg(windows)]
+    {
+        handle
+            .inner
+            .set_alignment(enabled, d_ticks, offset_ticks, manual_offset_ticks);
+        STATUS_OK
+    }
+}
+
 /// # Safety
 /// `ptr` / `len` 必须来自本库返回的 [`FfiBuffer`]，且只释放一次。
 #[no_mangle]
@@ -662,8 +738,12 @@ mod tests {
     #[test]
     fn abi_version_is_stable() {
         // ABI 版本是 C# 侧 ExpectedAbiVersion 的对端，改动必须是有意识的。
-        // 2 到 3 是本次新增 mediaisland_audio_render_stats 与 RenderStats。
-        assert_eq!(mediaisland_audio_abi_version(), 3);
+        // 2 到 3 是新增 mediaisland_audio_render_stats 与 RenderStats。
+        // 3 到 4 是跨机对齐：render_push 增发送端时刻、新增 render_set_alignment、
+        // RenderStats 补六个字段。三项一次升完——中途出现「已升 4 但字段还没全」的半态时，
+        // 托管侧的版本校验会把采集与播放同时判死并报「版本不匹配」，
+        // 那条报错会盖住真正的布局错位。
+        assert_eq!(mediaisland_audio_abi_version(), 4);
     }
 
     #[test]
@@ -787,7 +867,7 @@ mod tests {
     fn render_push_rejects_null_handle() {
         let samples = [0i16; 4];
         assert_eq!(
-            unsafe { mediaisland_audio_render_push(ptr::null_mut(), samples.as_ptr(), 2) },
+            unsafe { mediaisland_audio_render_push(ptr::null_mut(), samples.as_ptr(), 2, 0) },
             STATUS_INVALID_ARG
         );
     }
@@ -827,7 +907,7 @@ mod tests {
             return;
         }
 
-        let status = unsafe { mediaisland_audio_render_push(handle, ptr::null(), 0) };
+        let status = unsafe { mediaisland_audio_render_push(handle, ptr::null(), 0, 0) };
 
         assert_eq!(status, STATUS_OK);
         unsafe { mediaisland_audio_render_destroy(handle) };
@@ -842,7 +922,7 @@ mod tests {
             return;
         }
 
-        let status = unsafe { mediaisland_audio_render_push(handle, ptr::null(), 4) };
+        let status = unsafe { mediaisland_audio_render_push(handle, ptr::null(), 4, 0) };
 
         assert_eq!(status, STATUS_INVALID_ARG);
         unsafe { mediaisland_audio_render_destroy(handle) };

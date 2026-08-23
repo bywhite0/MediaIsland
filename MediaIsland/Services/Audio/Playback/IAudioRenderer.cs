@@ -38,7 +38,11 @@ public interface IAudioRenderer : IDisposable
     void Stop();
 
     /// <summary>送一块 s16le 交错 PCM 进播放缓冲。未启动时静默忽略。</summary>
-    void Push(byte[] pcm);
+    /// <param name="senderTicks">
+    /// 本帧在发送端时间轴上的起始时刻，100ns。0 表示本帧没有时刻——此时播放侧不建
+    /// 时间轴、不按空档补静音，逐字走原路径。对齐模式关闭时就该传 0。
+    /// </param>
+    void Push(byte[] pcm, long senderTicks);
 
     /// <summary>
     /// 读运行时统计。native 不可用、句柄已释放或从未起播时返回全零

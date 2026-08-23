@@ -12,7 +12,7 @@
 //! **`played_cb` 送的是重采样前的 48k i16**，不是写进设备缓冲的那一份：
 //! C# 侧的分析器只认 48000/2ch/i16。
 
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
 use crate::OUTPUT_SAMPLE_RATE;
 
@@ -180,6 +180,88 @@ pub fn ratio_to_ppm(ratio: f64) -> u64 {
     ppm as u64
 }
 
+/// `IAudioClock::GetPosition` 的位置归一为 48000Hz 域的帧数。
+///
+/// 归一一律经 `GetFrequency`，不按 `nBlockAlign` 推。实测某端点的 `GetFrequency`
+/// 恰等于采样率乘 `nBlockAlign`（384000 = 48000 × 8），故按后者算也得到正确帧数——
+/// 那是巧合而非正确性。错的是常数因子时误差看起来是稳定的，不容易暴露。
+///
+/// 频率为 0 时返回 0：那意味着位置无从归一，而 0 与「还没起播」同义，
+/// 恰是这个字段既有的空值约定。
+pub fn output_frames_at_device_position(position: u64, frequency: u64) -> u64 {
+    if frequency == 0 {
+        return 0;
+    }
+
+    // 先乘后除，且走 u128：位置在字节单位下每秒涨 384000，u64 里乘 48000 的余量
+    // 约合三十年，够用但没有理由去贴那个上限。
+    let frames = u128::from(position) * u128::from(OUTPUT_SAMPLE_RATE) / u128::from(frequency);
+    u64::try_from(frames).unwrap_or(u64::MAX)
+}
+
+/// 设备取走数据之后到出声那段固定尾段的估计，微秒。
+///
+/// 主体是引擎周期：`GetStreamLatency` 在共享模式下实测报 0——本机 14 个输出端点
+/// （含两个真实硬件端点）无一例外，故它只是可选的附加项，有值才叠加。
+/// 负值同样当没有：那是「取不到」的表示，不是一段负延迟。
+///
+/// 剩下的硬件尾段（DAC、功放、尤其蓝牙）在软件层不可观测，由用户的 per-device
+/// 手动偏移承担。这不是偷懒，是承认可观测性边界。
+///
+/// 端点缓冲的容量不进这里。它当中的实际占用由位置锚点逐轮测得，两者相加是把同一段
+/// 延迟计两次；容量另有用处——判「本机最小可达延迟是否超过 D」时它是下限的组成部分。
+pub fn device_latency_us(engine_period_100ns: i64, stream_latency_100ns: i64) -> u64 {
+    let period = engine_period_100ns.max(0);
+    let stream = stream_latency_100ns.max(0);
+    let total_100ns = period.saturating_add(stream);
+    u64::try_from(total_100ns / 10).unwrap_or(0)
+}
+
+/// 对齐参数的可写载体。
+///
+/// 与 [`TargetDepthCell`] 同一形态与同一理由：托管侧要在播放中改它，而渲染线程每轮读。
+/// 四个值各自一个原子、不保证同一瞬间——它们变化的时间尺度是秒级（对时窗口更新、
+/// 用户拖动偏移），而渲染轮次是十毫秒级，跨轮取到新旧混合的一组至多影响一轮。
+///
+/// `enabled` 同时就是「offset 是否可用」：offset 由托管侧算，native 侧算不出，
+/// 故托管侧在 offset 不可用时不启用对齐，两者在这一层是同一个位。
+#[derive(Default)]
+pub struct AlignmentCell {
+    enabled: AtomicU32,
+    d_ticks: AtomicI64,
+    offset_ticks: AtomicI64,
+    manual_offset_ticks: AtomicI64,
+}
+
+impl AlignmentCell {
+    pub fn set(&self, enabled: bool, d_ticks: i64, offset_ticks: i64, manual_offset_ticks: i64) {
+        self.d_ticks.store(d_ticks, AtomicOrdering::Relaxed);
+        self.offset_ticks
+            .store(offset_ticks, AtomicOrdering::Relaxed);
+        self.manual_offset_ticks
+            .store(manual_offset_ticks, AtomicOrdering::Relaxed);
+        // 启用位最后写：它是其余三项的闸门，先开闸再填值会让一轮读到半套参数。
+        self.enabled
+            .store(u32::from(enabled), AtomicOrdering::Relaxed);
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.load(AtomicOrdering::Relaxed) != 0
+    }
+
+    pub fn d_ticks(&self) -> i64 {
+        self.d_ticks.load(AtomicOrdering::Relaxed)
+    }
+
+    pub fn offset_ticks(&self) -> i64 {
+        self.offset_ticks.load(AtomicOrdering::Relaxed)
+    }
+
+    pub fn manual_offset_ticks(&self) -> i64 {
+        self.manual_offset_ticks.load(AtomicOrdering::Relaxed)
+    }
+}
+
 /// 目标深度的可写载体。
 ///
 /// 抽成独立结构与 [`RenderStatsCell`] 同理：它要脱离 WASAPI 被测。
@@ -218,8 +300,10 @@ impl TargetDepthCell {
 /// 更要紧的是它们绝不去抢 ring 那把互斥量——对面等那把锁的是 WASAPI 实时线程，
 /// 而观测手段不该改变被观测对象的时序。
 ///
-/// 代价：六个字段不是同一瞬间的快照，可能跨越一次渲染轮次。判据应看斜率与累计计数的
-/// 单调性，不要依赖六元组的瞬时一致性。
+/// 代价：十二个字段不是同一瞬间的快照，可能跨越一次渲染轮次。判据应看斜率与累计计数的
+/// 单调性，不要依赖十二元组的瞬时一致性。这一点对新增的位置锚点尤其要紧：
+/// `device_position_frames` 与 `device_position_qpc` 是同一次 `GetPosition` 的一对返回值，
+/// 但两个原子分开写，读者可能取到跨轮的一对。判据应比它们的斜率，不比某一瞬的差值。
 #[derive(Default)]
 pub struct RenderStatsCell {
     ring_frames: AtomicU64,
@@ -228,6 +312,12 @@ pub struct RenderStatsCell {
     device_frames_rendered: AtomicU64,
     device_sample_rate: AtomicU64,
     resample_ratio_ppm: AtomicU64,
+    device_position_frames: AtomicU64,
+    device_position_qpc: AtomicU64,
+    device_latency_us: AtomicU64,
+    play_time_error_us: AtomicI64,
+    target_ms_current: AtomicU64,
+    clock_offset_available: AtomicU64,
 }
 
 impl RenderStatsCell {
@@ -270,6 +360,59 @@ impl RenderStatsCell {
             .store(0, AtomicOrdering::Relaxed);
         self.device_sample_rate.store(0, AtomicOrdering::Relaxed);
         self.resample_ratio_ppm.store(0, AtomicOrdering::Relaxed);
+        self.device_position_frames
+            .store(0, AtomicOrdering::Relaxed);
+        self.device_position_qpc.store(0, AtomicOrdering::Relaxed);
+        self.device_latency_us.store(0, AtomicOrdering::Relaxed);
+        self.play_time_error_us.store(0, AtomicOrdering::Relaxed);
+        self.target_ms_current.store(0, AtomicOrdering::Relaxed);
+        self.clock_offset_available
+            .store(0, AtomicOrdering::Relaxed);
+    }
+
+    /// 设备位置锚点：`IAudioClock::GetPosition` 的位置（已归一为 48000Hz 域的帧数）
+    /// 与取该位置时的 QPC 时刻。
+    ///
+    /// 两个值一次写入，但落在两个原子上，故读者可能取到跨轮的一对。它们的用途是算斜率
+    /// 与算出声时刻，两者都容忍一轮的错配（一轮约 10 毫秒，而位置本身在推进）。
+    pub fn set_device_position(&self, frames: u64, qpc_100ns: u64) {
+        self.device_position_frames
+            .store(frames, AtomicOrdering::Relaxed);
+        self.device_position_qpc
+            .store(qpc_100ns, AtomicOrdering::Relaxed);
+    }
+
+    /// 设备取走数据之后到出声那段固定尾段的估计，微秒。
+    ///
+    /// 0 的含义是「没有估计」，不是「零延迟」。实测本机 14 个输出端点
+    /// （含两个真实硬件端点）无一报出非零的流延迟，故这个值的主体是引擎周期，
+    /// 流延迟只在报了值时叠加。硬件尾段（DAC、功放、蓝牙）在软件层不可观测，
+    /// 由用户的 per-device 手动偏移承担。
+    pub fn set_device_latency_us(&self, us: u64) {
+        self.device_latency_us.store(us, AtomicOrdering::Relaxed);
+    }
+
+    /// 外环误差：出声时刻减目标时刻，微秒。有符号。
+    ///
+    /// 不用「加偏置存成无符号」那种编码：偏置是一个必须两侧同时记得的约定，
+    /// 而 i64 与 long 在两侧都是原生类型，少一个约定就少一处会漂移的地方。
+    pub fn set_play_time_error_us(&self, us: i64) {
+        self.play_time_error_us.store(us, AtomicOrdering::Relaxed);
+    }
+
+    /// 渲染循环当前实际在用的目标深度。
+    ///
+    /// 与请求值分开是必须的：外环会把它推离请求值，而「循环在用哪个值」此前从外部
+    /// 不可观测——把每轮重读挪回循环外，没有任何判据会变红。这个字段就是那条缺口的收口。
+    pub fn set_target_ms_current(&self, ms: u32) {
+        self.target_ms_current
+            .store(u64::from(ms), AtomicOrdering::Relaxed);
+    }
+
+    /// 跨机时钟 offset 是否可用。不可用时对齐只能退回非对齐模式。
+    pub fn set_clock_offset_available(&self, available: bool) {
+        self.clock_offset_available
+            .store(u64::from(available), AtomicOrdering::Relaxed);
     }
 
     pub fn snapshot(&self) -> crate::RenderStats {
@@ -282,6 +425,12 @@ impl RenderStatsCell {
                 .load(AtomicOrdering::Relaxed),
             device_sample_rate: self.device_sample_rate.load(AtomicOrdering::Relaxed),
             resample_ratio_ppm: self.resample_ratio_ppm.load(AtomicOrdering::Relaxed),
+            device_position_frames: self.device_position_frames.load(AtomicOrdering::Relaxed),
+            device_position_qpc: self.device_position_qpc.load(AtomicOrdering::Relaxed),
+            device_latency_us: self.device_latency_us.load(AtomicOrdering::Relaxed),
+            play_time_error_us: self.play_time_error_us.load(AtomicOrdering::Relaxed),
+            target_ms_current: self.target_ms_current.load(AtomicOrdering::Relaxed),
+            clock_offset_available: self.clock_offset_available.load(AtomicOrdering::Relaxed),
         }
     }
 }
@@ -304,7 +453,7 @@ mod wasapi {
     };
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Media::Audio::{
-        eConsole, eRender, IAudioClient, IAudioRenderClient, IMMDeviceEnumerator,
+        eConsole, eRender, IAudioClient, IAudioClock, IAudioRenderClient, IMMDeviceEnumerator,
         MMDeviceEnumerator, AUDCLNT_BUFFERFLAGS_SILENT, AUDCLNT_SHAREMODE_SHARED,
         AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
     };
@@ -315,9 +464,9 @@ mod wasapi {
     use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 
     use super::{
-        frames_to_ms, prefill_silence_frames, ratio_to_ppm, resample_ratio, target_frames,
-        PrefillState, RenderStatsCell, TargetDepthCell, MAX_RELATIVE_RATIO, MIN_TARGET_MS,
-        RING_CAPACITY_FRAMES, SINC_LEN,
+        device_latency_us, frames_to_ms, output_frames_at_device_position, prefill_silence_frames,
+        ratio_to_ppm, resample_ratio, target_frames, AlignmentCell, PrefillState, RenderStatsCell,
+        TargetDepthCell, MAX_RELATIVE_RATIO, MIN_TARGET_MS, RING_CAPACITY_FRAMES, SINC_LEN,
     };
     use crate::convert;
     use crate::convert::MixFormat;
@@ -356,6 +505,8 @@ mod wasapi {
         stats: Arc<RenderStatsCell>,
         /// 与渲染线程共享。渲染线程每轮读一次，外环与 start 写它。
         target: Arc<TargetDepthCell>,
+        /// 与渲染线程共享。托管侧在播放中写，渲染线程每轮读。
+        alignment: Arc<AlignmentCell>,
         thread: Mutex<RenderThread>,
     }
 
@@ -368,6 +519,7 @@ mod wasapi {
                 running: Arc::new(AtomicBool::new(false)),
                 stats: Arc::new(RenderStatsCell::default()),
                 target: Arc::new(TargetDepthCell::new(MIN_TARGET_MS)),
+                alignment: Arc::new(AlignmentCell::default()),
                 thread: Mutex::new(RenderThread {
                     worker: None,
                     stop_event: None,
@@ -386,6 +538,18 @@ mod wasapi {
         /// 这里先把内部表示改成可写的，供 crate 内的外环使用。
         pub fn set_target_ms(&self, raw_ms: u32) {
             self.target.set_ms(raw_ms);
+        }
+
+        /// 下发对齐参数。渲染循环下一轮即读到。
+        pub fn set_alignment(
+            &self,
+            enabled: bool,
+            d_ticks: i64,
+            offset_ticks: i64,
+            manual_offset_ticks: i64,
+        ) {
+            self.alignment
+                .set(enabled, d_ticks, offset_ticks, manual_offset_ticks);
         }
 
         /// 起渲染线程，**同步等它汇报启动结果**再返回。
@@ -434,6 +598,7 @@ mod wasapi {
             let running = Arc::clone(&self.running);
             let stats = Arc::clone(&self.stats);
             let target = Arc::clone(&self.target);
+            let alignment = Arc::clone(&self.alignment);
             let thread_stop = Arc::clone(&stop_event);
 
             self.running.store(true, Ordering::SeqCst);
@@ -445,6 +610,7 @@ mod wasapi {
                         callback,
                         user_data,
                         target,
+                        alignment,
                     };
                     // 守卫的理由与写法见 crate::run_guarded：panic 时 unwind 会跳过
                     // 尾部语句，而 running 卡在真会让此后的 start 一直报已在运行。
@@ -493,11 +659,16 @@ mod wasapi {
         /// **帧对齐由调用方保证**：参数是帧数而非样本数，半帧无从表达，
         /// 而 [`PlaybackRing::push`] 不跨调用结转残样本——若调用方按字节数算帧数
         /// 且没向下取整到整帧，错位会一路传下去。
-        pub fn push(&self, interleaved: &[i16]) {
+        /// `sender_ticks` 为 0 即「本帧没有时刻」，走不带时间轴的原路径。
+        pub fn push(&self, interleaved: &[i16], sender_ticks: i64) {
             // 渲染线程持锁的时间是一次 memcpy。拿不到锁只能是持锁者 panic 了，
             // 此时丢这一包而非把 panic 传进网络线程。
             if let Ok(mut ring) = self.ring.lock() {
-                ring.push(interleaved);
+                if sender_ticks == 0 {
+                    ring.push(interleaved);
+                } else {
+                    ring.push_at(interleaved, sender_ticks);
+                }
             }
         }
 
@@ -541,6 +712,7 @@ mod wasapi {
         callback: PlayedFrameCallback,
         user_data: usize,
         target: Arc<TargetDepthCell>,
+        alignment: Arc<AlignmentCell>,
     }
 
     /// 渲染主循环。COM 在本线程初始化并在退出前反初始化——COM 单元是线程局部的。
@@ -605,6 +777,8 @@ mod wasapi {
         // 设备率是判「重采样到底走没走」的唯一依据，且必须在第一轮渲染之前就可读：
         // 大于 48k 的设备曾在首轮渲染即 panic，而那时 render_start 已经返回过 OK。
         stats.set_device_rate(session.mix.sample_rate);
+        // 会话常量，起播时写一次即可。0 的含义是「没有估计」，不是「零延迟」。
+        stats.set_device_latency_us(session.device_latency_us);
 
         // prefill 用起播那一刻的目标深度，此后不跟着外环变。这不是漏改一处：
         // prefill 是一次性粗调，外环是持续微调，两者若在同一时间尺度上互相追，
@@ -677,6 +851,25 @@ mod wasapi {
             // 每轮重读目标深度。读成循环外的一次快照，外环算出多少都没有载体可写——
             // 那正是本处此前的形态。
             let target_ms = context.target.current_ms();
+            // 循环实际在用的那个值。与起播请求值分开上报，否则「每轮重读」这条性质
+            // 从外部不可观测——把上面那行挪回循环外，没有任何判据会变红。
+            stats.set_target_ms_current(target_ms);
+            stats.set_clock_offset_available(context.alignment.is_enabled());
+
+            // 设备位置与取位置时的 QPC 是一次调用的一对返回值，用于算出声时刻。
+            if let Some(clock) = session.clock.as_ref() {
+                let mut position = 0u64;
+                let mut qpc_100ns = 0u64;
+                if clock
+                    .GetPosition(&mut position, Some(&mut qpc_100ns))
+                    .is_ok()
+                {
+                    stats.set_device_position(
+                        output_frames_at_device_position(position, session.clock_frequency),
+                        qpc_100ns,
+                    );
+                }
+            }
 
             // 本次要吃多少输入：重采样时由 rubato 说，比率与输出块都会改变它，
             // 故两者都要先设好再问。
@@ -776,6 +969,13 @@ mod wasapi {
     struct RenderSession {
         client: IAudioClient,
         render_client: IAudioRenderClient,
+        /// 设备位置与取位置时的 QPC 时刻。取不到时为 None——某些端点不给这个服务，
+        /// 那时对齐用不了，但播放本身照旧。
+        clock: Option<IAudioClock>,
+        /// [`IAudioClock::GetFrequency`] 的返回值，位置归一的除数。
+        clock_frequency: u64,
+        /// 设备取走数据之后到出声那段固定尾段的估计，微秒。会话常量。
+        device_latency_us: u64,
         mix: MixFormat,
         buffer_frames: u32,
         buffer_event: HANDLE,
@@ -844,9 +1044,25 @@ mod wasapi {
             .Start()
             .map_err(|err| AudioError::device(format!("启动播放失败：{err}")))?;
 
+        // 时钟服务取不到不算失败：播放照旧，只是对齐没有位置锚点可用。
+        let clock: Option<IAudioClock> = client.GetService().ok();
+        let clock_frequency = clock
+            .as_ref()
+            .and_then(|clock| clock.GetFrequency().ok())
+            .unwrap_or(0);
+
+        // 引擎周期总有值，流延迟实测在共享模式下报 0，故前者是这段估计的主体。
+        let mut engine_period = 0i64;
+        let _ = client.GetDevicePeriod(Some(&mut engine_period), None);
+        let stream_latency = client.GetStreamLatency().unwrap_or(0);
+        let device_latency_us = device_latency_us(engine_period, stream_latency);
+
         Ok(RenderSession {
             client,
             render_client,
+            clock,
+            clock_frequency,
+            device_latency_us,
             mix,
             buffer_frames,
             buffer_event,
@@ -1011,7 +1227,7 @@ mod wasapi {
     mod device_clock_probe {
         use std::time::{Duration, Instant};
 
-        use windows::Win32::Media::Audio::{IAudioClock, DEVICE_STATE_ACTIVE};
+        use windows::Win32::Media::Audio::DEVICE_STATE_ACTIVE;
 
         use super::*;
         use crate::timeline::TICKS_PER_MS;
@@ -1069,15 +1285,15 @@ mod wasapi {
                         let client: IAudioClient = match device.Activate(CLSCTX_ALL, None) {
                             Ok(client) => client,
                             Err(err) => {
-                                println!("[{index}] {id}
-     激活失败：{err}");
+                                println!("[{index}] {id}");
+                                println!("     激活失败：{err}");
                                 continue;
                             }
                         };
 
                         let Ok(mix_ptr) = client.GetMixFormat() else {
-                            println!("[{index}] {id}
-     取混音格式失败");
+                            println!("[{index}] {id}");
+                            println!("     取混音格式失败");
                             continue;
                         };
                         let mix = parse_mix_format(mix_ptr);
@@ -1092,8 +1308,8 @@ mod wasapi {
                         );
                         CoTaskMemFree(Some(mix_ptr as *const c_void));
                         if let Err(err) = init {
-                            println!("[{index}] {id}
-     初始化失败：{err}");
+                            println!("[{index}] {id}");
+                            println!("     初始化失败：{err}");
                             continue;
                         }
 
@@ -1276,6 +1492,50 @@ mod tests {
         assert_eq!(clamp_target_ms(10), MIN_TARGET_MS);
         assert_eq!(clamp_target_ms(200), 200);
         assert_eq!(clamp_target_ms(9_999), MAX_TARGET_MS);
+    }
+
+    #[test]
+    fn device_position_is_normalised_by_the_reported_frequency() {
+        // 实测某端点 GetFrequency = 384000 = 48000 × block_align 8，即位置单位是字节。
+        // 归一后 384000 个单位应恰为一秒的输出帧数。
+        assert_eq!(output_frames_at_device_position(384_000, 384_000), 48_000);
+        // 位置单位就是帧的端点：频率等于采样率，归一是恒等。
+        assert_eq!(output_frames_at_device_position(4_800, 48_000), 4_800);
+        // 先乘后除：不足一秒的位置不该归零。
+        assert_eq!(output_frames_at_device_position(8, 384_000), 1);
+    }
+
+    #[test]
+    fn a_missing_frequency_yields_no_position() {
+        // 频率为 0 时位置无从归一。返回 0 与「还没起播」同义，是这个字段既有的空值约定。
+        assert_eq!(output_frames_at_device_position(1_000_000, 0), 0);
+    }
+
+    #[test]
+    fn device_latency_falls_back_to_the_engine_period() {
+        // 实测：引擎周期 10 毫秒，流延迟 0（本机 14 个端点无一报值）。
+        assert_eq!(device_latency_us(100_000, 0), 10_000);
+        // 报了值就叠加。
+        assert_eq!(device_latency_us(100_000, 30_000), 13_000);
+        // 负值是「取不到」的表示，不是一段负延迟——不能把估计拉小。
+        assert_eq!(device_latency_us(100_000, -1), 10_000);
+        assert_eq!(device_latency_us(-1, -1), 0);
+    }
+
+    #[test]
+    fn alignment_parameters_read_back_what_was_written() {
+        let cell = AlignmentCell::default();
+        assert!(!cell.is_enabled());
+
+        cell.set(true, 3_000_000, -1_234, 500);
+        assert!(cell.is_enabled());
+        assert_eq!(cell.d_ticks(), 3_000_000);
+        // offset 与手动偏移都可以为负，故两者都不能存成无符号。
+        assert_eq!(cell.offset_ticks(), -1_234);
+        assert_eq!(cell.manual_offset_ticks(), 500);
+
+        cell.set(false, 0, 0, 0);
+        assert!(!cell.is_enabled());
     }
 
     #[test]
@@ -1520,9 +1780,23 @@ mod tests {
         cell.note_underrun();
         cell.note_underrun();
         cell.note_hard_reset();
+        cell.set_device_position(4_800, 123_456_789);
+        cell.set_device_latency_us(10_000);
+        // 负误差必须原样穿过快照。存成无符号会让它回绕成一个极大正值，
+        // 而外环据符号决定往哪个方向调——符号丢了，调整方向就反了。
+        cell.set_play_time_error_us(-2_500);
+        cell.set_target_ms_current(320);
+        cell.set_clock_offset_available(true);
 
         let s = cell.snapshot();
         assert_eq!(s.device_sample_rate, 48_000);
+        assert_eq!(s.device_position_frames, 4_800);
+        assert_eq!(s.device_position_qpc, 123_456_789);
+        assert_eq!(s.device_latency_us, 10_000);
+        assert_eq!(s.play_time_error_us, -2_500);
+        assert!(s.play_time_error_us < 0, "负误差不得回绕成正值");
+        assert_eq!(s.target_ms_current, 320);
+        assert_eq!(s.clock_offset_available, 1);
         assert_eq!(s.ring_frames, 9_600);
         assert_eq!(s.resample_ratio_ppm, 1_000_000);
         assert_eq!(s.device_frames_rendered, 960);
@@ -1541,6 +1815,11 @@ mod tests {
         cell.add_rendered(1);
         cell.note_underrun();
         cell.note_hard_reset();
+        cell.set_device_position(7, 8);
+        cell.set_device_latency_us(9);
+        cell.set_play_time_error_us(-10);
+        cell.set_target_ms_current(320);
+        cell.set_clock_offset_available(true);
 
         cell.reset();
 
@@ -1551,6 +1830,12 @@ mod tests {
         assert_eq!(s.device_frames_rendered, 0);
         assert_eq!(s.device_sample_rate, 0);
         assert_eq!(s.resample_ratio_ppm, 0);
+        assert_eq!(s.device_position_frames, 0);
+        assert_eq!(s.device_position_qpc, 0);
+        assert_eq!(s.device_latency_us, 0);
+        assert_eq!(s.play_time_error_us, 0);
+        assert_eq!(s.target_ms_current, 0);
+        assert_eq!(s.clock_offset_available, 0);
     }
 
     #[test]
@@ -1558,7 +1843,31 @@ mod tests {
         // 布局判据。托管侧有一条对称的 Marshal.SizeOf 断言，两条都成立才说明两端一致。
         // 错位是静默的：读到的是别的字段的值，表现为「数值不对」，
         // 与「逻辑算错了」无从区分。
-        assert_eq!(std::mem::size_of::<crate::RenderStats>(), 48);
+        // 十二个 8 字节字段，无 padding。混进一个 u32 只会产生尾部填充，
+        // 而尾部填充的大小两端各自按对齐规则推——那是又一处不必存在的约定，
+        // 故可用性标志也取 u64。
+        assert_eq!(std::mem::size_of::<crate::RenderStats>(), 96);
         assert_eq!(std::mem::align_of::<crate::RenderStats>(), 8);
+
+        // 大小与对齐不够，必须逐字段钉偏移，且两端各钉自己的。
+        //
+        // 变异实测出的缺口：把本侧两个字段的声明顺序对调，托管侧那张 OffsetOf 表全绿——
+        // 它钉的是托管结构自己的布局，看不见本侧的顺序；而本侧原先只断言大小与对齐，
+        // 对调不改大小。于是两端各自的判据都绿，两端的字段顺序已经不一致，
+        // 而那正是这条判据声称要防的形态。两端各钉自己的偏移之后，任一侧动顺序都必红。
+        use std::mem::offset_of;
+        type S = crate::RenderStats;
+        assert_eq!(offset_of!(S, ring_frames), 0);
+        assert_eq!(offset_of!(S, underrun_count), 8);
+        assert_eq!(offset_of!(S, hard_reset_count), 16);
+        assert_eq!(offset_of!(S, device_frames_rendered), 24);
+        assert_eq!(offset_of!(S, device_sample_rate), 32);
+        assert_eq!(offset_of!(S, resample_ratio_ppm), 40);
+        assert_eq!(offset_of!(S, device_position_frames), 48);
+        assert_eq!(offset_of!(S, device_position_qpc), 56);
+        assert_eq!(offset_of!(S, device_latency_us), 64);
+        assert_eq!(offset_of!(S, play_time_error_us), 72);
+        assert_eq!(offset_of!(S, target_ms_current), 80);
+        assert_eq!(offset_of!(S, clock_offset_available), 88);
     }
 }

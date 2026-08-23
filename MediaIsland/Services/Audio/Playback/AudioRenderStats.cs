@@ -26,7 +26,13 @@ public readonly record struct AudioRenderStats(
     long HardResetCount,
     long DeviceFramesRendered,
     int DeviceSampleRate,
-    long ResampleRatioPpm)
+    long ResampleRatioPpm,
+    long DevicePositionFrames = 0,
+    long DevicePositionQpc = 0,
+    long DeviceLatencyUs = 0,
+    long PlayTimeErrorUs = 0,
+    int TargetMsCurrent = 0,
+    bool ClockOffsetAvailable = false)
 {
     /// <summary>本句柄起播过。为假时其余字段全为零。</summary>
     public bool HasStarted => DeviceSampleRate > 0;

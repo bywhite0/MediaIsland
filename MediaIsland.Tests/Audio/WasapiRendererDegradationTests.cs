@@ -65,7 +65,7 @@ public class WasapiRendererDegradationTests : IDisposable
         AudioRenderNative.ResetForTesting(available: false, failureReason: "不可用");
         using var renderer = new WasapiRenderer();
 
-        renderer.Push([0, 0, 0, 0]);   // 不抛即可
+        renderer.Push([0, 0, 0, 0], 0);   // 不抛即可
     }
 
     [Fact]
@@ -107,7 +107,7 @@ public class WasapiRendererDegradationTests : IDisposable
         var renderer = new WasapiRenderer();
         renderer.Dispose();
 
-        renderer.Push([0, 0, 0, 0]);
+        renderer.Push([0, 0, 0, 0], 0);
     }
 
     [Theory]

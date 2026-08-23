@@ -189,7 +189,8 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
                 return;
             }
 
-            _renderer.Push(frame.Pcm);
+            // 时刻留到对齐接线时透传。此刻恒传 0，播放逐字走原路径。
+            _renderer.Push(frame.Pcm, 0);
             return;
         }
 

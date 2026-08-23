@@ -73,7 +73,7 @@ public class AudioPlaybackServiceTests
 
         public void Stop() => StopCount++;
 
-        public void Push(byte[] pcm) => Pushed.Add(pcm);
+        public void Push(byte[] pcm, long senderTicks) => Pushed.Add(pcm);
 
         /// <summary>可写：Task 4 与 Task 5 的判据要让它返回特定统计。</summary>
         public AudioRenderStats Stats { get; set; }
