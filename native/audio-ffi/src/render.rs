@@ -313,14 +313,26 @@ impl AlignmentCell {
             .store(offset_ticks, AtomicOrdering::Relaxed);
         self.manual_offset_ticks
             .store(manual_offset_ticks, AtomicOrdering::Relaxed);
-        // 启用位最后写：它是其余三项的闸门，先开闸再填值会让一轮读到半套参数。
+        // 启用位最后写，且必须是 Release：它是其余三项的闸门。
+        //
+        // 光靠「程序顺序上最后写」不构成闸门。Relaxed 只保证单个地址上的原子性，
+        // 不在不同地址之间建立任何顺序——编译器可以重排这四次对不同地址的 store，
+        // 于是读者可以看到启用位为真配上三个旧值，正是这里要挡的那种形态。
+        // Release 与 is_enabled 的 Acquire 配对，把前三次 store 一并带到读者那侧。
+        //
+        // x86-TSO 下硬件本就不重排 store，故这处写对与写错在本机实测上不可区分——
+        // 它只能靠推理保证，不能靠一条判据。
         self.enabled
-            .store(u32::from(enabled), AtomicOrdering::Relaxed);
+            .store(u32::from(enabled), AtomicOrdering::Release);
     }
 
     /// 用户的对齐设置。决定要不要建重采样器，故只在起播时被读一次。
+    ///
+    /// Acquire 而非 Relaxed：与 [`AlignmentCell::set`] 末尾那次 Release 配对，
+    /// 读到启用位为真即保证同批写入的另外三项也已可见。其余三个读取器可以留 Relaxed，
+    /// 因为通往它们的路径都先经过这里。
     pub fn is_enabled(&self) -> bool {
-        self.enabled.load(AtomicOrdering::Relaxed) != 0
+        self.enabled.load(AtomicOrdering::Acquire) != 0
     }
 
     /// 跨机 offset 此刻可用。外环据它决定动不动。
