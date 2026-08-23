@@ -991,6 +991,160 @@ mod wasapi {
             .map_err(|err| AudioError::device(format!("提交播放缓冲失败：{err}")))?;
         Ok(())
     }
+    /// 三条 WASAPI 事实的真机实测。
+    ///
+    /// 默认 ignore 而不是靠环境变量早退：早退的测试会计进 passed，
+    /// 于是「跑过」与「跳过」在计数上不可分。手动跑：
+    /// `cargo test --manifest-path native/audio-ffi/Cargo.toml -- --ignored --nocapture`
+    ///
+    /// 它会占用默认输出端点约一秒并写入静音（不出声）。
+    ///
+    /// 三条都不凭文档写死：
+    ///
+    /// 1. `GetPosition` 的位置单位一律经 `GetFrequency` 归一。写死「除以 nBlockAlign」
+    ///    在某些驱动上会错一个常数因子，而错的是常数因子恰好不容易被「误差看起来稳定」暴露。
+    /// 2. `pu64QPCPosition` 是否为 100ns 单位。这里验的是单位（同一间隔上的增量），
+    ///    零点是否与 `Stopwatch` 同源要在托管侧验——native 侧读不到裸 QPC，
+    ///    而为此新开 `Win32_System_Performance` 特性会改动 Cargo.toml 的依赖段。
+    /// 3. `GetStreamLatency` 在共享模式下的量级。它是误差预算里最大的一项。
+    #[cfg(test)]
+    mod device_clock_probe {
+        use std::time::{Duration, Instant};
+
+        use windows::Win32::Media::Audio::IAudioClock;
+
+        use super::*;
+        use crate::timeline::TICKS_PER_MS;
+
+        /// 喂一段静音并返回实际经过的时间。
+        unsafe fn feed_silence(session: &RenderSession, rounds: u32) -> Duration {
+            let started = Instant::now();
+            for _ in 0..rounds {
+                std::thread::sleep(Duration::from_millis(10));
+                let Ok(padding) = session.client.GetCurrentPadding() else {
+                    break;
+                };
+                let writable = session.buffer_frames.saturating_sub(padding);
+                if write_silence(&session.render_client, writable).is_err() {
+                    break;
+                }
+            }
+            started.elapsed()
+        }
+
+        #[test]
+        #[ignore = "需要真实输出设备，会占用默认输出端点约一秒并写入静音"]
+        fn measure_device_clock_facts() {
+            unsafe {
+                CoInitializeEx(None, COINIT_MULTITHREADED)
+                    .ok()
+                    .expect("CoInitializeEx");
+
+                {
+                    let session = open_render_session().expect("打开播放会话");
+                    let clock: IAudioClock = session.client.GetService().expect("取 IAudioClock");
+
+                    let freq = clock.GetFrequency().expect("GetFrequency");
+                    let latency_100ns =
+                        session.client.GetStreamLatency().expect("GetStreamLatency");
+
+                    // 先垫满一轮，避免第一次 GetPosition 落在还没起来的流上。
+                    feed_silence(&session, 5);
+
+                    let mut pos1 = 0u64;
+                    let mut qpc1 = 0u64;
+                    clock
+                        .GetPosition(&mut pos1, Some(&mut qpc1))
+                        .expect("GetPosition");
+
+                    let elapsed = feed_silence(&session, 50);
+
+                    let mut pos2 = 0u64;
+                    let mut qpc2 = 0u64;
+                    clock
+                        .GetPosition(&mut pos2, Some(&mut qpc2))
+                        .expect("GetPosition");
+
+                    // GetStreamLatency 若为 0，替代来源有两个：起播后再读一次
+                    // （某些驱动只在流稳态后才给值），以及引擎周期本身。
+                    let latency_after = session.client.GetStreamLatency().unwrap_or(-1);
+                    let mut default_period = 0i64;
+                    let mut min_period = 0i64;
+                    session
+                        .client
+                        .GetDevicePeriod(Some(&mut default_period), Some(&mut min_period))
+                        .expect("GetDevicePeriod");
+                    println!("延迟二次读取      : {latency_after} (100ns)");
+                    println!("GetDevicePeriod   : 默认 {default_period} = {:.3} ms，最小 {min_period} = {:.3} ms",
+                        default_period as f64 / f64::from(TICKS_PER_MS as i32),
+                        min_period as f64 / f64::from(TICKS_PER_MS as i32));
+                    println!(
+                        "GetBufferSize     : {} 帧 = {:.3} ms",
+                        session.buffer_frames,
+                        f64::from(session.buffer_frames) * 1000.0
+                            / f64::from(session.mix.sample_rate)
+                    );
+
+                    let pos_delta = pos2 - pos1;
+                    let qpc_delta = qpc2 - qpc1;
+                    let elapsed_100ns = elapsed.as_nanos() as f64 / 100.0;
+                    let seconds_by_clock = pos_delta as f64 / freq as f64;
+
+                    println!("--- WASAPI 时钟实测 ---");
+                    println!(
+                        "混音格式        : {} Hz, block_align {}",
+                        session.mix.sample_rate, session.mix.block_align
+                    );
+                    println!("GetFrequency    : {freq}");
+                    println!(
+                        "  与采样率之比  : {:.4}",
+                        freq as f64 / f64::from(session.mix.sample_rate)
+                    );
+                    println!("位置增量        : {pos_delta}");
+                    println!("  归一后秒数    : {seconds_by_clock:.4} s");
+                    println!("墙钟经过        : {:.4} s", elapsed.as_secs_f64());
+                    println!("QPC 增量        : {qpc_delta} (100ns 则应约 {elapsed_100ns:.0})");
+                    println!("  与墙钟之比    : {:.4}", qpc_delta as f64 / elapsed_100ns);
+                    println!(
+                        "GetStreamLatency: {latency_100ns} (100ns) = {:.3} ms",
+                        latency_100ns as f64 / f64::from(TICKS_PER_MS as i32)
+                    );
+
+                    // 事实一：频率可用于归一，归一后的秒数逼近墙钟。
+                    assert!(freq > 0, "GetFrequency 返回 0，位置无从归一");
+                    let clock_error = (seconds_by_clock - elapsed.as_secs_f64()).abs();
+                    assert!(
+                        clock_error < 0.05,
+                        "位置经 GetFrequency 归一后与墙钟差 {clock_error:.4} s，归一方式有误"
+                    );
+
+                    // 事实二：QPC 时间戳的单位是 100ns。零点同源留给托管侧验。
+                    let qpc_ratio = qpc_delta as f64 / elapsed_100ns;
+                    assert!(
+                        (0.95..1.05).contains(&qpc_ratio),
+                        "QPC 增量与墙钟之比 {qpc_ratio:.4}，单位不是 100ns"
+                    );
+
+                    // 事实三：这一条是实测，不是闸门。
+                    //
+                    // 0 是一个合法的回答，含义是「这个端点不报」——虚拟端点没有硬件链，
+                    // 本就无可报。故这里不断言它大于零：那会把「没有信息」误判成故障，
+                    // 而真正的错误是把 0 当成「零延迟」拿去算出声时刻。
+                    // 引擎周期与缓冲长度是另外两个总有值的量，一并打出来供归因。
+                    assert!(
+                        (0..100 * TICKS_PER_MS).contains(&latency_100ns),
+                        "共享模式延迟 {latency_100ns} (100ns) 不在可信量级内"
+                    );
+                    assert!(default_period > 0, "GetDevicePeriod 未给出引擎周期");
+                    if latency_100ns == 0 {
+                        println!("注意：本端点不报流延迟，自动估计缺这一项，须靠 per-device 手动偏移补。");
+                    }
+                }
+
+                CoUninitialize();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
