@@ -542,19 +542,23 @@ mod wasapi {
 
     use super::{
         build_resampler, device_latency_us, frames_to_ms, output_frames_at_device_position,
-        prefill_silence_frames, ratio_to_ppm, resample_ratio, target_frames, AlignmentCell,
-        PrefillState, RenderStatsCell, ResamplerState, TargetDepthCell, MIN_TARGET_MS,
-        RING_CAPACITY_FRAMES,
+        output_frames_for, prefill_silence_frames, ratio_to_ppm, resample_ratio, target_frames,
+        AlignmentCell, PrefillState, RenderStatsCell, ResamplerState, TargetDepthCell,
+        MIN_TARGET_MS, RING_CAPACITY_FRAMES,
     };
     use crate::convert;
     use crate::convert::MixFormat;
+    use crate::outer_loop::{
+        actual_play_ticks, play_time_error_ticks, target_play_ticks, OuterLoop,
+    };
     use crate::ring::PlaybackRing;
+    use crate::run_guarded;
+    use crate::timeline::{TICKS_PER_MS, TICKS_PER_SECOND};
     use crate::wasapi_common::{parse_mix_format, wait_for_any, StopEvent, WaitObject};
     use crate::{
         AudioError, PlayedFrame, PlayedFrameCallback, OUTPUT_CHANNELS, STATUS_ALREADY_RUNNING,
         STATUS_PANIC,
     };
-    use crate::run_guarded;
 
     /// 20ms 缓冲，与采集侧同量级。共享模式下的实用下限。
     ///
@@ -863,6 +867,12 @@ mod wasapi {
         // 正是双环分层要避免的形态。
         let mut prefill = PrefillState::new(target_frames(context.target.current_ms()));
         // 建不建在起播这一刻定下。读用户设置而非 offset 可用性，理由见 AlignmentCell。
+        // 外环与它的上一轮时刻。dt 取设备位置的 QPC 增量：那与误差信号同源，
+        // 另读一个时钟会引入两个时基之间的偏差。
+        let mut outer = OuterLoop::default();
+        let mut last_qpc: Option<u64> = None;
+        let device_latency_ticks = i64::try_from(session.device_latency_us * 10).unwrap_or(0);
+
         let mut resampler = build_resampler(
             context.alignment.is_enabled(),
             session.mix.sample_rate,
@@ -904,7 +914,16 @@ mod wasapi {
                 continue;
             }
 
-            let Ok(available) = ring.lock().map(|ring| ring.available_frames()) else {
+            // 设备端点里还压着 padding 帧，故正在出声的那个采样在累积轴上落在读游标
+            // 之前 padding 那么多。一次持锁取全，不为诊断多抢一次那把锁——
+            // 对面等它的是 WASAPI 实时线程。
+            let padding_frames = output_frames_for(padding as usize, session.mix.sample_rate);
+            let Ok((available, playing_sender_ticks)) = ring.lock().map(|ring| {
+                let playing_at = ring
+                    .read_cursor_frames()
+                    .saturating_sub(padding_frames as u64);
+                (ring.available_frames(), ring.sender_ticks_at(playing_at))
+            }) else {
                 break;
             };
 
@@ -940,6 +959,7 @@ mod wasapi {
             stats.set_clock_offset_available(context.alignment.offset_available());
 
             // 设备位置与取位置时的 QPC 是一次调用的一对返回值，用于算出声时刻。
+            let mut position_qpc = None;
             if let Some(clock) = session.clock.as_ref() {
                 let mut position = 0u64;
                 let mut qpc_100ns = 0u64;
@@ -951,6 +971,46 @@ mod wasapi {
                         output_frames_at_device_position(position, session.clock_frequency),
                         qpc_100ns,
                     );
+                    position_qpc = Some(qpc_100ns);
+                }
+            }
+
+            // 外环走一步。offset 不可用时整段跳过——停步而不是喂 0：喂 0 落在死区里
+            // 看着像「没误差」，而它会让上一轮攒下的残差继续被当成有效积分。
+            match (
+                context.alignment.offset_available(),
+                position_qpc,
+                playing_sender_ticks,
+            ) {
+                (true, Some(qpc_now), Some(sender_ticks)) => {
+                    let actual = actual_play_ticks(
+                        i64::try_from(qpc_now).unwrap_or(i64::MAX),
+                        device_latency_ticks,
+                        context.alignment.manual_offset_ticks(),
+                    );
+                    let goal = target_play_ticks(
+                        sender_ticks,
+                        context.alignment.d_ticks(),
+                        context.alignment.offset_ticks(),
+                    );
+                    let error_ticks = play_time_error_ticks(actual, goal);
+                    stats.set_play_time_error_us(error_ticks / 10);
+
+                    if let Some(previous) = last_qpc {
+                        let dt =
+                            (qpc_now.saturating_sub(previous)) as f64 / TICKS_PER_SECOND as f64;
+                        let next =
+                            outer.step(error_ticks as f64 / TICKS_PER_MS as f64, dt, target_ms);
+                        context.target.set_ms(next);
+                    }
+                    last_qpc = Some(qpc_now);
+                }
+                _ => {
+                    // 误差此刻无意义。写 0 而非留着上一次的值：留着的话，
+                    // 对端失联后设置页仍显示一个像是当前的误差。读者据
+                    // clock_offset_available 判断这个 0 是「没误差」还是「算不出」。
+                    stats.set_play_time_error_us(0);
+                    last_qpc = None;
                 }
             }
 
@@ -995,6 +1055,10 @@ mod wasapi {
                 stats.note_underrun();
                 if prefill.note_underrun(frames_to_ms(needed - taken)) {
                     stats.note_hard_reset();
+                    // 时间轴随 ring 一起作废，误差信号从头来。残差留着会让重置后的
+                    // 第一次调整凭空多走一步。
+                    outer.reset();
+                    last_qpc = None;
                     let Ok(mut ring) = ring.lock() else { break };
                     ring.reset();
                     if let Some(state) = resampler.as_mut() {

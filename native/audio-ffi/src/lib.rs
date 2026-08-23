@@ -16,6 +16,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub mod convert;
+pub mod outer_loop;
 pub mod render;
 pub mod ring;
 pub mod timeline;
