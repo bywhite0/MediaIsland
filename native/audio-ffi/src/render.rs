@@ -14,7 +14,9 @@
 
 use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering as AtomicOrdering};
 
-use crate::OUTPUT_SAMPLE_RATE;
+use rubato::{SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+
+use crate::{OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE};
 
 /// 抖动缓冲目标深度的取值范围。
 ///
@@ -217,14 +219,85 @@ pub fn device_latency_us(engine_period_100ns: i64, stream_latency_100ns: i64) ->
     u64::try_from(total_100ns / 10).unwrap_or(0)
 }
 
+/// 重采样器与它的状态。住在 cfg 门之外：`rubato` 是平台无关的依赖，这里没有一处
+/// WASAPI 调用，故它可以脱离设备被测——而「建还是不建」正是本模块最容易悄悄错的判断。
+pub struct ResamplerState {
+    pub(crate) inner: SincFixedOut<f32>,
+}
+
+/// 按设备率与对齐模式决定是否建重采样器。
+///
+/// 设备混音率恰为 48000 且未开对齐时返回 `None`——直接格式转换后写入，零额外缓冲。
+/// 那是最常见的配置。
+///
+/// 开了对齐则 48000 也要建。理由是内环需要一个执行器：`resample_ratio` 算出的比率
+/// 只能由重采样器执行，而 48k 端点上此前它是 `None`，于是漂移控制律在最常见的配置上
+/// 根本没有载体。音频设备晶振典型 ±50ppm，两台之间相对偏差可达 200ppm，
+/// 10 毫秒除以 200ppm 是 50 秒——一次性对齐撑不过一分钟。
+///
+/// 代价是 48k 路径不再 bit-exact：`f_cutoff` 为 0.95，即使恒等重采样也会低通到约
+/// 22.8kHz。人耳无感，但这是一次真实的信号改动，故按需付费——不开对齐的用户逐字
+/// 走原路径，一个采样都不经过重采样器。
+///
+/// `device_rate` 或 `buffer_frames` 为 0 时无条件不建，与模式无关：那是参数无效，
+/// 而无效参数下建出来的东西没有正确形态可言。
+///
+/// 决定在起播那一刻做出，此后不再变——重建要在实时线程上分配，而分配的停顿就是
+/// 可听的 glitch。故这里读的是用户的对齐设置（起播前已知），不是运行时的 offset
+/// 可用性（连上几秒后才有）。两者混为一谈会让 48k 端点在对齐启用后没有内环。
+pub fn build_resampler(
+    alignment_enabled: bool,
+    device_rate: u32,
+    buffer_frames: u32,
+) -> Option<ResamplerState> {
+    if device_rate == 0 || buffer_frames == 0 {
+        return None;
+    }
+
+    if !alignment_enabled && device_rate == OUTPUT_SAMPLE_RATE {
+        return None;
+    }
+
+    let params = SincInterpolationParameters {
+        sinc_len: SINC_LEN,
+        f_cutoff: 0.95,
+        interpolation: SincInterpolationType::Linear,
+        oversampling_factor: 128,
+        window: WindowFunction::BlackmanHarris2,
+    };
+
+    let inner = SincFixedOut::<f32>::new(
+        device_rate as f64 / OUTPUT_SAMPLE_RATE as f64,
+        MAX_RELATIVE_RATIO,
+        params,
+        buffer_frames as usize,
+        OUTPUT_CHANNELS as usize,
+    )
+    .ok()?;
+
+    Some(ResamplerState { inner })
+}
+
 /// 对齐参数的可写载体。
 ///
 /// 与 [`TargetDepthCell`] 同一形态与同一理由：托管侧要在播放中改它，而渲染线程每轮读。
 /// 四个值各自一个原子、不保证同一瞬间——它们变化的时间尺度是秒级（对时窗口更新、
 /// 用户拖动偏移），而渲染轮次是十毫秒级，跨轮取到新旧混合的一组至多影响一轮。
 ///
-/// `enabled` 同时就是「offset 是否可用」：offset 由托管侧算，native 侧算不出，
-/// 故托管侧在 offset 不可用时不启用对齐，两者在这一层是同一个位。
+/// `enabled` 与「offset 是否可用」是两件事，不能合成一个位：
+///
+/// - `enabled` 是用户的对齐设置，起播前已知、极少变。它决定要不要付重采样器的代价，
+///   而那个决定只能在起播那一刻做（重建要在实时线程上分配）。
+/// - offset 可用性是运行时状态，连上几秒后才有，且会在对端失联时消失。它决定外环
+///   此刻能不能动。
+///
+/// 两者合一的写法会让 48k 端点在「起播时还没对上时钟、几秒后对上了」这条最常见的
+/// 时序上没有内环——重采样器在起播那一刻已经决定不建了。
+///
+/// offset 不可用由 `offset_ticks` 为 0 表示。0 是不可能值：offset 是本机 QPC（自开机
+/// 起算）减发送端墙钟的 100ns 表示（自 1970 起算），两者相差约 1.7e16 tick，
+/// 恰好抵成 0 要求发送端的墙钟等于本机的开机时长。与 `render_push` 的时刻用 0 表示
+/// 「没有时刻」同一形态、同一理由。
 #[derive(Default)]
 pub struct AlignmentCell {
     enabled: AtomicU32,
@@ -245,8 +318,14 @@ impl AlignmentCell {
             .store(u32::from(enabled), AtomicOrdering::Relaxed);
     }
 
+    /// 用户的对齐设置。决定要不要建重采样器，故只在起播时被读一次。
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(AtomicOrdering::Relaxed) != 0
+    }
+
+    /// 跨机 offset 此刻可用。外环据它决定动不动。
+    pub fn offset_available(&self) -> bool {
+        self.is_enabled() && self.offset_ticks.load(AtomicOrdering::Relaxed) != 0
     }
 
     pub fn d_ticks(&self) -> i64 {
@@ -448,9 +527,7 @@ mod wasapi {
     use std::sync::{Arc, Mutex};
     use std::thread::JoinHandle;
 
-    use rubato::{
-        Resampler, SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction,
-    };
+    use rubato::Resampler;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Media::Audio::{
         eConsole, eRender, IAudioClient, IAudioClock, IAudioRenderClient, IMMDeviceEnumerator,
@@ -464,17 +541,18 @@ mod wasapi {
     use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 
     use super::{
-        device_latency_us, frames_to_ms, output_frames_at_device_position, prefill_silence_frames,
-        ratio_to_ppm, resample_ratio, target_frames, AlignmentCell, PrefillState, RenderStatsCell,
-        TargetDepthCell, MAX_RELATIVE_RATIO, MIN_TARGET_MS, RING_CAPACITY_FRAMES, SINC_LEN,
+        build_resampler, device_latency_us, frames_to_ms, output_frames_at_device_position,
+        prefill_silence_frames, ratio_to_ppm, resample_ratio, target_frames, AlignmentCell,
+        PrefillState, RenderStatsCell, ResamplerState, TargetDepthCell, MIN_TARGET_MS,
+        RING_CAPACITY_FRAMES,
     };
     use crate::convert;
     use crate::convert::MixFormat;
     use crate::ring::PlaybackRing;
     use crate::wasapi_common::{parse_mix_format, wait_for_any, StopEvent, WaitObject};
     use crate::{
-        AudioError, PlayedFrame, PlayedFrameCallback, OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE,
-        STATUS_ALREADY_RUNNING, STATUS_PANIC,
+        AudioError, PlayedFrame, PlayedFrameCallback, OUTPUT_CHANNELS, STATUS_ALREADY_RUNNING,
+        STATUS_PANIC,
     };
     use crate::run_guarded;
 
@@ -784,7 +862,12 @@ mod wasapi {
         // prefill 是一次性粗调，外环是持续微调，两者若在同一时间尺度上互相追，
         // 正是双环分层要避免的形态。
         let mut prefill = PrefillState::new(target_frames(context.target.current_ms()));
-        let mut resampler = build_resampler(session.mix.sample_rate, session.buffer_frames);
+        // 建不建在起播这一刻定下。读用户设置而非 offset 可用性，理由见 AlignmentCell。
+        let mut resampler = build_resampler(
+            context.alignment.is_enabled(),
+            session.mix.sample_rate,
+            session.buffer_frames,
+        );
 
         // 三块缓冲一次分配到位。渲染是实时线程，循环内分配会引入不可预测的停顿，
         // 而停顿就是可听的 glitch；`ring` 的三个方法也是全程无分配的。
@@ -854,7 +937,7 @@ mod wasapi {
             // 循环实际在用的那个值。与起播请求值分开上报，否则「每轮重读」这条性质
             // 从外部不可观测——把上面那行挪回循环外，没有任何判据会变红。
             stats.set_target_ms_current(target_ms);
-            stats.set_clock_offset_available(context.alignment.is_enabled());
+            stats.set_clock_offset_available(context.alignment.offset_available());
 
             // 设备位置与取位置时的 QPC 是一次调用的一对返回值，用于算出声时刻。
             if let Some(clock) = session.clock.as_ref() {
@@ -1068,37 +1151,6 @@ mod wasapi {
             buffer_event,
             _buffer_event_guard: guard,
         })
-    }
-
-    struct ResamplerState {
-        inner: SincFixedOut<f32>,
-    }
-
-    /// 设备混音率恰为 48000 时返回 `None`——直接格式转换后写入，零额外缓冲。
-    /// 那是最常见的配置。
-    fn build_resampler(device_rate: u32, buffer_frames: u32) -> Option<ResamplerState> {
-        if device_rate == OUTPUT_SAMPLE_RATE || device_rate == 0 || buffer_frames == 0 {
-            return None;
-        }
-
-        let params = SincInterpolationParameters {
-            sinc_len: SINC_LEN,
-            f_cutoff: 0.95,
-            interpolation: SincInterpolationType::Linear,
-            oversampling_factor: 128,
-            window: WindowFunction::BlackmanHarris2,
-        };
-
-        let inner = SincFixedOut::<f32>::new(
-            device_rate as f64 / OUTPUT_SAMPLE_RATE as f64,
-            MAX_RELATIVE_RATIO,
-            params,
-            buffer_frames as usize,
-            OUTPUT_CHANNELS as usize,
-        )
-        .ok()?;
-
-        Some(ResamplerState { inner })
     }
 
     /// 交错 i16 → 分声道 f32 → 重采样 → 分声道 f32。返回产出的设备帧数。
@@ -1479,6 +1531,7 @@ mod wasapi {
 mod tests {
     use super::*;
     use crate::ring::MAX_DRIFT;
+    use rubato::Resampler;
 
     #[test]
     fn target_frames_converts_ms_at_output_rate() {
@@ -1520,6 +1573,53 @@ mod tests {
         // 负值是「取不到」的表示，不是一段负延迟——不能把估计拉小。
         assert_eq!(device_latency_us(100_000, -1), 10_000);
         assert_eq!(device_latency_us(-1, -1), 0);
+    }
+
+    #[test]
+    fn a_48k_endpoint_skips_the_resampler_unless_alignment_is_on() {
+        // 关模式 + 48k 走原路径：一个采样都不经过重采样器，48k 仍是 bit-exact。
+        assert!(build_resampler(false, 48_000, 1_056).is_none());
+        // 开模式 + 48k 必须建：比率的执行者只有它，48k 上没有它就没有内环，
+        // 而 200ppm 的相对晶振偏差在 50 秒后就吃掉 10 毫秒预算。
+        assert!(build_resampler(true, 48_000, 1_056).is_some());
+        // 非 48k 端点两种模式下都要建，与对齐无关——那是格式转换的需要。
+        assert!(build_resampler(false, 44_100, 1_056).is_some());
+        assert!(build_resampler(true, 44_100, 1_056).is_some());
+    }
+
+    #[test]
+    fn invalid_parameters_never_build_a_resampler_in_either_mode() {
+        // 参数无效与模式无关：无效参数下建出来的东西没有正确形态可言。
+        for aligned in [false, true] {
+            assert!(build_resampler(aligned, 0, 1_056).is_none(), "率为 0");
+            assert!(build_resampler(aligned, 48_000, 0).is_none(), "缓冲为 0");
+            assert!(build_resampler(aligned, 0, 0).is_none());
+        }
+    }
+
+    #[test]
+    fn a_48k_resampler_starts_at_the_identity_ratio() {
+        // 起始比率必须是 1.0，否则开对齐的那一刻音调会跳一下。
+        // 比率不直接可读，改看它的等价可观测量：恒等比率下要产出 N 个输出帧，
+        // 稳态需要的输入帧数也是 N。
+        let mut state = build_resampler(true, 48_000, 480).expect("48k 开对齐应当建");
+        state.inner.set_chunk_size(480).expect("设块长");
+
+        // 首轮的需求量含 sinc 核的预热，故取稳态：喂几轮之后再比。
+        let mut out = vec![vec![0f32; 480], vec![0f32; 480]];
+        for _ in 0..4 {
+            let needed = state.inner.input_frames_next();
+            let input = vec![vec![0f32; needed], vec![0f32; needed]];
+            state
+                .inner
+                .process_into_buffer(&input, &mut out, None)
+                .expect("重采样");
+        }
+        assert_eq!(
+            state.inner.input_frames_next(),
+            480,
+            "恒等比率下输入需求应等于输出块长"
+        );
     }
 
     #[test]
