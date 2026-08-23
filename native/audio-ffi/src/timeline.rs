@@ -78,11 +78,24 @@ pub fn gap_silence_frames(expected_ticks: i64, actual_ticks: i64) -> usize {
 /// 单锚点时间轴。
 #[derive(Default)]
 pub struct Timeline {
-    /// (累积写入帧数, 该位置对应的发送端时刻)。
-    ///
-    /// 存的是最近一帧数据的末端，不是它的起点。末端同时就是下一帧应有的起始时刻，
-    /// 于是空档判定与位置外推共用同一份状态；分开存两个时刻会出现两份各自为真的量。
-    anchor: Option<(u64, i64)>,
+    anchor: Option<Anchor>,
+}
+
+/// 一轮带时刻写入的锚点。
+///
+/// 存末端而不是起点：末端同时就是下一帧应有的起始时刻，于是空档判定与位置外推共用
+/// 同一份状态；分开存两个时刻会出现两份各自为真的量。
+///
+/// 除末端之外还要存本轮的起点，因为锚点在数学上是一条无限延伸的直线，而它实际只描述
+/// 本轮写进来的那段数据。没有起点就无法拒绝本轮之外的位置，见
+/// [`Timeline::sender_ticks_at`]。
+struct Anchor {
+    /// 本轮带时刻写入的起点，累积帧数。
+    run_start: u64,
+    /// 最近一帧数据末端的累积帧数。
+    end_frames: u64,
+    /// 该末端对应的发送端时刻。
+    end_ticks: i64,
 }
 
 impl Timeline {
@@ -90,9 +103,10 @@ impl Timeline {
     ///
     /// 无锚点即流的第一帧，没有可比的前一帧，故为 0。
     pub fn gap_before(&self, sender_ticks: i64) -> usize {
-        let Some((_, expected)) = self.anchor else {
+        let Some(anchor) = self.anchor.as_ref() else {
             return 0;
         };
+        let expected = anchor.end_ticks;
 
         if i128::from(sender_ticks) - i128::from(expected) < i128::from(MIN_GAP_TICKS) {
             return 0;
@@ -117,20 +131,39 @@ impl Timeline {
             return;
         };
 
-        self.anchor = Some((position + frames, end_ticks));
+        self.anchor = Some(Anchor {
+            // 本轮起点：锚点为空即本帧是本轮的第一帧，此后沿用不变。
+            run_start: match self.anchor.as_ref() {
+                Some(anchor) => anchor.run_start,
+                None => position,
+            },
+            end_frames: position + frames,
+            end_ticks,
+        });
     }
 
     /// 累积第 cumulative_frames 帧对应的发送端时刻。
     ///
-    /// 入参通常小于锚点帧数——读游标与设备位置都落后于写入位置，差值即缓冲深度。
+    /// 入参通常小于锚点末端——读游标与设备位置都落后于写入位置，差值即缓冲深度。
     /// 故这里是向过去外推，delta 为负是常态而非异常。
     ///
-    /// 返回 None 有两种情形，对调用方是同一件事（没有可用答案）：还没有锚点，
-    /// 或外推结果已经落在 i64 之外。
+    /// 返回 None 有三种情形，对调用方是同一件事（没有可用答案）：还没有锚点；
+    /// 入参落在本轮锚点的管辖范围之外；或外推结果已经落在 i64 之外。
+    ///
+    /// 第二种是必须挡的。锚点在数学上是一条无限延伸的直线，但它只描述本轮写进来的数据。
+    /// 有两条路会造出「已在累积轴上、却不属于本轮」的位置：一是 reset 之后——累积坐标
+    /// 刻意保留而锚点作废，此后第一次带时刻写入把锚点钉在当时的写入位置，于它之前的
+    /// 位置全属上一轮；二是带时刻与不带时刻的写入混用——不带时刻的那段样本仍在缓冲里
+    /// 可读，而它没有任何时刻记账。对这两种位置外推，得到的是一个看起来正常的错时刻，
+    /// 而调用方无从分辨（`is_anchored` 此时为真，锚点是新的）。宁可没有答案。
     pub fn sender_ticks_at(&self, cumulative_frames: u64) -> Option<i64> {
-        let (anchor_frames, anchor_ticks) = self.anchor?;
-        let delta = i128::from(cumulative_frames) - i128::from(anchor_frames);
-        i64::try_from(i128::from(anchor_ticks) + frames_to_ticks(delta)).ok()
+        let anchor = self.anchor.as_ref()?;
+        if cumulative_frames < anchor.run_start {
+            return None;
+        }
+
+        let delta = i128::from(cumulative_frames) - i128::from(anchor.end_frames);
+        i64::try_from(i128::from(anchor.end_ticks) + frames_to_ticks(delta)).ok()
     }
 
     /// 有锚点即可外推。

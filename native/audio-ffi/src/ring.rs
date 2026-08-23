@@ -467,6 +467,54 @@ mod tests {
     }
 
     #[test]
+    fn a_position_from_before_the_reset_has_no_answer() {
+        // reset 保留累积坐标而作废锚点，此后第一次带时刻写入把锚点钉在当时的写入位置。
+        // 于它之前的位置属于上一轮：对它外推会得到一个看起来正常的错时刻，
+        // 而调用方无从分辨——is_anchored 此时为真，锚点是新的。
+        //
+        // 这条路在生产上必经：出声位置是读游标再减去设备里压着的帧数，恒在读游标之前，
+        // 而硬重置刚过时读游标恰好等于本轮起点。硬重置的触发条件是累积欠载，
+        // 也就是真实不连续量最大的那一刻。
+        let mut ring = PlaybackRing::new(FRAME);
+        ring.push_at(&tone(96), 0);
+        let before_reset = ring.read_cursor_frames();
+
+        ring.reset();
+        ring.push_at(&tone(96), 500 * TICKS_PER_MS);
+        let run_start = ring.read_cursor_frames();
+
+        assert!(ring.is_anchored(), "锚点是真的，故 is_anchored 挡不住这件事");
+        assert_eq!(
+            ring.sender_ticks_at(run_start),
+            Some(500 * TICKS_PER_MS),
+            "本轮之内照常有答案"
+        );
+        assert_eq!(
+            ring.sender_ticks_at(before_reset),
+            None,
+            "重置前的位置属于上一轮，不该有答案"
+        );
+        assert_eq!(ring.sender_ticks_at(run_start - 1), None, "起点之前一帧也不该有");
+    }
+
+    #[test]
+    fn a_position_in_untimed_data_has_no_answer() {
+        // 不带时刻写进来的那段样本仍在缓冲里可读，却没有任何时刻记账。push 作废了锚点，
+        // 但下一次 push_at 重建锚点之后，读游标只要还指在那段里，问出来的就是编造的时刻。
+        let mut ring = PlaybackRing::new(FRAME * 2);
+        ring.push(&tone(96));
+        ring.push_at(&tone(96), 500 * TICKS_PER_MS);
+
+        // 读游标此刻正指在那段没记账的数据里——这不是构造出来的边界，是混用两个入口的常态。
+        assert_eq!(ring.read_cursor_frames(), 0);
+        assert_eq!(
+            ring.sender_ticks_at(ring.read_cursor_frames()),
+            None,
+            "没记账的那段不该有答案"
+        );
+    }
+
+    #[test]
     fn reset_keeps_the_cumulative_coordinate_monotonic() {
         // 累积帧数是时间轴坐标，不是缓冲下标。归零会让它与仍在推进的设备位置
         // 错开一整段，而那种错开只表现为出声时刻算错。
