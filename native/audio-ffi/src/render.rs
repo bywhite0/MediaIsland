@@ -219,6 +219,23 @@ pub fn device_latency_us(engine_period_100ns: i64, stream_latency_100ns: i64) ->
     u64::try_from(total_100ns / 10).unwrap_or(0)
 }
 
+/// 本包该不该走时间轴（补空档静音并记锚点），还是走不带时刻的原路径。
+///
+/// 抽成纯函数不是为了复用，是为了让这段接线可测——它此前内嵌在 FFI 包装层里，
+/// 而那里没有任何自动化测试进得去，于是把两个分支对调也不会有判据变红。
+/// 同一个理由抽出过 [`prefill_silence_frames`] 与 [`output_frames_for`]。
+///
+/// 两个条件必须同时成立。只看时刻会让 native 侧有两个互不知情的对齐开关：调用方送了
+/// 非零时刻，即使用户关着对齐，这一包也会走补静音与锚点那条路，而「对齐关闭时热路径
+/// 逐字走原路径」这条约束点名的是那个性质本身，不只是它的可测后果。
+///
+/// 时刻为 0 表示本帧没有时刻。这条约定要求送进来的是自 1970 起算的 100ns 计次——
+/// 0 在那个时基下不是会出现的值。以起播为原点的相对时基不能直接送进来：
+/// 那种时基的第一帧恰好是 0，会被读成「没有时刻」。
+pub fn should_use_timeline(sender_ticks: i64, alignment_enabled: bool) -> bool {
+    sender_ticks != 0 && alignment_enabled
+}
+
 /// 重采样器与它的状态。住在 cfg 门之外：`rubato` 是平台无关的依赖，这里没有一处
 /// WASAPI 调用，故它可以脱离设备被测——而「建还是不建」正是本模块最容易悄悄错的判断。
 pub struct ResamplerState {
@@ -784,14 +801,26 @@ mod wasapi {
         /// 而 [`PlaybackRing::push`] 不跨调用结转残样本——若调用方按字节数算帧数
         /// 且没向下取整到整帧，错位会一路传下去。
         /// `sender_ticks` 为 0 即「本帧没有时刻」，走不带时间轴的原路径。
+        /// 追加一包样本。走不走时间轴由对齐开关与本帧有没有时刻共同决定。
+        ///
+        /// 两个条件必须同时成立才建时间轴，而不是各自独立判断。此前只看 `sender_ticks`：
+        /// 于是 native 侧有了两个互不知情的对齐开关——调用方只要送了非零时刻，即使用户
+        /// 关着对齐，这一包也会走补静音与锚点那条路。「对齐关闭时热路径逐字走原路径」
+        /// 这条约束当时只由托管侧的自觉维持，而约束点名的是那个性质本身。
+        ///
+        /// `sender_ticks` 为 0 表示本帧没有时刻。这条编码约定对调用方有一个硬要求：
+        /// 送进来的必须是自 1970 起算的 100ns 计次，因为 0 在那个时基下不是一个会出现的
+        /// 值。任何以起播为原点的相对时基都不能直接送进来——那种时基的第一帧恰好是 0，
+        /// 而它会被读成「没有时刻」。
         pub fn push(&self, interleaved: &[i16], sender_ticks: i64) {
+            let timed = super::should_use_timeline(sender_ticks, self.alignment.is_enabled());
             // 渲染线程持锁的时间是一次 memcpy。拿不到锁只能是持锁者 panic 了，
             // 此时丢这一包而非把 panic 传进网络线程。
             if let Ok(mut ring) = self.ring.lock() {
-                if sender_ticks == 0 {
-                    ring.push(interleaved);
-                } else {
+                if timed {
                     ring.push_at(interleaved, sender_ticks);
+                } else {
+                    ring.push(interleaved);
                 }
             }
         }
@@ -1648,6 +1677,27 @@ mod tests {
     fn target_frames_converts_ms_at_output_rate() {
         assert_eq!(target_frames(200), 9_600);
         assert_eq!(target_frames(50), 2_400);
+    }
+
+    #[test]
+    fn the_timeline_needs_both_a_timestamp_and_the_alignment_switch() {
+        // 四种组合逐个钉。此前这段接线内嵌在 FFI 包装层，把两个分支对调不会有判据变红，
+        // 而它决定的是「对齐关闭时热路径走不走原路径」这条硬约束。
+        assert!(should_use_timeline(1, true), "有时刻且开了对齐才走时间轴");
+        assert!(
+            !should_use_timeline(1, false),
+            "关了对齐即走原路径，哪怕调用方送了时刻——否则 native 侧就有两个互不知情的开关"
+        );
+        assert!(!should_use_timeline(0, true), "没有时刻就无从建锚点");
+        assert!(!should_use_timeline(0, false));
+    }
+
+    #[test]
+    fn a_negative_timestamp_still_counts_as_timed() {
+        // 只有 0 是「没有时刻」。负数是一个办不到的时刻，与「没给」的排查方向不同,
+        // 不能被这道门吞成后者——它该由时间轴自己的溢出与外推判断处置。
+        assert!(should_use_timeline(-1, true));
+        assert!(should_use_timeline(i64::MIN, true));
     }
 
     #[test]
