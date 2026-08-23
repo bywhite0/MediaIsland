@@ -160,6 +160,60 @@ public class MediaLinkClientCapabilityTests
     }
 
     [Fact]
+    public async Task Client_DeclaredBudget_IsParsed()
+    {
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: ""","capabilities":["audio","audio.clock"],"audioClock":{"dMs":250}""");
+
+        Assert.True(harness.Client.SupportsAudioClock);
+        Assert.Equal(250, harness.Client.ServerAudioClockBudgetMs);
+    }
+
+    [Fact]
+    public async Task Client_MissingAudioClockObject_LeavesTheBudgetUnset()
+    {
+        // 缺失不回落到默认值：两端各自默认成同一个数看起来一致，实则两份各自为真的
+        // 声明，改了一端就静默失配。声明了能力但没给参数同样算没声明。
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: ""","capabilities":["audio","audio.clock"]""");
+
+        Assert.True(harness.Client.SupportsAudioClock);
+        Assert.Null(harness.Client.ServerAudioClockBudgetMs);
+    }
+
+    [Fact]
+    public async Task Client_ADeclaredZero_IsNotTheSameAsUndeclared()
+    {
+        // 「声明了一个办不到的值」与「没声明」的排查方向不同：改服务端配置 / 查服务端
+        // 版本。拿 -1 或 0 当空值哨兵会把前者吞成后者。
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: ""","capabilities":["audio.clock"],"audioClock":{"dMs":0}""");
+
+        Assert.Equal(0, harness.Client.ServerAudioClockBudgetMs);
+    }
+
+    [Fact]
+    public async Task Client_HelloDuringSession_RereadsTheBudgetBothWays()
+    {
+        // server.hello 可在连接存活期间重发并改 D。只在握手记一次的话，改小时接收端
+        // 不会退回、改大时不会重新进入，而两种情形都不报错。
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: ""","capabilities":["audio.clock"],"audioClock":{"dMs":300}""");
+        Assert.Equal(300, harness.Client.ServerAudioClockBudgetMs);
+
+        harness.QueueServerHello(
+            epoch: 2,
+            capabilitiesJson: ""","capabilities":["audio.clock"],"audioClock":{"dMs":120}""");
+        await harness.WaitUntilAsync(() => harness.Client.ServerAudioClockBudgetMs == 120);
+        Assert.Equal(120, harness.Client.ServerAudioClockBudgetMs);
+
+        // 再改回来要能重新进入，且声明整个消失时要落回空值。
+        harness.QueueServerHello(epoch: 3, capabilitiesJson: ""","capabilities":["audio.clock"]""");
+        await harness.WaitUntilAsync(() => harness.Client.ServerAudioClockBudgetMs is null);
+        Assert.Null(harness.Client.ServerAudioClockBudgetMs);
+    }
+
+    [Fact]
     public async Task Client_HelloDuringSession_RefreshesCapabilities()
     {
         // 服务端重建会话后会再 hello 一次，此时能力可能已经变了（如采集设备掉了）。

@@ -344,7 +344,11 @@ public sealed class MediaLinkServer : IAsyncDisposable
                                 MediaLinkProtocol.CapabilityAudio,
                                 MediaLinkProtocol.CapabilityAudioClock
                             ],
-                            Audio = new MediaLinkAudioFormatPayload()
+                            Audio = new MediaLinkAudioFormatPayload(),
+                            AudioClock = new MediaLinkAudioClockDeclarationPayload
+                            {
+                                BudgetMs = MediaLinkProtocol.AudioClockDefaultBudgetMs
+                            }
                         },
                         name: MediaLinkProtocol.EventServerHello);
                     await session.SendAsync(hello, cancellationToken);

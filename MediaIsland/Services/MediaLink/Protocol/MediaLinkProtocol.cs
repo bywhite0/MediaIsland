@@ -61,6 +61,19 @@ public static class MediaLinkProtocol
     public const string CapabilityAudioClock = "audio.clock";
 
     /// <summary>
+    /// 播放延迟预算的默认值，毫秒。发送端在 <c>server.hello</c> 的 <c>audioClock.dMs</c>
+    /// 里声明它，接收端一律照声明值执行。
+    ///
+    /// 它必须全局一致，否则对齐不可能——各接收端自己配一个不同的值就直接失败。
+    /// 故这里是发送端的默认值，不是接收端的回落值：接收端读不到声明时退回非对齐模式，
+    /// 而不是也取 300。两端各自默认成 300 看起来一致，但那是巧合，改了一端就静默失配。
+    ///
+    /// 300 毫秒的来由：它要盖住一次 TCP 重传加抖动缓冲的稳态深度，同时不至于让
+    /// 「按下暂停到真的安静」有明显延迟。
+    /// </summary>
+    public const int AudioClockDefaultBudgetMs = 300;
+
+    /// <summary>
     /// 音频线格式。显式声明而非双方硬编码约定——AMLL 的做法是把 48000/2/i16
     /// 写死在两端代码里，换采样率就要改协议。
     /// </summary>

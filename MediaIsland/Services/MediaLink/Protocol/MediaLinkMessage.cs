@@ -247,6 +247,31 @@ public sealed class MediaLinkServerHelloPayload
     [JsonPropertyName("audio")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MediaLinkAudioFormatPayload? Audio { get; set; }
+
+    /// <summary>
+    /// 跨机对齐的参数声明。<c>capabilities</c> 含 <c>audio.clock</c> 只表示协议支持，
+    /// 这个对象才带着执行所需的数值——两者分开，故「不支持」与「支持但参数不合用」
+    /// 报的是不同的原因。
+    /// </summary>
+    [JsonPropertyName("audioClock")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public MediaLinkAudioClockDeclarationPayload? AudioClock { get; set; }
+}
+
+/// <summary>
+/// 跨机对齐的参数声明。
+/// </summary>
+public sealed class MediaLinkAudioClockDeclarationPayload
+{
+    /// <summary>
+    /// 播放延迟预算，毫秒：每个采样应当在「发送端采到它的时刻 + 本值」出声。
+    ///
+    /// 可空，且缺失时接收端按「不支持对齐」处理而不是取默认值。取默认值会让两端各自
+    /// 默认成一个数，看起来一致而实际是两份各自为真的声明——改了一端就静默失配，
+    /// 而症状是两台机器差一个固定的量，看着像硬件延迟。
+    /// </summary>
+    [JsonPropertyName("dMs")]
+    public long? BudgetMs { get; set; }
 }
 
 /// <summary>音频线格式声明。取值恒为协议常量，作为字段传出使其可被客户端读取而非猜测。</summary>
