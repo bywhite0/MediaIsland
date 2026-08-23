@@ -32,7 +32,9 @@ public readonly record struct AudioRenderStats(
     long DeviceLatencyUs = 0,
     long PlayTimeErrorUs = 0,
     int TargetMsCurrent = 0,
-    bool ClockOffsetAvailable = false)
+    bool ClockOffsetAvailable = false,
+    long DeviceBufferFrames = 0,
+    bool DeviceClockAvailable = false)
 {
     /// <summary>本句柄起播过。为假时其余字段全为零。</summary>
     public bool HasStarted => DeviceSampleRate > 0;

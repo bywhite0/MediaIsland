@@ -13,7 +13,7 @@ public class AudioRenderStatsTests
         // 与 Rust 侧 render_stats_layout_has_no_padding 对称。两条都成立才说明两端一致。
         // 布局错位是静默的：读到的是别的字段的值，表现为「数值不对」，
         // 与「逻辑算错了」无从区分。
-        Assert.Equal(96, Marshal.SizeOf<NativeRenderStats>());
+        Assert.Equal(112, Marshal.SizeOf<NativeRenderStats>());
     }
 
     [Theory]
@@ -29,6 +29,8 @@ public class AudioRenderStatsTests
     [InlineData(nameof(NativeRenderStats.PlayTimeErrorUs), 72)]
     [InlineData(nameof(NativeRenderStats.TargetMsCurrent), 80)]
     [InlineData(nameof(NativeRenderStats.ClockOffsetAvailable), 88)]
+    [InlineData(nameof(NativeRenderStats.DeviceBufferFrames), 96)]
+    [InlineData(nameof(NativeRenderStats.DeviceClockAvailable), 104)]
     public void NativeLayout_PinsEveryFieldOffset(string field, int expectedOffset)
     {
         // 为什么 SizeOf 那一条不够：变异实测发现把首字段从 ulong 改成 uint 时

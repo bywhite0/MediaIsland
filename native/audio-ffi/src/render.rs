@@ -409,6 +409,8 @@ pub struct RenderStatsCell {
     play_time_error_us: AtomicI64,
     target_ms_current: AtomicU64,
     clock_offset_available: AtomicU64,
+    device_buffer_frames: AtomicU64,
+    device_clock_available: AtomicU64,
 }
 
 impl RenderStatsCell {
@@ -459,6 +461,9 @@ impl RenderStatsCell {
         self.target_ms_current.store(0, AtomicOrdering::Relaxed);
         self.clock_offset_available
             .store(0, AtomicOrdering::Relaxed);
+        self.device_buffer_frames.store(0, AtomicOrdering::Relaxed);
+        self.device_clock_available
+            .store(0, AtomicOrdering::Relaxed);
     }
 
     /// 设备位置锚点：`IAudioClock::GetPosition` 的位置（已归一为 48000Hz 域的帧数）
@@ -500,9 +505,32 @@ impl RenderStatsCell {
             .store(u64::from(ms), AtomicOrdering::Relaxed);
     }
 
-    /// 跨机时钟 offset 是否可用。不可用时对齐只能退回非对齐模式。
+    /// 对齐此刻是否在进行，即用户开了对齐且 offset 已下发。
+    ///
+    /// 它不是「offset 可用」单独一件事：offset 由托管侧算并下发，托管侧本来就知道
+    /// 它算出来没有。这个字段对托管侧的用处是回读确认，不是新信息。
     pub fn set_clock_offset_available(&self, available: bool) {
         self.clock_offset_available
+            .store(u64::from(available), AtomicOrdering::Relaxed);
+    }
+
+    /// 端点缓冲容量，设备帧数。起播时写一次——它由设备定，会话期间不变。
+    ///
+    /// 报容量而非当前占用：占用走位置锚点，两者相加是把同一段延迟计两次。
+    /// 托管侧要它来算「本机最小可达延迟」，而缓冲长度比请求值大且各设备不同，
+    /// 按请求值推算会低估。
+    pub fn set_device_buffer_frames(&self, frames: u32) {
+        self.device_buffer_frames
+            .store(u64::from(frames), AtomicOrdering::Relaxed);
+    }
+
+    /// 设备时钟服务是否可用。为假时位置锚点根本不产生，对齐无从进行。
+    ///
+    /// 这是 native 独占的一条事实。少了它，托管侧看到的只是位置恒为 0，
+    /// 而那与「刚起播还没转起来」不可区分，于是一台取不到时钟的机器会一直报
+    /// 「尚未对上时钟」——那条提示指向等待，而它永远不会好转。
+    pub fn set_device_clock_available(&self, available: bool) {
+        self.device_clock_available
             .store(u64::from(available), AtomicOrdering::Relaxed);
     }
 
@@ -522,6 +550,8 @@ impl RenderStatsCell {
             play_time_error_us: self.play_time_error_us.load(AtomicOrdering::Relaxed),
             target_ms_current: self.target_ms_current.load(AtomicOrdering::Relaxed),
             clock_offset_available: self.clock_offset_available.load(AtomicOrdering::Relaxed),
+            device_buffer_frames: self.device_buffer_frames.load(AtomicOrdering::Relaxed),
+            device_clock_available: self.device_clock_available.load(AtomicOrdering::Relaxed),
         }
     }
 }
@@ -873,6 +903,11 @@ mod wasapi {
         stats.set_device_rate(session.mix.sample_rate);
         // 会话常量，起播时写一次即可。0 的含义是「没有估计」，不是「零延迟」。
         stats.set_device_latency_us(session.device_latency_us);
+        // 同样是会话常量：缓冲容量由设备定，托管侧要它来算本机最小可达延迟。
+        stats.set_device_buffer_frames(session.buffer_frames);
+        // native 独占的一条事实。取不到时钟即位置锚点根本不产生，对齐无从进行，
+        // 而托管侧只看位置的话，那与「刚起播还没转起来」不可区分。
+        stats.set_device_clock_available(session.clock.is_some());
 
         // prefill 用起播那一刻的目标深度，此后不跟着外环变。这不是漏改一处：
         // prefill 是一次性粗调，外环是持续微调，两者若在同一时间尺度上互相追，
@@ -1963,6 +1998,8 @@ mod tests {
         cell.set_play_time_error_us(-2_500);
         cell.set_target_ms_current(320);
         cell.set_clock_offset_available(true);
+        cell.set_device_buffer_frames(1_056);
+        cell.set_device_clock_available(true);
 
         let s = cell.snapshot();
         assert_eq!(s.device_sample_rate, 48_000);
@@ -1973,6 +2010,8 @@ mod tests {
         assert!(s.play_time_error_us < 0, "负误差不得回绕成正值");
         assert_eq!(s.target_ms_current, 320);
         assert_eq!(s.clock_offset_available, 1);
+        assert_eq!(s.device_buffer_frames, 1_056);
+        assert_eq!(s.device_clock_available, 1);
         assert_eq!(s.ring_frames, 9_600);
         assert_eq!(s.resample_ratio_ppm, 1_000_000);
         assert_eq!(s.device_frames_rendered, 960);
@@ -1996,6 +2035,8 @@ mod tests {
         cell.set_play_time_error_us(-10);
         cell.set_target_ms_current(320);
         cell.set_clock_offset_available(true);
+        cell.set_device_buffer_frames(1056);
+        cell.set_device_clock_available(true);
 
         cell.reset();
 
@@ -2012,6 +2053,8 @@ mod tests {
         assert_eq!(s.play_time_error_us, 0);
         assert_eq!(s.target_ms_current, 0);
         assert_eq!(s.clock_offset_available, 0);
+        assert_eq!(s.device_buffer_frames, 0);
+        assert_eq!(s.device_clock_available, 0);
     }
 
     #[test]
@@ -2019,10 +2062,10 @@ mod tests {
         // 布局判据。托管侧有一条对称的 Marshal.SizeOf 断言，两条都成立才说明两端一致。
         // 错位是静默的：读到的是别的字段的值，表现为「数值不对」，
         // 与「逻辑算错了」无从区分。
-        // 十二个 8 字节字段，无 padding。混进一个 u32 只会产生尾部填充，
+        // 十四个 8 字节字段，无 padding。混进一个 u32 只会产生尾部填充，
         // 而尾部填充的大小两端各自按对齐规则推——那是又一处不必存在的约定，
         // 故可用性标志也取 u64。
-        assert_eq!(std::mem::size_of::<crate::RenderStats>(), 96);
+        assert_eq!(std::mem::size_of::<crate::RenderStats>(), 112);
         assert_eq!(std::mem::align_of::<crate::RenderStats>(), 8);
 
         // 大小与对齐不够，必须逐字段钉偏移，且两端各钉自己的。
@@ -2045,5 +2088,7 @@ mod tests {
         assert_eq!(offset_of!(S, play_time_error_us), 72);
         assert_eq!(offset_of!(S, target_ms_current), 80);
         assert_eq!(offset_of!(S, clock_offset_available), 88);
+        assert_eq!(offset_of!(S, device_buffer_frames), 96);
+        assert_eq!(offset_of!(S, device_clock_available), 104);
     }
 }

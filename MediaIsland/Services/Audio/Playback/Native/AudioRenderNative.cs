@@ -51,6 +51,23 @@ internal struct NativeRenderStats
     /// 填充的大小两端各自按对齐规则推，那是又一处不必存在的约定。
     /// </summary>
     public ulong ClockOffsetAvailable;
+
+    /// <summary>
+    /// 端点缓冲容量，设备帧数。为 0 表示未起播。
+    ///
+    /// 是容量不是当前占用——占用走 DevicePositionFrames 与 DevicePositionQpc 逐轮测得，
+    /// 两者相加是把同一段延迟计两次。它进的是「本机最小可达延迟」那个下限。
+    /// </summary>
+    public ulong DeviceBufferFrames;
+
+    /// <summary>
+    /// 0 或 1。设备时钟服务可用性，native 独占的一条事实。
+    ///
+    /// 为 0 时位置锚点根本不产生，对齐无从进行。少了这一位，托管侧看到的只是位置恒为 0，
+    /// 而那与「刚起播还没转起来」不可区分，于是会一直报「尚未对上时钟」——
+    /// 那条提示指向等待，而它永远不会好转。
+    /// </summary>
+    public ulong DeviceClockAvailable;
 }
 
 /// <summary>
@@ -252,6 +269,17 @@ internal static partial class AudioRenderNative
             short* samples,
             nuint frameCount,
             long senderTicks);
+
+        /// <summary>
+        /// 抖动缓冲目标深度的受支持区间，毫秒。查的是 native 侧的编译期常量。
+        ///
+        /// 单独一个导出而不是塞进 stats：那两个是编译期常量，stats 是每次快照的会话量。
+        /// 托管侧要下界来判「本机最小可达延迟是否装得进发送端声明的预算」——
+        /// 此前那个 50 抄在判据里，是第二份各自为真的常量。
+        /// </summary>
+        [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_target_ms_bounds")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        public static unsafe partial int RenderTargetMsBounds(uint* minMs, uint* maxMs);
 
         [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_set_alignment")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

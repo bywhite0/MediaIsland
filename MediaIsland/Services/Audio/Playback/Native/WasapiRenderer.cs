@@ -184,7 +184,9 @@ internal sealed class WasapiRenderer : IAudioRenderer
                 (long)native.DeviceLatencyUs,
                 native.PlayTimeErrorUs,
                 (int)native.TargetMsCurrent,
-                native.ClockOffsetAvailable != 0);
+                native.ClockOffsetAvailable != 0,
+                (long)native.DeviceBufferFrames,
+                native.DeviceClockAvailable != 0);
         }
     }
 

@@ -208,8 +208,32 @@ pub struct RenderStats {
     pub play_time_error_us: i64,
     /// 渲染循环当前实际在用的目标深度，毫秒。区别于起播时请求的值。
     pub target_ms_current: u64,
-    /// 跨机时钟 offset 是否可用，0 或 1。不可用时只能退回非对齐模式。
+    /// 对齐此刻是否在进行，0 或 1。
+    ///
+    /// 报的是「用户开了对齐，且 offset 已经下发」这个合成条件，不是「offset 可用」
+    /// 单独一件事——offset 由托管侧算并下发，托管侧本来就知道它算出来没有。
+    /// 故这个字段对托管侧的用处是回读确认，不是新信息。
+    ///
+    /// 「为什么没对齐」的归因不靠这一个位：能力缺失、未声明预算、预算办不到、
+    /// offset 未就绪四种都由托管侧自己分辨，而 native 独占的那一种在下一个字段。
     pub clock_offset_available: u64,
+    /// 端点缓冲的容量，设备帧数。为 0 表示本句柄从未起播过。
+    ///
+    /// 它是容量而非当前占用：占用由 `device_position_frames` 与 `device_position_qpc`
+    /// 逐轮测得，两者相加是把同一段延迟计两次。
+    ///
+    /// 容量之所以要报出来，是因为它是「本机最小可达延迟」的组成部分——渲染循环每轮把
+    /// WASAPI 允许写的帧数全写满，故一个采样最坏要等整整一个缓冲容量才被取走，
+    /// 那就是「必须提前多久交出这个采样」的上界。缓冲长度由设备定且比请求值大，
+    /// 各接收端不同，所以它不能在托管侧按请求值推算。
+    pub device_buffer_frames: u64,
+    /// 设备时钟服务是否可用，0 或 1。为 0 时位置锚点根本不产生，对齐无从进行。
+    ///
+    /// 这是 native 独占的一条事实：`IAudioClock` 取不到时，托管侧看到的只是
+    /// `device_position_frames` 恒为 0，而那与「刚起播还没转起来」不可区分。
+    /// 少了这个字段，一台取不到时钟的机器会一直报「尚未对上时钟」——那条提示指向等待，
+    /// 而它永远不会好转。
+    pub device_clock_available: u64,
 }
 
 /// 采集句柄。跨 FFI 传递的是它的裸指针。
@@ -222,6 +246,35 @@ pub struct CaptureHandle {
 #[no_mangle]
 pub extern "C" fn mediaisland_audio_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// 抖动缓冲目标深度的受支持区间，毫秒。
+///
+/// 单独开一个导出而不是塞进 `RenderStats`：这两个是编译期常量，而 stats 是每次快照的
+/// 会话量。把生命周期不同的量放进同一个载体，会让「本句柄从未起播过」与「这台机器的
+/// 下界是多少」共用一份 0，而后者与起播无关。
+///
+/// 托管侧需要下界来判「本机最小可达延迟是否装得进发送端声明的预算」。此前那个 50 是
+/// 抄在托管侧判据里的第二份常量——同一个数分散成两份各自为真的声明时，改一处而漏另一处
+/// 不会让任何判据变红。
+///
+/// 不带平台门：区间由本 crate 的常量定义，与有没有 WASAPI 无关。
+///
+/// # Safety
+/// `min_ms` 与 `max_ms` 必须各指向一个可写的 u32，或为空指针（为空即跳过该项）。
+#[no_mangle]
+pub unsafe extern "C" fn mediaisland_audio_render_target_ms_bounds(
+    min_ms: *mut u32,
+    max_ms: *mut u32,
+) -> i32 {
+    if let Some(slot) = min_ms.as_mut() {
+        *slot = render::MIN_TARGET_MS;
+    }
+    if let Some(slot) = max_ms.as_mut() {
+        *slot = render::MAX_TARGET_MS;
+    }
+
+    STATUS_OK
 }
 
 /// 创建采集句柄。`user_data` 原样回传给回调，C# 侧用它还原 `GCHandle`。
