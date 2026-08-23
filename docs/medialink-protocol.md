@@ -283,8 +283,9 @@ function positionNow(p, recvAt) {
     "protocolVersion": 1,
     "authRequired": true,
     "sessionEpoch": 3,
-    "capabilities": ["audio"],
-    "audio": { "sampleRate": 48000, "channels": 2, "format": "s16le" }
+    "capabilities": ["audio", "audio.clock"],
+    "audio": { "sampleRate": 48000, "channels": 2, "format": "s16le" },
+    "audioClock": { "dMs": 300 }
   }
 }
 ```
@@ -296,6 +297,13 @@ function positionNow(p, recvAt) {
 | `sessionEpoch` | long | 监听器实例代号，进程内单调递增 |
 | `capabilities` | string[]? | 服务端支持的可选能力；缺失表示只支持基础频道 |
 | `audio` | object? | 音频线格式；`capabilities` 含 `audio` 时存在 |
+| `audioClock` | object? | 跨机播放对齐的参数声明；`capabilities` 含 `audio.clock` 时存在 |
+
+`audioClock` 的字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `dMs` | long? | 播放延迟预算，毫秒：每个采样应在「发送端采到它的时刻 + `dMs`」出声。缺失时接收端按「不支持对齐」处理，**而不是取默认值** |
 
 `sessionEpoch` 用于识别服务端重启：`seq` 在监听器重建后从 0 重新开始，客户端若一律「丢弃 seq ≤ 已处理值」会永久停止更新。正确做法是**发现 `sessionEpoch` 变化时重置已处理的 seq 水位**。
 
@@ -309,6 +317,26 @@ function positionNow(p, recvAt) {
 
 > 订阅 `audio` 前应先检查 `capabilities` 是否含 `"audio"`。旧版服务端不认识该频道，
 > 会以 `bad_request` 拒绝整个 `subscribe` 请求——包括其中的 `media` 与 `lyrics`。
+
+#### 消费 audioClock
+
+`dMs` 是**发送端的声明**，不是接收端的建议值：多台接收端要在同一空间同时出声，这个预算
+必须全局一致，各接收端自己配一个不同的数就直接失败。故接收端一律照声明值执行。
+
+`server.hello` 可在连接存活期间重发并改 `dMs`，接收端与 `capabilities` 一样**以最新一条
+为准**：改小到本机办不到就退回非对齐，改回来要能重新进入。能力与 `dMs` 出自同一条 hello，
+接收端应成组读取——分两次取回的两半可能来自两条 hello，那会让归因指错方向。
+
+字段缺失——没有 `audioClock` 对象，或对象里没有 `dMs`——时，接收端**按「不支持对齐」处理，
+不得回落到默认值**。回落会让两端各自默认成一个数：看起来一致，实际是两份各自为真的声明，
+改了一端就静默失配，而症状是两台机器差一个固定的量、看着像硬件延迟。
+
+「声明了一个办不到的值」与「没有声明」是两回事，接收端应分开归因：前者去改发送端的
+配置值，后者去查发送端版本。`dMs` 为 0、为负、或大到本机无从执行都属前者。
+
+`capabilities` 含 `audio.clock` 只表示协议支持，`dMs` 本机能不能满足是运行时的事——
+与上面 `audio` 那条立场相同，两者报不同的原因，否则一次「预算配得太小」会让人以为
+对端根本不懂这个协议。
 
 ## 控制指令（Phase 2）
 
