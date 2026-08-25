@@ -1,3 +1,4 @@
+using Avalonia.Media.Imaging;
 using MediaIsland.Services.Media;
 
 namespace MediaIsland.Services.MediaLink;
@@ -40,7 +41,7 @@ public static class MediaLinkThumbnail
         }
 
         using var buffer = new MemoryStream();
-        bitmap.Save(buffer);
+        bitmap.Save(buffer, PngBitmapEncoderOptions.Default);
         if (buffer.Length == 0 || buffer.Length > MaxBytes)
         {
             return null;

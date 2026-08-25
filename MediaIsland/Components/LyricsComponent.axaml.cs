@@ -688,7 +688,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                     _isInterludeAnimationActive = false;
                 }
 
-                Dispatcher.UIThread.InvokeAsync(ClearFixedLyricsContentWidth);
+                _ = Dispatcher.UIThread.InvokeAsync(ClearFixedLyricsContentWidth);
 
                 _logger.LogInformation(
                     "[歌词] 媒体信息：{Title} - {Artist}（{Album}），时长 {Duration}，来源 {Source}",
@@ -719,7 +719,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
                 }
 
                 SetStatus(document == null ? "未找到歌词" : string.Empty);
-                Dispatcher.UIThread.InvokeAsync(ApplyFixedLyricsContentWidth);
+                _ = Dispatcher.UIThread.InvokeAsync(ApplyFixedLyricsContentWidth);
                 RenderCurrentPositionOnce();
                 UpdateRenderCadence();
             }

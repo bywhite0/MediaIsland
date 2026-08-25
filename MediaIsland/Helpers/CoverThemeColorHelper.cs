@@ -22,7 +22,7 @@ public static class CoverThemeColorHelper
         try
         {
             using var stream = new MemoryStream();
-            bitmap.Save(stream);
+            bitmap.Save(stream, PngBitmapEncoderOptions.Default);
             stream.Seek(0, SeekOrigin.Begin);
             using var skStream = new SKManagedStream(stream);
             using var skBitmap = SKBitmap.Decode(skStream);
@@ -48,7 +48,7 @@ public static class CoverThemeColorHelper
         {
             // 缩小采样，控制开销
             const int sampleSize = 32;
-            using var sampled = bitmap.Resize(new SKImageInfo(sampleSize, sampleSize), SKFilterQuality.Medium)
+            using var sampled = bitmap.Resize(new SKImageInfo(sampleSize, sampleSize), new SKSamplingOptions (SKFilterMode.Linear, SKMipmapMode.Linear))
                                ?? bitmap.Copy();
             if (sampled == null)
             {

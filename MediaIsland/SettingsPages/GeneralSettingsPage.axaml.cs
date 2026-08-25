@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -1400,7 +1401,7 @@ namespace MediaIsland.SettingsPages
                 return;
             }
 
-            var text = await top.Clipboard.GetTextAsync();
+            var text = await top.Clipboard.TryGetTextAsync();
             if (!MediaLinkConfigCode.TryParse(text, out var code, out var error))
             {
                 MediaLinkUpstreamCodeHint = error ?? "配置码无法识别";
