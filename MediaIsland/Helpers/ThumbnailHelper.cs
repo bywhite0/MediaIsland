@@ -49,7 +49,7 @@ namespace MediaIsland.Helpers
                     int newWidth = (int)(currentBitmap.Width * ratio);
                     int newHeight = (int)(currentBitmap.Height * ratio);
 
-                    var resized = currentBitmap.Resize(new SKImageInfo(newWidth, newHeight), SKFilterQuality.High);
+                    var resized = currentBitmap.Resize(new SKImageInfo(newWidth, newHeight), new SKSamplingOptions (SKCubicResampler.Mitchell));
                     if (resized != null)
                     {
                         if (isNewBitmap) currentBitmap.Dispose();

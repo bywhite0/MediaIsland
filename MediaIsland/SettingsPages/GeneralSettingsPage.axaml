@@ -14,194 +14,198 @@
                      FontFamily="{StaticResource HarmonyOsSans}"
                      TextElement.FontWeight="Regular"
                      TextElement.FontSize="14">
-	    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:GeneralSettingsPage}}">
-	        <StackPanel Classes="settings-container animated-intro">
-	            <ci:IconText Glyph="&#xEBC9;" Text="当前媒体" Margin="0 0 0 8" />
-	            <Border Margin="0 0 0 8"
-	                    Padding="14"
-	                    CornerRadius="4"
-	                    Background="{DynamicResource MaterialDesignCardBackground}">
-	                <Grid ColumnDefinitions="Auto,*">
-	                    <Border Width="64"
-	                            Height="64"
-	                            CornerRadius="4"
-	                            ClipToBounds="True"
-	                            Background="{DynamicResource MaterialDesignDivider}">
-	                        <Grid>
-	                            <Image Source="{Binding CurrentMediaThumbnail}"
-	                                   Stretch="UniformToFill"
-	                                   IsVisible="{Binding HasCurrentMediaThumbnail}" />
-	                            <ci:FluentIcon Glyph="&#xEBC9;"
-	                                           FontSize="28"
-	                                           HorizontalAlignment="Center"
-	                                           VerticalAlignment="Center"
-	                                           Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                           IsVisible="{Binding !HasCurrentMediaThumbnail}" />
-	                        </Grid>
-	                    </Border>
-	                    <StackPanel Grid.Column="1" Margin="14 0 0 0" VerticalAlignment="Center">
-	                        <TextBlock Text="{Binding CurrentMediaTitle}"
-	                                   FontSize="16"
-	                                   FontWeight="Medium"
-	                                   TextTrimming="CharacterEllipsis" />
-	                        <TextBlock Text="{Binding CurrentMediaArtistAlbum}"
-	                                   Margin="0 4 0 0"
-	                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                   TextTrimming="CharacterEllipsis" />
-	                        <StackPanel Orientation="Horizontal" Margin="0 8 0 0">
-	                            <ci:FluentIcon Glyph="{Binding CurrentMediaStatusGlyph}"
-	                                           FontSize="14"
-	                                           Margin="0 0 4 0"
-	                                           Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                           VerticalAlignment="Center" />
-	                            <TextBlock Text="{Binding CurrentMediaPlaybackStatus}"
-	                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                       VerticalAlignment="Center" />
-	                            <TextBlock Text=" · "
-	                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                       VerticalAlignment="Center" />
-	                            <TextBlock Text="{Binding CurrentMediaTimeline}"
-	                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                       VerticalAlignment="Center" />
-	                        </StackPanel>
-	                        <StackPanel Orientation="Horizontal" Margin="0 4 0 0">
-	                            <Border Width="16"
-	                                    Height="16"
-	                                    CornerRadius="3"
-	                                    ClipToBounds="True"
-	                                    Margin="0 0 4 0"
-	                                    ToolTip.Tip="{Binding CurrentMediaSourceIconStatus}">
-	                                <Image Source="{Binding CurrentMediaSourceIcon}"
-	                                       Stretch="UniformToFill"
-	                                       IsVisible="{Binding HasCurrentMediaSourceIcon}" />
-	                            </Border>
-	                            <TextBlock Text="{Binding CurrentMediaSourceDisplay}"
-	                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
-	                                       TextTrimming="CharacterEllipsis"
-	                                       ToolTip.Tip="{Binding CurrentMediaSourceId}" />
-	                        </StackPanel>
-	                    </StackPanel>
-	                </Grid>
-	            </Border>
-	            <ci:IconText Glyph="&#xEDBE;" Text="播放源" Margin="0 16 0 8" />
-	            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
-	                                       Header="播放源列表"
-	                                       Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息、是否搜索歌词，并可自定义显示名称；留空时自动识别。需要重载组件才能生效。">
-                            <controls:SettingsExpander.Footer>
-                                <ci:FluentIcon Glyph="&#xF19B;"/>
-                            </controls:SettingsExpander.Footer>
-                    <StackPanel Orientation="Vertical">
-                        <DataGrid Margin="12,6,70,6"
-                                  IsReadOnly="False"
-                                  AutoGenerateColumns="False"
-                                  CanUserResizeColumns="False"
-                                  CanUserReorderColumns="False"
-                                  Height="240"
-                                  ItemsSource="{Binding Settings.MediaSourceList, Mode=TwoWay}">
-	                            <DataGrid.Columns>
-	                                <DataGridTextColumn Header="播放源" Width="Auto" MinWidth="120" MaxWidth="400" Binding="{Binding Source}" />
-	                                <DataGridTemplateColumn Header="显示名称" Width="Auto">
-	                                    <DataGridTemplateColumn.CellTemplate>
-	                                        <DataTemplate>
-	                                            <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" />
-	                                        </DataTemplate>
-	                                    </DataGridTemplateColumn.CellTemplate>
-	                                    <DataGridTemplateColumn.CellEditingTemplate>
-	                                        <DataTemplate>
-	                                            <TextBox Text="{Binding CustomDisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-	                                                     Watermark="留空时自动识别"
-	                                                     ToolTip.Tip="自定义播放源名称，留空时自动识别"
-	                                                     LostFocus="CustomDisplayNameTextBoxOnLostFocus" />
-	                                        </DataTemplate>
-	                                    </DataGridTemplateColumn.CellEditingTemplate>
-	                                </DataGridTemplateColumn>
-	                                <DataGridCheckBoxColumn Header="启用" Width="Auto" Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-	                                <DataGridCheckBoxColumn Header="歌词搜索" Width="Auto" Binding="{Binding IsLyricsSearchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-	                                <DataGridTemplateColumn Header="图标状态" Width="Auto">
-	                                    <DataGridTemplateColumn.CellTemplate>
-	                                        <DataTemplate>
-		                                            <StackPanel Orientation="Horizontal" Spacing="6"
-		                                                        ToolTip.Tip="{Binding IconStatus}">
-	                                                <Border Width="20" Height="20" CornerRadius="3" ClipToBounds="True">
-	                                                    <Image Source="{Binding DisplayIcon}" Stretch="UniformToFill" />
-	                                                </Border>
-	                                                <TextBlock Text="{Binding IconStatus}" VerticalAlignment="Center" />
-	                                            </StackPanel>
-	                                        </DataTemplate>
-	                                    </DataGridTemplateColumn.CellTemplate>
-	                                </DataGridTemplateColumn>
-	                                <DataGridTemplateColumn Header="图标操作" Width="Auto">
-	                                    <DataGridTemplateColumn.CellTemplate>
-	                                        <DataTemplate>
-	                                            <StackPanel Orientation="Horizontal" Spacing="2">
-	                                                <Button Width="20"
-	                                                        Height="20"
-	                                                        Margin="0"
-	                                                        Padding="4 0"
-	                                                        Background="Transparent"
-	                                                        BorderBrush="Transparent"
-	                                                        Click="ChooseIconButtonOnClick"
-	                                                        ToolTip.Tip="自定义图标">
-                                                    <ci:FluentIcon Glyph="&#xE9C4;" />
-                                                </Button>
-	                                                <Button Width="20"
-	                                                        Height="20"
-	                                                        Margin="0"
-	                                                        Padding="4 0"
-	                                                        Background="Transparent"
-	                                                        BorderBrush="Transparent"
-	                                                        Click="ClearIconButtonOnClick"
-	                                                        ToolTip.Tip="清除自定义图标">
-                                                    <ci:FluentIcon Glyph="&#xE7FF;" />
-                                                </Button>
-                                            </StackPanel>
-                                        </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
-                                <DataGridTemplateColumn Header="操作" Width="Auto">
-                                    <DataGridTemplateColumn.CellTemplate>
-                                        <DataTemplate>
-	                                            <Button Width="20"
-	                                                    Height="20"
-	                                                    Margin="0"
-	                                                    Padding="4 0"
-	                                                    Background="Transparent"
-	                                                    BorderBrush="Transparent"
-	                                                    Click="DeleteButtonOnClick"
-	                                                    ToolTip.Tip="移除播放源">
-                                                <ci:FluentIcon Glyph="&#xE61C;" Foreground="Red" />
-                                            </Button>
-                                        </DataTemplate>
-                                    </DataGridTemplateColumn.CellTemplate>
-                                </DataGridTemplateColumn>
-                            </DataGrid.Columns>
-                        </DataGrid>
-                        <StackPanel Orientation="Horizontal" Margin="12,0,12,6">
-	                            <Button HorizontalAlignment="Left"
-	                                    VerticalAlignment="Center"
-	                                    Theme="{StaticResource TransparentButton}"
-	                                    Classes="accent"
-	                                    Click="AddButtonOnClick">
-                                <ci:IconText Text="添加当前播放源" Glyph="&#xE00C;" />
-                            </Button>
-	                            <Button HorizontalAlignment="Left"
-	                                    VerticalAlignment="Center"
-	                                    Theme="{StaticResource TransparentButton}"
-	                                    Classes="accent"
-	                                    Click="SaveButtonOnClick">
-                                <ci:IconText Text="保存" Glyph="&#xEEB5;" />
-                            </Button>
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:GeneralSettingsPage}}">
+        <StackPanel Classes="settings-container animated-intro">
+            <ci:IconText Glyph="&#xEBC9;" Text="当前媒体" Margin="0 0 0 8" />
+            <Border Margin="0 0 0 8"
+                    Padding="14"
+                    CornerRadius="4"
+                    Background="{DynamicResource MaterialDesignCardBackground}">
+                <Grid ColumnDefinitions="Auto,*">
+                    <Border Width="64"
+                            Height="64"
+                            CornerRadius="4"
+                            ClipToBounds="True"
+                            Background="{DynamicResource MaterialDesignDivider}">
+                        <Grid>
+                            <Image Source="{Binding CurrentMediaThumbnail}"
+                                   Stretch="UniformToFill"
+                                   IsVisible="{Binding HasCurrentMediaThumbnail}" />
+                            <ci:FluentIcon Glyph="&#xEBC9;"
+                                           FontSize="28"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                           IsVisible="{Binding !HasCurrentMediaThumbnail}" />
+                        </Grid>
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="14 0 0 0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding CurrentMediaTitle}"
+                                   FontSize="16"
+                                   FontWeight="Medium"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding CurrentMediaArtistAlbum}"
+                                   Margin="0 4 0 0"
+                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <StackPanel Orientation="Horizontal" Margin="0 8 0 0">
+                            <ci:FluentIcon Glyph="{Binding CurrentMediaStatusGlyph}"
+                                           FontSize="14"
+                                           Margin="0 0 4 0"
+                                           Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                           VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding CurrentMediaPlaybackStatus}"
+                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Text=" · "
+                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding CurrentMediaTimeline}"
+                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       VerticalAlignment="Center" />
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0 4 0 0">
+                            <Border Width="16"
+                                    Height="16"
+                                    CornerRadius="3"
+                                    ClipToBounds="True"
+                                    Margin="0 0 4 0"
+                                    ToolTip.Tip="{Binding CurrentMediaSourceIconStatus}">
+                                <Image Source="{Binding CurrentMediaSourceIcon}"
+                                       Stretch="UniformToFill"
+                                       IsVisible="{Binding HasCurrentMediaSourceIcon}" />
+                            </Border>
+                            <TextBlock Text="{Binding CurrentMediaSourceDisplay}"
+                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding CurrentMediaSourceId}" />
                         </StackPanel>
                     </StackPanel>
-                </controls:SettingsExpander>
+                </Grid>
+            </Border>
+            <ci:IconText Glyph="&#xEDBE;" Text="播放源" Margin="0 16 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
+                                         Header="播放源列表"
+                                         Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息、是否搜索歌词，并可自定义显示名称；留空时自动识别。需要重载组件才能生效。">
+                <controls:FASettingsExpander.Footer>
+                    <ci:FluentIcon Glyph="&#xF19B;" />
+                </controls:FASettingsExpander.Footer>
+                <StackPanel Orientation="Vertical">
+                    <DataGrid Margin="12,6,70,6"
+                              IsReadOnly="False"
+                              AutoGenerateColumns="False"
+                              CanUserResizeColumns="False"
+                              CanUserReorderColumns="False"
+                              Height="240"
+                              ItemsSource="{Binding Settings.MediaSourceList, Mode=TwoWay}">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="播放源" Width="Auto" MinWidth="120" MaxWidth="400"
+                                                Binding="{Binding Source}" />
+                            <DataGridTemplateColumn Header="显示名称" Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellEditingTemplate>
+                                    <DataTemplate>
+                                        <TextBox
+                                            Text="{Binding CustomDisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            PlaceholderText="留空时自动识别"
+                                            ToolTip.Tip="自定义播放源名称，留空时自动识别"
+                                            LostFocus="CustomDisplayNameTextBoxOnLostFocus" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellEditingTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridCheckBoxColumn Header="启用" Width="Auto"
+                                                    Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <DataGridCheckBoxColumn Header="歌词搜索" Width="Auto"
+                                                    Binding="{Binding IsLyricsSearchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            <DataGridTemplateColumn Header="图标状态" Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="6"
+                                                    ToolTip.Tip="{Binding IconStatus}">
+                                            <Border Width="20" Height="20" CornerRadius="3" ClipToBounds="True">
+                                                <Image Source="{Binding DisplayIcon}" Stretch="UniformToFill" />
+                                            </Border>
+                                            <TextBlock Text="{Binding IconStatus}" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="图标操作" Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="2">
+                                            <Button Width="20"
+                                                    Height="20"
+                                                    Margin="0"
+                                                    Padding="4 0"
+                                                    Background="Transparent"
+                                                    BorderBrush="Transparent"
+                                                    Click="ChooseIconButtonOnClick"
+                                                    ToolTip.Tip="自定义图标">
+                                                <ci:FluentIcon Glyph="&#xE9C4;" />
+                                            </Button>
+                                            <Button Width="20"
+                                                    Height="20"
+                                                    Margin="0"
+                                                    Padding="4 0"
+                                                    Background="Transparent"
+                                                    BorderBrush="Transparent"
+                                                    Click="ClearIconButtonOnClick"
+                                                    ToolTip.Tip="清除自定义图标">
+                                                <ci:FluentIcon Glyph="&#xE7FF;" />
+                                            </Button>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="操作" Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Width="20"
+                                                Height="20"
+                                                Margin="0"
+                                                Padding="4 0"
+                                                Background="Transparent"
+                                                BorderBrush="Transparent"
+                                                Click="DeleteButtonOnClick"
+                                                ToolTip.Tip="移除播放源">
+                                            <ci:FluentIcon Glyph="&#xE61C;" Foreground="Red" />
+                                        </Button>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <StackPanel Orientation="Horizontal" Margin="12,0,12,6">
+                        <Button HorizontalAlignment="Left"
+                                VerticalAlignment="Center"
+                                Theme="{StaticResource TransparentButton}"
+                                Classes="accent"
+                                Click="AddButtonOnClick">
+                            <ci:IconText Text="添加当前播放源" Glyph="&#xE00C;" />
+                        </Button>
+                        <Button HorizontalAlignment="Left"
+                                VerticalAlignment="Center"
+                                Theme="{StaticResource TransparentButton}"
+                                Classes="accent"
+                                Click="SaveButtonOnClick">
+                            <ci:IconText Text="保存" Glyph="&#xEEB5;" />
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </controls:FASettingsExpander>
             <ci:IconText Glyph="&#xF07A;" Text="歌词" Margin="0 16 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE2E0;}"
-                                       Header="歌词来源"
-                                       Description="按列表顺序搜索歌词。可开关来源、逐字歌词偏好，并配置 AMLL / SPlayer-Next API 地址。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE2E0;}"
+                                         Header="歌词来源"
+                                         Description="按列表顺序搜索歌词。可开关来源、逐字歌词偏好，并配置 AMLL / SPlayer-Next API 地址。">
+                <controls:FASettingsExpander.Footer>
                     <TextBlock Text="{Binding CurrentLyricsSourceDisplay}"
                                FontSize="12" />
-                </controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
                 <StackPanel Margin="12,6,12,10" Spacing="8">
                     <ItemsControl ItemsSource="{Binding LyricsSourceItems}">
                         <ItemsControl.ItemTemplate>
@@ -217,11 +221,13 @@
                                                        Margin="0,2,0,0"
                                                        FontSize="12" />
                                         </StackPanel>
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,8,0" VerticalAlignment="Center">
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,8,0"
+                                                    VerticalAlignment="Center">
                                             <TextBlock Text="启用" VerticalAlignment="Center" Margin="0,0,6,0" />
                                             <ToggleSwitch IsChecked="{Binding IsEnabled, Mode=TwoWay}" />
                                         </StackPanel>
-                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,0,8,0" VerticalAlignment="Center">
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,0,8,0"
+                                                    VerticalAlignment="Center">
                                             <TextBlock Text="逐字" VerticalAlignment="Center" Margin="0,0,6,0" />
                                             <ToggleSwitch IsChecked="{Binding UseWordSyncedLyrics, Mode=TwoWay}" />
                                         </StackPanel>
@@ -243,7 +249,7 @@
                                                     Spacing="6">
                                             <TextBlock Text="歌词延迟（毫秒）" VerticalAlignment="Center" />
                                             <TextBox Width="88"
-                                                     Watermark="0"
+                                                     PlaceholderText="0"
                                                      Text="{Binding GlobalOffsetMillisecondsText, Mode=TwoWay}" />
                                             <TextBlock Text="正值提前/负值延后"
                                                        VerticalAlignment="Center"
@@ -257,7 +263,7 @@
                     <TextBlock Text="AMLL TTML API 地址（留空不使用）" />
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBox Grid.Column="0"
-                                 Watermark="https://amll-ttml-api.example.com"
+                                 PlaceholderText="https://amll-ttml-api.example.com"
                                  Text="{Binding AmllApiBaseUrl, Mode=TwoWay}" />
                         <Button Grid.Column="1"
                                 Margin="8,0,0,0"
@@ -270,7 +276,7 @@
                                Margin="0,8,0,0" />
                     <Grid ColumnDefinitions="*,Auto">
                         <TextBox Grid.Column="0"
-                                 Watermark="http://127.0.0.1:14558"
+                                 PlaceholderText="http://127.0.0.1:14558"
                                  Text="{Binding SPlayerNextApiBaseUrl, Mode=TwoWay}" />
                         <Button Grid.Column="1"
                                 Margin="8,0,0,0"
@@ -330,63 +336,63 @@
                     <TextBlock Text="双击可应用该歌词至组件。"
                                FontWeight="Medium" />
                 </StackPanel>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE285;}"
-                                       Header="启用逐字歌词"
-                                       Description="启用逐字歌词效果，关闭则展示逐行歌词。">
-                <controls:SettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE285;}"
+                                         Header="启用逐字歌词"
+                                         Description="启用逐字歌词效果，关闭则展示逐行歌词。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0BA;}"
-                                       Header="显示歌词间奏点动画"
-                                       Description="相邻歌词行之间出现超过 4 秒的空档时，以呼吸效果显示三个提示点。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE0BA;}"
+                                         Header="显示歌词间奏点动画"
+                                         Description="相邻歌词行之间出现超过 4 秒的空档时，以呼吸效果显示三个提示点。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsLyricsInterludeAnimationEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1C8;}"
-                                       Header="启用歌词切换过渡效果"
-                                       Description="切换当前歌词时使用淡入淡出与纵向滑动过渡。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1C8;}"
+                                         Header="启用歌词切换过渡效果"
+                                         Description="切换当前歌词时使用淡入淡出与纵向滑动过渡。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsLyricsTransitionEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
-                                       Header="启用逐字上浮效果"
-                                       Description="逐字歌词推进时，单词内字符依次轻微上浮。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE61D;}"
+                                         Header="启用逐字上浮效果"
+                                         Description="逐字歌词推进时，单词内字符依次轻微上浮。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsLiftEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE29E;}"
-                                       Header="启用强调效果"
-                                       Description="任意单词持续超过 1 秒时，呈现缩放与位移效果。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE29E;}"
+                                         Header="启用强调效果"
+                                         Description="任意单词持续超过 1 秒时，呈现缩放与位移效果。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE299;}"
-                                       Header="启用强调辉光"
-                                       Description="强调效果启用时，为长音字素叠加白色柔光。关闭后仅保留缩放与位移。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE299;}"
+                                         Header="启用强调辉光"
+                                         Description="强调效果启用时，为长音字素叠加白色柔光。关闭后仅保留缩放与位移。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisGlowEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE2A2;}"
-                                       Header="启用边缘过渡"
-                                       Description="逐字歌词推进时，在已唱与未唱交界处使用柔和边缘过渡。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE2A2;}"
+                                         Header="启用边缘过渡"
+                                         Description="逐字歌词推进时，在已唱与未唱交界处使用柔和边缘过渡。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEdgeFeatherEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE3DD;}"
-                                       Header="歌词字体"
-                                       Description="分别为原文、翻译、音译设置字体与字重。留空或选择「跟随全局字体」时使用 ClassIsland 的主界面字体。">
-                <controls:SettingsExpanderItem Content="原文"
-                                               Description="展示原文歌词时使用的字体与字重。"
-                                               IconSource="{ci:FluentIconSource &#xF26F;}">
-                    <controls:SettingsExpanderItem.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE3DD;}"
+                                         Header="歌词字体"
+                                         Description="分别为原文、翻译、音译设置字体与字重。留空或选择「跟随全局字体」时使用 ClassIsland 的主界面字体。">
+                <controls:FASettingsExpanderItem Content="原文"
+                                                 Description="展示原文歌词时使用的字体与字重。"
+                                                 IconSource="{ci:FluentIconSource &#xF26F;}">
+                    <controls:FASettingsExpanderItem.Footer>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <ComboBox MinWidth="220"
                                       MaxDropDownHeight="360"
@@ -406,12 +412,12 @@
                                 <ComboBoxItem>900 Black</ComboBoxItem>
                             </ComboBox>
                         </StackPanel>
-                    </controls:SettingsExpanderItem.Footer>
-                </controls:SettingsExpanderItem>
-                <controls:SettingsExpanderItem Content="翻译"
-                                               Description="展示翻译歌词时使用的字体与字重；该行没有翻译而回退到原文时，仍按原文设置渲染。"
-                                               IconSource="{ci:FluentIconSource &#xF375;}">
-                    <controls:SettingsExpanderItem.Footer>
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+                <controls:FASettingsExpanderItem Content="翻译"
+                                                 Description="展示翻译歌词时使用的字体与字重；该行没有翻译而回退到原文时，仍按原文设置渲染。"
+                                                 IconSource="{ci:FluentIconSource &#xF375;}">
+                    <controls:FASettingsExpanderItem.Footer>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <ComboBox MinWidth="220"
                                       MaxDropDownHeight="360"
@@ -431,12 +437,12 @@
                                 <ComboBoxItem>900 Black</ComboBoxItem>
                             </ComboBox>
                         </StackPanel>
-                    </controls:SettingsExpanderItem.Footer>
-                </controls:SettingsExpanderItem>
-                <controls:SettingsExpanderItem Content="音译"
-                                               Description="展示音译歌词时使用的字体与字重；该行没有音译而回退到原文时，仍按原文设置渲染。"
-                                               IconSource="{ci:FluentIconSource &#xF220;}">
-                    <controls:SettingsExpanderItem.Footer>
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+                <controls:FASettingsExpanderItem Content="音译"
+                                                 Description="展示音译歌词时使用的字体与字重；该行没有音译而回退到原文时，仍按原文设置渲染。"
+                                                 IconSource="{ci:FluentIconSource &#xF220;}">
+                    <controls:FASettingsExpanderItem.Footer>
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <ComboBox MinWidth="220"
                                       MaxDropDownHeight="360"
@@ -456,67 +462,67 @@
                                 <ComboBoxItem>900 Black</ComboBoxItem>
                             </ComboBox>
                         </StackPanel>
-                    </controls:SettingsExpanderItem.Footer>
-                </controls:SettingsExpanderItem>
-            </controls:SettingsExpander>
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+            </controls:FASettingsExpander>
             <ci:IconText Glyph="&#xE51D;" Text="外观" Margin="0 16 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
-                                       Header="正在播放进度条颜色"
-                                       Description="控制“正在播放”组件进度条颜色。可使用 ClassIsland 主题色，或从专辑封面提取主题色（如果可用）。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
+                                         Header="正在播放进度条颜色"
+                                         Description="控制“正在播放”组件进度条颜色。可使用 ClassIsland 主题色，或从专辑封面提取主题色（如果可用）。">
+                <controls:FASettingsExpander.Footer>
                     <ComboBox MinWidth="160" SelectedIndex="{Binding Settings.ProgressBarColorMode, Mode=TwoWay}">
                         <ComboBoxItem>ClassIsland 主题色</ComboBoxItem>
                         <ComboBoxItem>封面主题色</ComboBoxItem>
                     </ComboBox>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
-                                       Header="移除封面的 Spotify 水印"
-                                       Description="部分版本的 Spotify 桌面版会在传给 SMTC 的封面下方加入其商标，如果你在插件呈现的封面上看到了，可以打开这个开关。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
+                                         Header="移除封面的 Spotify 水印"
+                                         Description="部分版本的 Spotify 桌面版会在传给 SMTC 的封面下方加入其商标，如果你在插件呈现的封面上看到了，可以打开这个开关。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsCutSpotifyTrademarkEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-                        <ci:IconText Glyph="&#xE968;" Text="Link to the MEDIA" Margin="0 16 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE624;}"
-                                       Header="通过 WebSocket 共享媒体信息"
-                                       Description="开启后，其它程序（如 OBS 字幕、自制歌词条，或另一台电脑上的 ClassIsland）可以实时获取当前播放的歌曲与歌词。需要凭下方的连接密钥才能读取。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <ci:IconText Glyph="&#xE968;" Text="Link to the MEDIA" Margin="0 16 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE624;}"
+                                         Header="通过 WebSocket 共享媒体信息"
+                                         Description="开启后，其它程序（如 OBS 字幕、自制歌词条，或另一台电脑上的 ClassIsland）可以实时获取当前播放的歌曲与歌词。需要凭下方的连接密钥才能读取。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkIsEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE625;}"
-                                       Header="监听地址与端口"
-                                       Description="默认为 127.0.0.1:21757。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE625;}"
+                                         Header="监听地址与端口"
+                                         Description="默认为 127.0.0.1:21757。">
+                <controls:FASettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="140"
-                                 Watermark="127.0.0.1"
+                                 PlaceholderText="127.0.0.1"
                                  Text="{Binding Settings.MediaLinkListenAddress, Mode=TwoWay}" />
                         <TextBox Width="80"
-                                 Watermark="21757"
+                                 PlaceholderText="21757"
                                  Text="{Binding Settings.MediaLinkPort, Mode=TwoWay}" />
                     </StackPanel>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <TextBlock Text="{Binding MediaLinkExposureWarning}"
                        IsVisible="{Binding HasMediaLinkExposureWarning}"
                        Foreground="{DynamicResource SystemFillColorCautionBrush}"
                        TextWrapping="Wrap"
                        Margin="0 4 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE669;}"
-                                       Header="允许的网页来源（Origin）"
-                                       Description="只有从网页连接时才需要填。出于安全考虑，网页默认一律被拒绝；把网页地址填进来才放行，多个用分号隔开。用浏览器直接打开本地 HTML 文件时，请填 null。用脚本或其它程序连接不受此限制。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE669;}"
+                                         Header="允许的网页来源（Origin）"
+                                         Description="只有从网页连接时才需要填。出于安全考虑，网页默认一律被拒绝；把网页地址填进来才放行，多个用分号隔开。用浏览器直接打开本地 HTML 文件时，请填 null。用脚本或其它程序连接不受此限制。">
+                <controls:FASettingsExpander.Footer>
                     <TextBox Width="280"
-                             Watermark="null;http://localhost:3000"
+                             PlaceholderText="null;http://localhost:3000"
                              Text="{Binding Settings.MediaLinkAllowedOrigins, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE103;}"
-                                       Header="连接密钥"
-                                       Description="其它程序需要凭这串密钥才能读取播放信息。请勿公开分享。重新生成后，所有已连接的程序都会断开，需要重新填写新密钥。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE103;}"
+                                         Header="连接密钥"
+                                         Description="其它程序需要凭这串密钥才能读取播放信息。请勿公开分享。重新生成后，所有已连接的程序都会断开，需要重新填写新密钥。">
+                <controls:FASettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="220"
                                  IsReadOnly="True"
@@ -524,123 +530,122 @@
                         <Button Content="复制" Click="CopyMediaLinkTokenOnClick" />
                         <Button Content="重新生成" Click="RegenerateMediaLinkTokenOnClick" />
                     </StackPanel>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
-                                       Header="一键配置码"
-                                       Description="把本机的地址与密钥打包成一串文本，在另一台设备的「接收其它设备」中粘贴即可，无需手抄密钥。这串文本包含密钥且未加密，请仅发给信任的设备。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE47B;}"
+                                         Header="一键配置码"
+                                         Description="把本机的地址与密钥打包成一串文本，在另一台设备的「接收其它设备」中粘贴即可，无需手抄密钥。这串文本包含密钥且未加密，请仅发给信任的设备。">
+                <controls:FASettingsExpander.Footer>
                     <Button Content="复制配置码" Click="CopyMediaLinkConfigCodeOnClick" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <TextBlock Text="{Binding MediaLinkConfigCodeHint}"
                        IsVisible="{Binding HasMediaLinkConfigCodeHint}"
                        Foreground="{DynamicResource SystemFillColorCautionBrush}"
                        TextWrapping="Wrap"
                        Margin="0 4 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE0F5;}"
-                                       Header="媒体信息来源"
-                                       Description="决定媒体信息从哪里来。默认「本机播放器」即读取本机正在播放的媒体信息；要显示另一台电脑或外部程序发来的内容，请选后两项。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE0F5;}"
+                                         Header="媒体信息来源"
+                                         Description="决定媒体信息从哪里来。默认「本机播放器」即读取本机正在播放的媒体信息；要显示另一台电脑或外部程序发来的内容，请选后两项。">
+                <controls:FASettingsExpander.Footer>
                     <ComboBox Width="220"
                               SelectedIndex="{Binding MediaLinkMediaSourceModeIndex, Mode=TwoWay}">
                         <ComboBoxItem Content="本机播放器" />
                         <ComboBoxItem Content="仅外部来源" />
                         <ComboBoxItem Content="外部来源优先" />
                     </ComboBox>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE2AD;}"
-                                       Header="桌面组件跟随上述来源"
-                                       Description="关闭后，桌面上的对应组件将始终显示本机播放器的内容，忽略外部来源。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE2AD;}"
+                                         Header="桌面组件跟随上述来源"
+                                         Description="关闭后，桌面上的对应组件将始终显示本机播放器的内容，忽略外部来源。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUiUsesEffective, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE579;}"
-                                       Header="共享给其它程序的内容跟随上述来源"
-                                       Description="关闭后，共享出去的始终是本机播放器的内容，忽略外部来源。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE579;}"
+                                         Header="共享给其它程序的内容跟随上述来源"
+                                         Description="关闭后，共享出去的始终是本机播放器的内容，忽略外部来源。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkPushUsesEffective, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE157;}"
-                                       Header="当前状态"
-                                       Description="共享服务的运行情况与连接地址。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE157;}"
+                                         Header="当前状态"
+                                         Description="共享服务的运行情况与连接地址。">
+                <controls:FASettingsExpander.Footer>
                     <TextBlock VerticalAlignment="Center"
                                Text="{Binding MediaLinkStatusText}"
                                TextTrimming="CharacterEllipsis"
                                MaxWidth="360" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <ci:IconText Glyph="&#xEABB;" Text="Link-Like MediaLink" Margin="0 16 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE111;}"
-                                       Header="从另一台设备接收"
-                                       Description="显示同一局域网内另一台设备正在播放的歌曲与歌词。对方需要先开启「通过 WebSocket 共享媒体信息」。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE111;}"
+                                         Header="从另一台设备接收"
+                                         Description="显示同一局域网内另一台设备正在播放的歌曲与歌词。对方需要先开启「通过 WebSocket 共享媒体信息」。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUpstreamIsEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE109;}"
-                                       Header="对方的地址与密钥"
-                                       Description="填对方设备的 IP 和端口（如 192.168.1.201:21757），以及对方设置页里的连接密钥。注意不是本机的密钥。若已复制对方的配置码，直接点「粘贴配置码」即可自动填好。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE109;}"
+                                         Header="对方的地址与密钥"
+                                         Description="填对方设备的 IP 和端口（如 192.168.1.201:21757），以及对方设置页里的连接密钥。注意不是本机的密钥。若已复制对方的配置码，直接点「粘贴配置码」即可自动填好。">
+                <controls:FASettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBox Width="200"
-                                 Watermark="192.168.1.201:21757"
+                                 PlaceholderText="192.168.1.201:21757"
                                  Text="{Binding Settings.MediaLinkUpstreamEndpoint, Mode=TwoWay}" />
                         <TextBox Width="160"
                                  PasswordChar="•"
-                                 Watermark="对方的连接密钥"
+                                 PlaceholderText="对方的连接密钥"
                                  Text="{Binding Settings.MediaLinkUpstreamToken, Mode=TwoWay}" />
                         <Button Content="粘贴配置码" Click="PasteMediaLinkConfigCodeOnClick" />
                     </StackPanel>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <TextBlock Text="{Binding MediaLinkUpstreamCodeHint}"
                        IsVisible="{Binding HasMediaLinkUpstreamCodeHint}"
                        Foreground="{DynamicResource SystemFillColorCautionBrush}"
                        TextWrapping="Wrap"
                        Margin="0 4 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE157;}"
-                                       Header="接收状态"
-                                       Description="断开后会自动重试，无需手动重连。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE157;}"
+                                         Header="接收状态"
+                                         Description="断开后会自动重试，无需手动重连。">
+                <controls:FASettingsExpander.Footer>
                     <TextBlock VerticalAlignment="Center"
                                Text="{Binding MediaLinkUpstreamStatusText}"
                                TextWrapping="Wrap"
                                MaxWidth="360" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
-                                       Header="播放对方的声音"
-                                       Description="把对方设备正在播放的音频放出来。需要先在上面开启「从另一台设备接收」，且媒体来源要设为使用对方的信息。开启后本机不再采集自己的输出，因此不会产生回声。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
+                                         Header="播放对方的声音"
+                                         Description="把对方设备正在播放的音频放出来。需要先在上面开启「从另一台设备接收」，且媒体来源要设为使用对方的信息。开启后本机不再采集自己的输出，因此不会产生回声。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.MediaLinkPlaybackIsEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
-                                       Header="播放缓冲"
-                                       Description="网络抖动时用来垫底的缓冲长度。有线网络可以调小以降低延迟；无线网络调得太小会断续。修改后会重新开始播放。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
+                                         Header="播放缓冲"
+                                         Description="网络抖动时用来垫底的缓冲长度。有线网络可以调小以降低延迟；无线网络调得太小会断续。修改后会重新开始播放。">
+                <controls:FASettingsExpander.Footer>
                     <NumericUpDown Width="140"
                                    Minimum="{x:Static models:PluginSettings.PlaybackBufferMsMinimum}"
                                    Maximum="{x:Static models:PluginSettings.PlaybackBufferMsMaximum}"
                                    Increment="10"
                                    FormatString="0 'ms'"
                                    Value="{Binding Settings.MediaLinkPlaybackBufferMs, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <ci:IconText Glyph="&#xEAEF;" Text="隐私" Margin="0 16 0 8" />
-            <controls:SettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
-                                       Header="匿名使用情况分析"
-                                       Description="本插件使用 Sentry 收集与本插件相关的使用情况与错误信息，以帮助改善本插件，相关信息将被匿名上传。此功能不会收集您的个人信息。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
+                                         Header="匿名使用情况分析"
+                                         Description="本插件使用 Sentry 收集与本插件相关的使用情况与错误信息，以帮助改善本插件，相关信息将被匿名上传。此功能不会收集您的个人信息。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsTodayEatSentry, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
         </StackPanel>
     </ScrollViewer>
 </ci:SettingsPageBase>
-

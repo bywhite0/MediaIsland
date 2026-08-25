@@ -9,40 +9,41 @@
                   xmlns:local="clr-namespace:MediaIsland.Components"
                   mc:Ignorable="d"
                   d:DesignHeight="450" d:DesignWidth="800">
-    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:LyricsComponentSettings}}">
+    <ScrollViewer
+        DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:LyricsComponentSettings}}">
         <StackPanel>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE817;}"
-                                       Header="无内容时隐藏组件"
-                                       Description="没有歌词时隐藏本组件，不受状态文本影响。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE817;}"
+                                         Header="无内容时隐藏组件"
+                                         Description="没有歌词时隐藏本组件，不受状态文本影响。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsHideWhenEmpty, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xF07B;}"
-                                       Header="显示状态文本"
-                                       Description="显示等待媒体信息、查找歌词和未找到歌词等状态。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xF07B;}"
+                                         Header="显示状态文本"
+                                         Description="显示等待媒体信息、查找歌词和未找到歌词等状态。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowStatusText, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEBC9;}"
-                                       Header="显示音符图标"
-                                       Description="在歌词文本左侧显示音符图标。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xEBC9;}"
+                                         Header="显示音符图标"
+                                         Description="在歌词文本左侧显示音符图标。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowNoteIcon, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE0ED;}"
-                                       Header="固定歌词宽度"
-                                       Description="按当前歌曲最长歌词行的宽度固定歌词区，避免一首歌内组件宽度随换行连续变化。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE0ED;}"
+                                         Header="固定歌词宽度"
+                                         Description="按当前歌曲最长歌词行的宽度固定歌词区，避免一首歌内组件宽度随换行连续变化。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsFixedWidthToMaxLineEnabled, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE093;}"
-                                       Header="左右间距"
-                                       Description="启用后，对应侧的元素边界将收缩至适合圆角。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE093;}"
+                                         Header="左右间距"
+                                         Description="启用后，对应侧的元素边界将收缩至适合圆角。">
+                <controls:FASettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal">
                         <Label Content="(左"
                                Foreground="Gray" />
@@ -55,12 +56,12 @@
                         <Label Content="右)"
                                Foreground="Gray" />
                     </StackPanel>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xEC10;}"
-                                       Header="显示内容"
-                                       Description="选择展示原文、翻译或音译。可指定缺失时显示原文或不显示；非原文时不使用逐字高亮。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xEC10;}"
+                                         Header="显示内容"
+                                         Description="选择展示原文、翻译或音译。可指定缺失时显示原文或不显示；非原文时不使用逐字高亮。">
+                <controls:FASettingsExpander.Footer>
                     <ComboBox MinWidth="180"
                               SelectedIndex="{Binding Settings.DisplayPartIndex, Mode=TwoWay}">
                         <ComboBoxItem>原文</ComboBoxItem>
@@ -69,30 +70,30 @@
                         <ComboBoxItem>翻译（无则不显示）</ComboBoxItem>
                         <ComboBoxItem>音译（无则不显示）</ComboBoxItem>
                     </ComboBox>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xF374;}"
-                                       Header="显示歌词假名"
-                                       Description="在原文上方显示歌词源自带的字级假名注音（QQ 音乐 QRC、酷狗 KRC 等）。仅实际展示原文时生效；翻译/音译模式不显示。默认关闭。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xF374;}"
+                                         Header="显示歌词假名"
+                                         Description="在原文上方显示歌词源自带的字级假名注音（QQ 音乐 QRC、酷狗 KRC 等）。仅实际展示原文时生效；翻译/音译模式不显示。默认关闭。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsShowLyricsKana, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8CB;}"
-                                       Header="渲染帧率"
-                                       Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE8CB;}"
+                                         Header="渲染帧率"
+                                         Description="控制逐字歌词进度的刷新频率。60 FPS 更平滑，但会占用更多资源。">
+                <controls:FASettingsExpander.Footer>
                     <ComboBox MinWidth="110"
                               SelectedIndex="{Binding Settings.RenderFrameRateIndex, Mode=TwoWay}">
                         <ComboBoxItem>30 FPS</ComboBoxItem>
                         <ComboBoxItem>60 FPS</ComboBoxItem>
                     </ComboBox>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE0F1;}"
-                                       Header="多行歌词行距"
-                                       Description="主歌词与背景人声行同时显示时的附加行距（像素）。部分日文字体行高偏大，取负值可压缩多行显示；取正值时可用高度变紧，可能触发自动缩放或省略第二条背景人声行。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE0F1;}"
+                                         Header="多行歌词行距"
+                                         Description="主歌词与背景人声行同时显示时的附加行距（像素）。部分日文字体行高偏大，取负值可压缩多行显示；取正值时可用高度变紧，可能触发自动缩放或省略第二条背景人声行。">
+                <controls:FASettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Slider Width="160"
                                 Minimum="-8"
@@ -106,12 +107,12 @@
                                    MinWidth="44"
                                    VerticalAlignment="Center" />
                     </StackPanel>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE091;}"
-                                       Header="歌词最大宽度"
-                                       Description="限制歌词区的最大宽度，避免过长歌词溢出覆盖右侧组件。超出部分截断为省略号。拖到最左为 0，表示不限制。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE091;}"
+                                         Header="歌词最大宽度"
+                                         Description="限制歌词区的最大宽度，避免过长歌词溢出覆盖右侧组件。超出部分截断为省略号。拖到最左为 0，表示不限制。">
+                <controls:FASettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <Slider Width="160"
                                 Minimum="0"
@@ -125,8 +126,8 @@
                                    MinWidth="44"
                                    VerticalAlignment="Center" />
                     </StackPanel>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
                 Powered by MediaIsland
             </Label>

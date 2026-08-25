@@ -11,82 +11,92 @@
                   d:DesignHeight="450" d:DesignWidth="800">
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:SpectrumComponentSettings}}">
         <StackPanel>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE9D9;}" Header="显示形态" Description="律动条在窄岛上最易读；频谱柱需要一定高度；示波器显示波形；电平表显示音量与峰值。">
-                <controls:SettingsExpander.Footer>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9D9;}" Header="显示形态"
+                                         Description="律动条在窄岛上最易读；频谱柱需要一定高度；示波器显示波形；电平表显示音量与峰值。">
+                <controls:FASettingsExpander.Footer>
                     <ComboBox MinWidth="110" SelectedIndex="{Binding Settings.Mode}">
                         <ComboBoxItem>律动条</ComboBoxItem>
                         <ComboBoxItem>频谱柱</ComboBoxItem>
                         <ComboBoxItem>示波器</ComboBoxItem>
                         <ComboBoxItem>电平表</ComboBoxItem>
                     </ComboBox>
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE744;}" Header="上下镜像" Description="以水平中线上下对称展开。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE744;}" Header="上下镜像"
+                                         Description="以水平中线上下对称展开。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.IsMirrored, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE790;}" Header="使用主题强调色" Description="关闭则使用固定的白色。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE790;}" Header="使用主题强调色"
+                                         Description="关闭则使用固定的白色。">
+                <controls:FASettingsExpander.Footer>
                     <ToggleSwitch IsChecked="{Binding Settings.UseAccentColor, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE745;}" Header="组件宽度" Description="频谱占用的横向像素。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE745;}" Header="组件宽度"
+                                         Description="频谱占用的横向像素。">
+                <controls:FASettingsExpander.Footer>
                     <NumericUpDown MinWidth="140" Increment="8"
                                    Minimum="{x:Static local:SpectrumComponentConfig.ComponentWidthMinimum}"
                                    Maximum="{x:Static local:SpectrumComponentConfig.ComponentWidthMaximum}"
                                    Value="{Binding Settings.Width, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE9E9;}" Header="频段数" Description="仅频谱柱形态使用。段数越多越细，但窄岛上会糊成一片。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9E9;}" Header="频段数"
+                                         Description="仅频谱柱形态使用。段数越多越细，但窄岛上会糊成一片。">
+                <controls:FASettingsExpander.Footer>
                     <NumericUpDown MinWidth="140" Increment="1"
                                    Minimum="{x:Static local:SpectrumComponentConfig.BandCountMinimum}"
                                    Maximum="{x:Static local:SpectrumComponentConfig.BandCountMaximum}"
                                    Value="{Binding Settings.BandCount, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8C8;}" Header="柱间距" Description="仅频谱柱形态使用。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE8C8;}" Header="柱间距"
+                                         Description="仅频谱柱形态使用。">
+                <controls:FASettingsExpander.Footer>
                     <NumericUpDown MinWidth="140" Increment="1"
                                    Minimum="{x:Static local:SpectrumComponentConfig.BarGapMinimum}"
                                    Maximum="{x:Static local:SpectrumComponentConfig.BarGapMaximum}"
                                    Value="{Binding Settings.BarGap, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE8C8;}" Header="圆角半径" Description="柱子与填充条的圆角。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE8C8;}" Header="圆角半径"
+                                         Description="柱子与填充条的圆角。">
+                <controls:FASettingsExpander.Footer>
                     <NumericUpDown MinWidth="140" Increment="1"
                                    Minimum="{x:Static local:SpectrumComponentConfig.BarCornerRadiusMinimum}"
                                    Maximum="{x:Static local:SpectrumComponentConfig.BarCornerRadiusMaximum}"
                                    Value="{Binding Settings.BarCornerRadius, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE9F9;}" Header="频率下限 (Hz)" Description="低于此频率的能量不参与显示。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9F9;}" Header="频率下限 (Hz)"
+                                         Description="低于此频率的能量不参与显示。">
+                <controls:FASettingsExpander.Footer>
                     <NumericUpDown MinWidth="140" Increment="10"
                                    Minimum="{x:Static local:SpectrumComponentConfig.FrequencyLowerMinimum}"
                                    Maximum="{x:Static local:SpectrumComponentConfig.FrequencyLowerMaximum}"
                                    Value="{Binding Settings.MinFrequencyHz, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE9F9;}" Header="频率上限 (Hz)" Description="高于此频率的能量不参与显示。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9F9;}" Header="频率上限 (Hz)"
+                                         Description="高于此频率的能量不参与显示。">
+                <controls:FASettingsExpander.Footer>
                     <NumericUpDown MinWidth="140" Increment="100"
                                    Minimum="{x:Static local:SpectrumComponentConfig.FrequencyUpperMinimum}"
                                    Maximum="{x:Static local:SpectrumComponentConfig.FrequencyUpperMaximum}"
                                    Value="{Binding Settings.MaxFrequencyHz, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
-            <controls:SettingsExpander IconSource="{ci:FluentIconSource &#xE916;}" Header="回落速度" Description="每秒衰减的比例。值越大回落越快，视觉越「跳」。">
-                <controls:SettingsExpander.Footer>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE916;}" Header="回落速度"
+                                         Description="每秒衰减的比例。值越大回落越快，视觉越「跳」。">
+                <controls:FASettingsExpander.Footer>
                     <NumericUpDown MinWidth="140" Increment="0.5"
                                    Minimum="{x:Static local:SpectrumComponentConfig.DecayMinimum}"
                                    Maximum="{x:Static local:SpectrumComponentConfig.DecayMaximum}"
                                    Value="{Binding Settings.DecayPerSecond, Mode=TwoWay}" />
-                </controls:SettingsExpander.Footer>
-            </controls:SettingsExpander>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
         </StackPanel>
     </ScrollViewer>
 </ci:ComponentBase>
