@@ -4,8 +4,12 @@ on:
   push:
     paths:
       - 'MediaIsland/**'
+      - 'MediaIsland.Windows/**'
+      - 'MediaIsland.Tests/**'
+      - 'MediaIsland.sln'
       - 'native/ttml-ffi/**'
       - 'native/audio-ffi/**'
+      - 'Tools/**'
       - '.github/workflows/build.yml'
   workflow_dispatch: 
 
@@ -21,7 +25,7 @@ jobs:
       - name: Install .NET Core
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 8.x
+          dotnet-version: 10.x
 
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -39,7 +43,7 @@ jobs:
         uses: actions/cache@v4
         with: 
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**.*.csproj') }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
 
