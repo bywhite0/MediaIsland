@@ -241,20 +241,10 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
             header = decoded;
             pcmLength = pcm.Length;
 
-            var any = false;
-            for (var i = 0; i + 1 < pcm.Length; i += 2)
+            var (framePeak, any) = PcmScan.Scan(pcm);
+            if (framePeak > peak)
             {
-                var sample = (short)(pcm[i] | (pcm[i + 1] << 8));
-                var amplitude = sample == short.MinValue ? short.MaxValue : Math.Abs(sample);
-                if (amplitude > peak)
-                {
-                    peak = amplitude;
-                }
-
-                if (sample != 0)
-                {
-                    any = true;
-                }
+                peak = framePeak;
             }
 
             if (any)

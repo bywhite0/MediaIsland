@@ -71,7 +71,7 @@ public class WasapiLoopbackManualCheck(ITestOutputHelper output)
         public int Count, SilentCount, NonZeroCount, SampleRate, Channels;
         public int MinBytes = int.MaxValue, MaxBytes;
         public double TotalDurationMs;
-        public short Peak;
+        public int Peak;
 
         public ValueTask OnFrameAsync(AudioFrame frame, CancellationToken cancellationToken)
         {
@@ -86,20 +86,10 @@ public class WasapiLoopbackManualCheck(ITestOutputHelper output)
                 SilentCount++;
             }
 
-            var any = false;
-            for (var i = 0; i + 1 < frame.Pcm.Length; i += 2)
+            var (framePeak, any) = PcmScan.Scan(frame.Pcm);
+            if (framePeak > Peak)
             {
-                var sample = (short)(frame.Pcm[i] | (frame.Pcm[i + 1] << 8));
-                var amplitude = sample == short.MinValue ? short.MaxValue : Math.Abs(sample);
-                if (amplitude > Peak)
-                {
-                    Peak = (short)amplitude;
-                }
-
-                if (sample != 0)
-                {
-                    any = true;
-                }
+                Peak = framePeak;
             }
 
             if (any)
