@@ -428,7 +428,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
             // 挂着的等待者一并放掉，否则它要空等满一个超时。
             _audioClockProbe.Reset();
             Interlocked.Exchange(ref _pendingClockExchange, null)?.TrySetResult(null);
-            AudioClockStateChanged?.Invoke(this, EventArgs.Empty);
+            RaiseAudioClockStateChanged();
         }
     }
 
@@ -455,7 +455,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
                 }
 
                 await _audioClockProbe.ProbeOnceAsync(cancellationToken);
-                AudioClockStateChanged?.Invoke(this, EventArgs.Empty);
+                RaiseAudioClockStateChanged();
                 await Task.Delay(_audioClockProbe.NextInterval, cancellationToken);
             }
         }
@@ -657,7 +657,24 @@ public sealed class MediaLinkClient : IAsyncDisposable
 
         // 声明是对齐判定的输入之一。重发改 D 的那一刻就要让消费方重算——
         // 退回或重新进入都不该等到下一轮探测才发生。
-        AudioClockStateChanged?.Invoke(this, EventArgs.Empty);
+        RaiseAudioClockStateChanged();
+    }
+
+    /// <summary>
+    /// 同步派发对时状态事件，吞掉订阅方的异常。本事件在接收循环与探测循环上派发，
+    /// 订阅方（对齐重算）抛出的话会把一次归因失败升级成整条连接重连，
+    /// 而 media / lyrics / 转发与它共用这条连接。
+    /// </summary>
+    private void RaiseAudioClockStateChanged()
+    {
+        try
+        {
+            AudioClockStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "对时状态事件的订阅方抛出异常");
+        }
     }
 
     /// <summary>

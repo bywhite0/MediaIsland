@@ -99,4 +99,40 @@ public class MediaLinkClientAudioClockTests
         await harness.WaitUntilAsync(() => harness.Socket.Sent.Any(IsClockRequest));
         Assert.Contains(harness.Socket.Sent, IsClockRequest);
     }
+
+    [Fact]
+    public async Task AShrunkenBudget_DoesNotDisturbMediaLyricsOrAudioFrames()
+    {
+        // D 改小会让对齐退回，但退回改的只是播放的对齐参数——media、lyrics 与
+        // 二进制音频帧三条通道和它共用同一条连接，谁都不该被波及。
+        // 波及的形态不是报错而是「换了服务端配置之后歌词不动了」，从症状查不回原因。
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            ""","capabilities":["audio","audio.clock"],"audioClock":{"dMs":300}""");
+
+        // 对齐重算订阅在这个事件上，而它可能抛（读设备事实撞上任何意外）。
+        // 抛出不得把一次归因失败升级成整条连接重连——那正是本判据要防的波及路径。
+        harness.Client.AudioClockStateChanged += (_, _) => throw new InvalidOperationException("hostile");
+
+        harness.QueueServerHello(
+            epoch: 2, ""","capabilities":["audio","audio.clock"],"audioClock":{"dMs":55}""");
+        await harness.WaitUntilAsync(() => harness.Client.ServerAudioClockBudgetMs == 55);
+        Assert.Equal(55, harness.Client.ServerAudioClockBudgetMs);
+
+        var media = 0;
+        var lyrics = 0;
+        var frames = 0;
+        harness.Client.MediaReceived += (_, _) => Interlocked.Increment(ref media);
+        harness.Client.LyricsReceived += (_, _) => Interlocked.Increment(ref lyrics);
+        harness.Client.AudioFrameReceived += (_, _) => Interlocked.Increment(ref frames);
+
+        harness.Socket.QueueMediaUpdated(seq: 1, title: "Song");
+        harness.Socket.QueueLyricsUpdated(seq: 2, trackToken: "tok");
+        harness.Socket.QueueBinary([0xA1, 0x01, 0x01]);
+
+        await harness.WaitUntilAsync(() =>
+            Volatile.Read(ref media) == 1 && Volatile.Read(ref lyrics) == 1 && Volatile.Read(ref frames) == 1);
+        Assert.Equal(1, Volatile.Read(ref media));
+        Assert.Equal(1, Volatile.Read(ref lyrics));
+        Assert.Equal(1, Volatile.Read(ref frames));
+    }
 }
