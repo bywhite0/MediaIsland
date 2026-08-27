@@ -185,6 +185,21 @@ public sealed class MediaLinkClient : IAsyncDisposable
     private IMediaLinkClientSocket? _activeSocket;
 
     /// <summary>
+    /// audio.clock 应答的等待上限。超过一秒才到的应答即使配上了，其往返也远超估计器
+    /// 的可接受上限（50 毫秒），等它没有意义；迟到的应答会落到下一次探测的等待者上，
+    /// 由 t1 回显校验拒掉——这正是回显设计要兜的情形。
+    /// </summary>
+    private static readonly TimeSpan AudioClockExchangeTimeout = TimeSpan.FromSeconds(1);
+
+    private readonly AudioClockProbe _audioClockProbe;
+
+    /// <summary>
+    /// 正在等应答的那一次探测。探测是串行的（壳内一次一发），故单槽足够；
+    /// 写入走 Interlocked 与消费端配对，读写分属探测线程与接收循环两条线程。
+    /// </summary>
+    private TaskCompletionSource<AudioClockProbeReply?>? _pendingClockExchange;
+
+    /// <summary>
     /// 服务端最近一条 server.hello 的声明，一次读取即取到成组的两个值。
     ///
     /// 判定对齐要同时吃「有没有 audio.clock 能力」与「预算是多少」，而下面那几个属性
@@ -220,6 +235,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _logger = logger;
         _tickProvider = tickProvider ?? (() => Environment.TickCount64);
+        _audioClockProbe = new AudioClockProbe(ExchangeAudioClockAsync);
     }
 
     public bool IsConnected { get; private set; }
@@ -238,6 +254,22 @@ public sealed class MediaLinkClient : IAsyncDisposable
 
     /// <summary>连接状态变化（含重连中断），供 UI 显示。</summary>
     public event EventHandler? ConnectionStateChanged;
+
+    /// <summary>
+    /// 对时状态可能变了。每轮探测后触发，含失败轮——失联累积到清窗那一刻，
+    /// offset 由可用变不可用，消费方必须得到通知才能把播放退回非对齐。
+    /// </summary>
+    public event EventHandler? AudioClockStateChanged;
+
+    /// <summary>跨机时钟映射此刻可用。判定对齐的四个条件之一。</summary>
+    public bool AudioClockOffsetAvailable => _audioClockProbe.TryGetWireOffset(out _, out _);
+
+    /// <summary>
+    /// 取线上时间轴的 offset：本机 QPC 减发送端墙钟的 100ns 表示，方向是本机减发送端。
+    /// 播放侧把「帧头时刻 + D + 本值」当作本机时间轴上的目标出声时刻。
+    /// </summary>
+    internal bool TryGetAudioClockWireOffset(out long wireOffsetTicks, out long chosenRoundTripTicks) =>
+        _audioClockProbe.TryGetWireOffset(out wireOffsetTicks, out chosenRoundTripTicks);
 
     public void Start()
     {
@@ -336,6 +368,8 @@ public sealed class MediaLinkClient : IAsyncDisposable
         // 赋值与 SetConnected 都放进 try：连接态事件是同步派发的，订阅者抛异常会从这里
         // 穿出去，若赋值在 try 外，_activeSocket 会留着指向已 Dispose 的 socket
         // 直到下次握手覆盖它。放进来则由 finally 兜底清空。
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task? probeLoop = null;
         try
         {
             // 先记活动 socket，再宣告连上。顺序要紧：SetConnected 是同步派发事件的，
@@ -355,6 +389,9 @@ public sealed class MediaLinkClient : IAsyncDisposable
                 await SendAsync(socket, MediaLinkMessageSerializer.Create(
                     MediaLinkProtocol.TypeAudioPlayStart, payload: null, id: "audio-start"), cancellationToken);
             }
+
+            // 对时探测随连接起，随连接停。放在握手之后：能力要 hello 解析完才知道。
+            probeLoop = Task.Run(() => RunAudioClockProbeLoopAsync(probeCts.Token), CancellationToken.None);
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -379,6 +416,89 @@ public sealed class MediaLinkClient : IAsyncDisposable
         finally
         {
             _activeSocket = null;
+
+            probeCts.Cancel();
+            if (probeLoop is not null)
+            {
+                try { await probeLoop; } catch { /* 循环自己吞异常，这里只等退出 */ }
+            }
+
+            // 重连后的对端可以是另一台机器，旧样本描述的是一段已经不存在的映射关系。
+            // 挂着的等待者一并放掉，否则它要空等满一个超时。
+            _audioClockProbe.Reset();
+            Interlocked.Exchange(ref _pendingClockExchange, null)?.TrySetResult(null);
+            AudioClockStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    /// <summary>
+    /// 探测循环：连接存活期间常驻。协议能力不是一次性判定——server.hello 可在会话中途
+    /// 重发并增删 audio.clock，故「未声明」只是本轮不探，下一轮重新看；而四时刻缺失的
+    /// 「不支持」是对端实现层面的永久事实，一经确认本条连接内不再打扰对端。
+    /// </summary>
+    private async Task RunAudioClockProbeLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                if (_audioClockProbe.IsUnsupported)
+                {
+                    return;
+                }
+
+                if (!SupportsAudioClock)
+                {
+                    await Task.Delay(AudioClockProbe.SteadyInterval, cancellationToken);
+                    continue;
+                }
+
+                await _audioClockProbe.ProbeOnceAsync(cancellationToken);
+                AudioClockStateChanged?.Invoke(this, EventArgs.Empty);
+                await Task.Delay(_audioClockProbe.NextInterval, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 断连或停机，循环的正常出口。
+        }
+        catch (Exception ex)
+        {
+            // 对时只服务于对齐播放；它的意外不该拖垮共用这条连接的 media / lyrics / 转发。
+            _logger?.LogDebug(ex, "对时探测循环意外终止");
+        }
+    }
+
+    /// <summary>
+    /// 一次 audio.clock 往返：发请求，等回显匹配的应答或超时。超时按无回应计（返回 null），
+    /// 由探测壳记 miss。发送失败任由异常出去——壳把它与无回应同等对待。
+    /// </summary>
+    private async Task<AudioClockProbeReply?> ExchangeAudioClockAsync(long t1, CancellationToken cancellationToken)
+    {
+        var socket = _activeSocket;
+        if (socket is null || !IsConnected)
+        {
+            return null;
+        }
+
+        var pending = new TaskCompletionSource<AudioClockProbeReply?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        Interlocked.Exchange(ref _pendingClockExchange, pending);
+        try
+        {
+            await SendAsync(socket, MediaLinkMessageSerializer.Create(
+                MediaLinkProtocol.TypeAudioClock,
+                new MediaLinkAudioClockRequestPayload { T1 = t1 },
+                id: "clk"), cancellationToken);
+
+            var winner = await Task.WhenAny(
+                pending.Task, Task.Delay(AudioClockExchangeTimeout, cancellationToken));
+            return winner == pending.Task ? await pending.Task : null;
+        }
+        finally
+        {
+            // 只清自己那一份：应答若已被接收循环消费，槽里是 null 或下一次的等待者。
+            Interlocked.CompareExchange(ref _pendingClockExchange, null, pending);
         }
     }
 
@@ -587,6 +707,16 @@ public sealed class MediaLinkClient : IAsyncDisposable
                     thumbnail.TrackToken, DecodeBase64OrNull(thumbnail.DataBase64)));
             }
 
+            return;
+        }
+
+        // audio.clock 应答与封面同为响应帧，同样要抢在乱序闸之前。载荷解析失败按无应答
+        // 处理（完成成 null），让等待者立即记 miss 而不是空等满一个超时。
+        if (message.Type == MediaLinkProtocol.TypeAudioClock)
+        {
+            var clock = MediaLinkMessageSerializer.DeserializePayload<MediaLinkAudioClockPayload>(message.Payload);
+            Interlocked.Exchange(ref _pendingClockExchange, null)?.TrySetResult(
+                clock is null ? null : new AudioClockProbeReply(clock, message.Ts));
             return;
         }
 

@@ -32,6 +32,12 @@ public class AudioClockProbeTests
 
         internal int Calls { get; private set; }
 
+        /// <summary>
+        /// 对端墙钟减对端 QPC，毫秒。信封 ts 由它从 t3 推出——与生产侧一样，
+        /// 两个读数取自同一瞬。改它即模拟对端的 NTP 调整。
+        /// </summary>
+        internal double WallMinusQpcMs { get; set; }
+
         /// <summary>正常回应：单程各 outboundMs / inboundMs，服务端时钟快 offsetMs。</summary>
         internal FakePeer Answers(double offsetMs, double outboundMs = 1, double inboundMs = 1)
         {
@@ -83,11 +89,16 @@ public class AudioClockProbeTests
             return this;
         }
 
-        internal Task<MediaLinkAudioClockPayload?> ExchangeAsync(long t1, CancellationToken _)
+        internal Task<AudioClockProbeReply?> ExchangeAsync(long t1, CancellationToken _)
         {
             Calls++;
             var step = _script.Count > 0 ? _script.Dequeue() : (_ => null);
-            return Task.FromResult(step(t1));
+            var payload = step(t1);
+            return Task.FromResult(payload is null
+                ? default(AudioClockProbeReply?)
+                : new AudioClockProbeReply(
+                    payload,
+                    ((payload.T3 ?? 0) + (long)(WallMinusQpcMs * Ms)) / 10_000));
         }
     }
 
@@ -180,10 +191,8 @@ public class AudioClockProbeTests
         // 同一个条件式的后半段，把它删掉时缺 t2 那条判据仍然全绿。
         var clock = new FakeClock();
         var probe = new AudioClockProbe(
-            (t1, _) => Task.FromResult<MediaLinkAudioClockPayload?>(new MediaLinkAudioClockPayload
-            {
-                T1 = t1, T2 = 10 * Ms, T3 = null
-            }),
+            (t1, _) => Task.FromResult<AudioClockProbeReply?>(new AudioClockProbeReply(
+                new MediaLinkAudioClockPayload { T1 = t1, T2 = 10 * Ms, T3 = null }, 0)),
             clock.Read);
 
         Assert.False(await probe.ProbeOnceAsync(CancellationToken.None));
@@ -260,10 +269,8 @@ public class AudioClockProbeTests
         // 注意它不是「t3 早于 t2」——那反而让往返变大而非变负，写这条判据时先算错过一次。
         var clock = new FakeClock();
         var probe = new AudioClockProbe(
-            (t1, _) => Task.FromResult<MediaLinkAudioClockPayload?>(new MediaLinkAudioClockPayload
-            {
-                T1 = t1, T2 = 100 * Ms, T3 = 900 * Ms
-            }),
+            (t1, _) => Task.FromResult<AudioClockProbeReply?>(new AudioClockProbeReply(
+                new MediaLinkAudioClockPayload { T1 = t1, T2 = 100 * Ms, T3 = 900 * Ms }, 0)),
             clock.Read);
 
         Assert.False(await probe.ProbeOnceAsync(CancellationToken.None));
@@ -312,7 +319,7 @@ public class AudioClockProbeTests
                     ? new MediaLinkAudioClockPayload { T1 = t1, T2 = 40 * Ms, T3 = 40 * Ms }
                     : new MediaLinkAudioClockPayload { T1 = t1, T2 = 100 * Ms, T3 = 900 * Ms };
                 good = false;
-                return Task.FromResult<MediaLinkAudioClockPayload?>(payload);
+                return Task.FromResult<AudioClockProbeReply?>(new AudioClockProbeReply(payload, 0));
             },
             clock.Read);
 
@@ -415,5 +422,63 @@ public class AudioClockProbeTests
         Assert.Equal(20, probe.Misses);
         Assert.False(probe.IsUnsupported);
         Assert.False(probe.TryGetOffset(out _, out _));
+    }
+
+    [Fact]
+    public async Task WireOffset_MapsTheSenderWallClockAxisOntoTheLocalQpcAxis()
+    {
+        // 目标出声时刻的算式是「帧头时刻（发送端墙钟）+ D + offset」，故 offset 必须是
+        // 本机 QPC 减发送端墙钟。逐 tick 钉死合成：t1 = 0、t4 = 2ms，QPC 轴 offset =
+        // ((10 − 0) + (11 − 2)) / 2 = 9.5ms；信封 ts = 36ms 与 t3 = 11ms 同瞬取得，
+        // 桥 = 36 − 11 = 25ms；线上 offset = −9.5 − 25 = −34.5ms。
+        // t2 与 t3 刻意不相等：桥若配了 t2（收到时而非发出时），这里会差出 1ms。
+        var clock = new FakeClock();
+        var probe = new AudioClockProbe(
+            (t1, _) =>
+            {
+                clock.Advance(2);
+                return Task.FromResult<AudioClockProbeReply?>(new AudioClockProbeReply(
+                    new MediaLinkAudioClockPayload { T1 = t1, T2 = 10 * Ms, T3 = 11 * Ms },
+                    EnvelopeTsMs: 36));
+            },
+            clock.Read);
+
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+        Assert.True(probe.TryGetWireOffset(out var wire, out var rtt));
+        Assert.Equal(-345_000, wire);
+        Assert.Equal(1 * Ms, rtt);
+    }
+
+    [Fact]
+    public async Task WireOffset_IsUnavailableUntilASampleIsAccepted()
+    {
+        var (probe, _, _) = Build(p => p.Silent());
+
+        Assert.False(probe.TryGetWireOffset(out _, out _));
+        await probe.ProbeOnceAsync(CancellationToken.None);
+        Assert.False(probe.TryGetWireOffset(out _, out _));
+    }
+
+    [Fact]
+    public async Task WireOffset_TakesTheWallBridgeFromTheLatestAcceptedSample()
+    {
+        // QPC 轴 offset 走最小往返选择（受排队延迟污染最少的那次），而墙钟桥取最近
+        // 一次被接受的样本：W 是准常量，最新读数才反映对端此刻的墙钟——对端 NTP step
+        // 之后仍沿用旧桥，会把一个已经不存在的墙钟状态钉进每一帧的目标时刻。
+        var clock = new FakeClock();
+        var peer = new FakePeer(clock) { WallMinusQpcMs = 25 };
+        peer.Answers(offsetMs: 40);
+        var probe = new AudioClockProbe(peer.ExchangeAsync, clock.Read);
+
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+
+        // 第二个样本往返更大（不会被选中），但它的桥要生效。
+        peer.WallMinusQpcMs = 30;
+        peer.Answers(offsetMs: 40, outboundMs: 5, inboundMs: 5);
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+
+        Assert.True(probe.TryGetWireOffset(out var wire, out var rtt));
+        Assert.Equal(2 * Ms, rtt);
+        Assert.Equal(-(40 + 30) * Ms, wire);
     }
 }

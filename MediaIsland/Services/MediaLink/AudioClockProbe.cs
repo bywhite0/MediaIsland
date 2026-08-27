@@ -3,6 +3,16 @@ using MediaIsland.Services.MediaLink.Protocol;
 namespace MediaIsland.Services.MediaLink;
 
 /// <summary>
+/// 一次 audio.clock 往返带回的东西：载荷（t1 回显与 t2/t3），外加应答信封的墙钟 ts。
+///
+/// ts 不参与 QPC 轴的 offset 估计——墙钟会被 NTP 调整，不可用于跨分钟维持的时间关系。
+/// 带上它是因为它与 t3 由服务端在同一瞬取得（同一个延迟构造的报文里），是线上唯一
+/// 一对同瞬的墙钟/QPC 读数：「发送端墙钟轴」与「发送端 QPC 轴」之间的桥只能从这里来，
+/// 而音频帧头的 capturedAtMs 恰好在墙钟轴上。
+/// </summary>
+internal readonly record struct AudioClockProbeReply(MediaLinkAudioClockPayload Payload, long EnvelopeTsMs);
+
+/// <summary>
 /// 回程对时的时序外壳：什么时候探一次、连续没回应算不算失联、对端是不是根本不支持。
 ///
 /// 时钟与收发都由外部注入，本类不碰 socket 也不读真实时间。理由与
@@ -37,14 +47,23 @@ internal sealed class AudioClockProbe
     internal const int MaxConsecutiveMisses = 3;
 
     private readonly Func<long> _now100Ns;
-    private readonly Func<long, CancellationToken, Task<MediaLinkAudioClockPayload?>> _exchange;
+    private readonly Func<long, CancellationToken, Task<AudioClockProbeReply?>> _exchange;
     private readonly AudioClockOffsetEstimator _estimator = new();
 
     private int _accepted;
     private int _consecutiveMisses;
 
+    /// <summary>
+    /// 发送端墙钟减发送端 QPC，100ns。取自最近一次被接受样本的（信封 ts，t3）一对。
+    ///
+    /// 不做窗口平滑：W 在同一台对端上是准常量，逐样本差异只有 ts 的毫秒量化 ±0.5ms，
+    /// 而外环死区 1ms 吞得下这个量级。发送端墙钟被 NTP step 时它跳变，但所有接收端
+    /// 共享同一个发送端的墙钟，跳变对全体接收端共模，不破坏相对对齐。
+    /// </summary>
+    private long? _wallBridgeTicks;
+
     internal AudioClockProbe(
-        Func<long, CancellationToken, Task<MediaLinkAudioClockPayload?>> exchange,
+        Func<long, CancellationToken, Task<AudioClockProbeReply?>> exchange,
         Func<long>? now100Ns = null)
     {
         _exchange = exchange ?? throw new ArgumentNullException(nameof(exchange));
@@ -81,6 +100,33 @@ internal sealed class AudioClockProbe
         _estimator.TryGetOffset(out offsetTicks, out chosenRoundTripTicks);
 
     /// <summary>
+    /// 线上时间轴的 offset：本机 QPC（自开机起算）减发送端墙钟的 100ns 表示（自 1970 起算）。
+    /// 播放侧把「帧头时刻 + D + 本值」当作本机时间轴上的目标出声时刻，方向是本机减发送端。
+    ///
+    /// 合成自两段：估计器给的 QPC 轴 offset（发送端 QPC 减本机 QPC），与墙钟桥 W
+    /// （发送端墙钟减发送端 QPC）。本机 QPC − 发送端墙钟 = −(QPC offset) − W。
+    /// 两段的来源刻意分开——offset 走四时刻的最小往返选择（0.5ms 量级），W 走同瞬的
+    /// （信封 ts，t3）一对（±0.5ms 量化）；把墙钟直接混进估计器会让 NTP 调整污染整窗。
+    /// </summary>
+    internal bool TryGetWireOffset(out long wireOffsetTicks, out long chosenRoundTripTicks)
+    {
+        wireOffsetTicks = 0;
+        if (!_estimator.TryGetOffset(out var qpcOffsetTicks, out chosenRoundTripTicks))
+        {
+            return false;
+        }
+
+        if (_wallBridgeTicks is not { } bridge)
+        {
+            // 有样本必有桥（两者同一处写入）；这里只防御将来把写入拆开的改动。
+            return false;
+        }
+
+        wireOffsetTicks = -qpcOffsetTicks - bridge;
+        return true;
+    }
+
+    /// <summary>
     /// 探一次。返回是否配成了一个可用样本。
     ///
     /// 任何失败都只反映在返回值与计数上，不抛。
@@ -93,7 +139,7 @@ internal sealed class AudioClockProbe
         }
 
         var t1 = _now100Ns();
-        MediaLinkAudioClockPayload? response;
+        AudioClockProbeReply? response;
         try
         {
             response = await _exchange(t1, cancellationToken);
@@ -106,13 +152,14 @@ internal sealed class AudioClockProbe
 
         var t4 = _now100Ns();
 
-        if (response is null)
+        if (response is not { } reply)
         {
             NoteMiss();
             return false;
         }
 
-        if (response.T2 is not { } t2 || response.T3 is not { } t3)
+        var payload = reply.Payload;
+        if (payload.T2 is not { } t2 || payload.T3 is not { } t3)
         {
             // 缺 t2 或 t3 即对端只实现了三时间戳。不退化成「假设处理耗时为零」——
             // 那会给出一个看起来可用的错值，比报不可用坏得多。
@@ -121,7 +168,7 @@ internal sealed class AudioClockProbe
             return false;
         }
 
-        if (response.T1 != t1)
+        if (payload.T1 != t1)
         {
             // 回显不符：这条应答配的是别的请求。拿它与本次的 t4 凑一个样本，
             // 往返会算成两次探测的间隔，是个大得离谱又看起来合法的数。
@@ -141,6 +188,10 @@ internal sealed class AudioClockProbe
             NoteMiss();
             return false;
         }
+
+        // 桥与样本同一处写入：ts 与 t3 是服务端同瞬取的一对，桥必须配被接受的样本，
+        // 配一条被拒样本的 ts 等于拿坏数据修正好数据。
+        _wallBridgeTicks = reply.EnvelopeTsMs * Audio.MonotonicClock.TicksPerMs100Ns - t3;
 
         _consecutiveMisses = 0;
         _accepted++;
@@ -186,6 +237,7 @@ internal sealed class AudioClockProbe
         _estimator.Reset();
         _accepted = 0;
         _consecutiveMisses = 0;
+        _wallBridgeTicks = null;
         IsUnsupported = false;
     }
 

@@ -314,6 +314,9 @@ internal sealed class MediaLinkClientCapabilityHarness(ScriptedClientSocket sock
 
     public MediaLinkClient Client { get; } = client;
 
+    /// <summary>脚本 socket 本体，供判据检视发出的报文或投递响应帧。</summary>
+    public ScriptedClientSocket Socket { get; } = socket;
+
     /// <param name="capabilitiesJson">拼进 hello payload 的原始片段，需自带前导逗号；
     /// 空串即模拟不声明任何能力的老服务端。</param>
     public static async Task<MediaLinkClientCapabilityHarness> ConnectAsync(string capabilitiesJson)
