@@ -543,6 +543,28 @@ namespace MediaIsland.Models
             }
         }
 
+        private int _mediaLinkAudioClockBudgetMs = 300;
+
+        /// <summary>
+        /// 本机作为发送端时在 server.hello 里声明的播放延迟预算，毫秒。默认 300——
+        /// 够盖住一次 TCP 重传加抖动缓冲的稳态深度。所有接收端共用这一个声明值，
+        /// 这正是它放在发送端配置里的理由：各接收端自己配就是各自为真，必然失配。
+        ///
+        /// 不做夹紧：接收端本来就要对任意声明值防御（太小、太大、缺失各有归因），
+        /// 发送端再夹一层只是把同一个判断写两遍，而两遍会各自演化。
+        /// 改动对已连接的会话不追发，新会话按新值声明。
+        /// </summary>
+        public int MediaLinkAudioClockBudgetMs
+        {
+            get => _mediaLinkAudioClockBudgetMs;
+            set
+            {
+                if (_mediaLinkAudioClockBudgetMs == value) return;
+                _mediaLinkAudioClockBudgetMs = value;
+                OnPropertyChanged();
+            }
+        }
+
     }
     public class MediaSource : ObservableObject
     {

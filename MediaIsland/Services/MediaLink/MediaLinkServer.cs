@@ -58,6 +58,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
     private readonly Func<Task>? _onEffectiveLyricsMutatedAsync;
     private readonly Func<MediaLinkAudioFrameHeader, byte[], Task>? _onAudioFrameAsync;
     private readonly Func<Task>? _onAudioCaptureDemandChangedAsync;
+    private readonly Func<long>? _audioClockBudgetMsAccessor;
     private readonly ILogger<MediaLinkServer>? _logger;
     private TcpListener? _listener;
     private CancellationTokenSource? _acceptCts;
@@ -80,7 +81,8 @@ public sealed class MediaLinkServer : IAsyncDisposable
         Func<Task>? onEffectiveLyricsMutatedAsync = null,
         Func<MediaLinkAudioFrameHeader, byte[], Task>? onAudioFrameAsync = null,
         Func<Task>? onAudioCaptureDemandChangedAsync = null,
-        ILogger<MediaLinkServer>? logger = null)
+        ILogger<MediaLinkServer>? logger = null,
+        Func<long>? audioClockBudgetMsAccessor = null)
     {
         _hub = hub;
         _onSubscribedAsync = onSubscribedAsync;
@@ -93,8 +95,33 @@ public sealed class MediaLinkServer : IAsyncDisposable
         _onEffectiveLyricsMutatedAsync = onEffectiveLyricsMutatedAsync;
         _onAudioFrameAsync = onAudioFrameAsync;
         _onAudioCaptureDemandChangedAsync = onAudioCaptureDemandChangedAsync;
+        _audioClockBudgetMsAccessor = audioClockBudgetMsAccessor;
         _logger = logger;
     }
+
+    /// <summary>
+    /// 组一条 server.hello 的载荷。抽成方法有两个理由：hello 在会话建立时发、将来还可能
+    /// 中途重发，声明的内容必须出自同一处；预算走访问器逐次求值，配置改了之后新会话
+    /// 拿到的就是新值——快照进字段的话改配置要重启服务端才生效，而这不报错、只是不动。
+    /// 访问器缺席时回落协议默认值，与不可配置的旧行为逐字相同。
+    /// </summary>
+    internal MediaLinkServerHelloPayload BuildHelloPayload() => new()
+    {
+        ProtocolVersion = MediaLinkProtocol.Version,
+        AuthRequired = true,
+        SessionEpoch = SessionEpoch,
+        Capabilities =
+        [
+            MediaLinkProtocol.CapabilityAudio,
+            MediaLinkProtocol.CapabilityAudioClock
+        ],
+        Audio = new MediaLinkAudioFormatPayload(),
+        AudioClock = new MediaLinkAudioClockDeclarationPayload
+        {
+            BudgetMs = _audioClockBudgetMsAccessor?.Invoke()
+                       ?? MediaLinkProtocol.AudioClockDefaultBudgetMs
+        }
+    };
 
     public bool IsRunning { get; private set; }
 
@@ -334,22 +361,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
                     session.StartWriter(cancellationToken);
                     var hello = MediaLinkMessageSerializer.Create(
                         MediaLinkProtocol.TypeEvent,
-                        new MediaLinkServerHelloPayload
-                        {
-                            ProtocolVersion = MediaLinkProtocol.Version,
-                            AuthRequired = true,
-                            SessionEpoch = SessionEpoch,
-                            Capabilities =
-                            [
-                                MediaLinkProtocol.CapabilityAudio,
-                                MediaLinkProtocol.CapabilityAudioClock
-                            ],
-                            Audio = new MediaLinkAudioFormatPayload(),
-                            AudioClock = new MediaLinkAudioClockDeclarationPayload
-                            {
-                                BudgetMs = MediaLinkProtocol.AudioClockDefaultBudgetMs
-                            }
-                        },
+                        BuildHelloPayload(),
                         name: MediaLinkProtocol.EventServerHello);
                     await session.SendAsync(hello, cancellationToken);
                     await session.RunAsync(cancellationToken);

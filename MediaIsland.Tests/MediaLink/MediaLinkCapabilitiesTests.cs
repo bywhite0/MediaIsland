@@ -102,6 +102,47 @@ public class MediaLinkCapabilitiesTests
         Assert.Equal("audio.play_start", MediaLinkProtocol.TypeAudioPlayStart);
         Assert.Equal("audio.play_stop", MediaLinkProtocol.TypeAudioPlayStop);
     }
+
+    [Fact]
+    public void ServerHello_DeclaresTheConfiguredBudget()
+    {
+        // D 必须全局一致，故它是发送端的配置而不是各接收端自己配。这里钉住配置
+        // 真的进了 hello——接线断了不会报错，只是所有接收端都拿到写死的默认值，
+        // 而设置页上显示的是另一个数。
+        var server = new MediaLinkServer(
+            new MediaLinkSessionHub(), _ => Task.CompletedTask, () => "tok",
+            audioClockBudgetMsAccessor: () => 450);
+
+        Assert.Equal(450, server.BuildHelloPayload().AudioClock!.BudgetMs);
+    }
+
+    [Fact]
+    public void ServerHello_WithoutAConfiguredBudget_DeclaresTheProtocolDefault()
+    {
+        // 访问器缺席回落协议默认值，与不可配置的旧行为逐字相同——老的构造方式不受影响。
+        var server = new MediaLinkServer(
+            new MediaLinkSessionHub(), _ => Task.CompletedTask, () => "tok");
+
+        Assert.Equal(
+            MediaLinkProtocol.AudioClockDefaultBudgetMs,
+            server.BuildHelloPayload().AudioClock!.BudgetMs);
+    }
+
+    [Fact]
+    public void ServerHello_ReevaluatesTheBudgetEveryTime()
+    {
+        // 预算逐次求值：改配置后新会话按新值声明，不必重启服务端。
+        // 快照进字段的话，改配置不生效且不报错。
+        var budget = 300L;
+        var server = new MediaLinkServer(
+            new MediaLinkSessionHub(), _ => Task.CompletedTask, () => "tok",
+            audioClockBudgetMsAccessor: () => budget);
+        Assert.Equal(300, server.BuildHelloPayload().AudioClock!.BudgetMs);
+
+        budget = 120;
+
+        Assert.Equal(120, server.BuildHelloPayload().AudioClock!.BudgetMs);
+    }
 }
 
 /// <summary>

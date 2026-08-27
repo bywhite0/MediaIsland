@@ -365,6 +365,8 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                 allowedOriginsAccessor: () => settings.MediaLinkAllowedOrigins,
                 injectionStore: _injectionStore,
                 coordinator: _coordinator,
+                // 预算逐次求值：改配置后新会话按新值声明，不必重启服务端。
+                audioClockBudgetMsAccessor: () => settings.MediaLinkAudioClockBudgetMs,
                 playbackControllerAccessor: () =>
                 {
                     try
