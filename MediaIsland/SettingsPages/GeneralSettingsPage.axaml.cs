@@ -18,6 +18,7 @@ using ClassIsland.Core.Enums.SettingsWindow;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
+using MediaIsland.Services.Audio.Playback;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
@@ -46,6 +47,7 @@ namespace MediaIsland.SettingsPages
         private readonly IEffectiveMediaSource? _effectiveMediaSource;
         private readonly MediaLinkInjectionStore? _injectionStore;
         private readonly MediaLinkUpstreamHostedService? _upstream;
+        private readonly AudioPlaybackService? _playback;
         private string _mediaLinkStatusText = "未启用";
         private string _mediaLinkExposureWarning = string.Empty;
         private string _mediaLinkUpstreamStatusText = "未启用";
@@ -298,6 +300,26 @@ namespace MediaIsland.SettingsPages
             }
         }
 
+        /// <summary>
+        /// 当前输出设备的手动出声偏移，毫秒。读写都按当前设备的标识落进 per-device
+        /// 存储；写后重发通知让控件回读，越界输入由此显示为夹紧后的生效值。
+        /// </summary>
+        public int MediaLinkManualOffsetMs
+        {
+            get => Settings.GetManualOffsetMs(_playback?.CurrentPlaybackDeviceId);
+            set
+            {
+                Settings.SetManualOffsetMs(_playback?.CurrentPlaybackDeviceId, value);
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>
+        /// 拿不到设备标识（无音频设备、播放层未注册）时禁用偏移控件。
+        /// 不禁用的话输入会被静默丢弃——看起来能调、实际什么都没记。
+        /// </summary>
+        public bool HasPlaybackDevice => _playback?.CurrentPlaybackDeviceId is not null;
+
 
         public GeneralSettingsPage(
             Plugin plugin,
@@ -307,7 +329,8 @@ namespace MediaIsland.SettingsPages
             IMediaLinkGateway? mediaLinkGateway = null,
             IEffectiveMediaSource? effectiveMediaSource = null,
             MediaLinkInjectionStore? injectionStore = null,
-            MediaLinkUpstreamHostedService? upstream = null)
+            MediaLinkUpstreamHostedService? upstream = null,
+            AudioPlaybackService? playback = null)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
@@ -318,6 +341,7 @@ namespace MediaIsland.SettingsPages
             _effectiveMediaSource = effectiveMediaSource;
             _injectionStore = injectionStore;
             _upstream = upstream;
+            _playback = playback;
             RemoveNullMediaSources();
             InitializeComponent();
             LoadLyricsSettings();

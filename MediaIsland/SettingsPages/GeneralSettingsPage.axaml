@@ -544,6 +544,16 @@
                        Foreground="{DynamicResource SystemFillColorCautionBrush}"
                        TextWrapping="Wrap"
                        Margin="0 4 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
+                                         Header="播放延迟预算"
+                                         Description="本机作为发送端时，向所有接收端声明的目标出声延迟（毫秒）。开启了「对齐出声时刻」的接收端会把声音安排在这个时点出声。调小更跟手；太小时接收端装不下，会自动退回普通播放。修改后对新建立的连接生效。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown Width="140"
+                                   Increment="50"
+                                   FormatString="0 'ms'"
+                                   Value="{Binding Settings.MediaLinkAudioClockBudgetMs, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE0F5;}"
                                          Header="媒体信息来源"
                                          Description="决定媒体信息从哪里来。默认「本机播放器」即读取本机正在播放的媒体信息；要显示另一台电脑或外部程序发来的内容，请选后两项。">
@@ -636,6 +646,26 @@
                                    Increment="10"
                                    FormatString="0 'ms'"
                                    Value="{Binding Settings.MediaLinkPlaybackBufferMs, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE157;}"
+                                         Header="对齐出声时刻"
+                                         Description="开启后，本机按发送端声明的播放延迟预算安排出声时刻，两台设备一起放同一路声音时不再一前一后。需要同时开启「播放对方的声音」。条件不满足（预算装不下、对时未就绪）时自动退回普通播放，声音照常，原因记入日志。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkAlignmentIsEnabled, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
+                                         Header="手动出声偏移"
+                                         Description="自动对齐看不见声卡之后的硬件延迟（功放、蓝牙耳机可达一两百毫秒）。这台设备听起来比对面慢就调大，反了就调小，播放中即时生效。按输出设备分别记忆，换设备从 0 开始。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown Width="140"
+                                   Minimum="{x:Static models:PluginSettings.ManualOffsetMsMinimum}"
+                                   Maximum="{x:Static models:PluginSettings.ManualOffsetMsMaximum}"
+                                   Increment="10"
+                                   FormatString="0 'ms'"
+                                   IsEnabled="{Binding HasPlaybackDevice}"
+                                   Value="{Binding MediaLinkManualOffsetMs, Mode=TwoWay}" />
                 </controls:FASettingsExpander.Footer>
             </controls:FASettingsExpander>
             <ci:IconText Glyph="&#xEAEF;" Text="隐私" Margin="0 16 0 8" />
