@@ -23,10 +23,11 @@ namespace MediaIsland.Tests.RealDevice;
 /// 时长的物理推导（第一条判据的等待期由此定，不是拍的）：
 /// 内环时间常数 τ内 = target_ms / 1000 / MAX_DRIFT，MAX_DRIFT = 0.001（ring.rs），
 /// 故 τ内的秒数在数值上恰等于目标深度的毫秒数；目标深度取 native 下限 50ms 即
-/// τ内约 50 到 70 秒（收敛期间深度上行）。外环积分时间是 3 倍 τ内，该闭环欠阻尼，
-/// 误差包络按 2τ内 衰减。等待 330 秒把注入的 20ms 初始误差压到约 2ms，
-/// 对 5ms 预算留一倍余量。若 native 下限或 MAX_DRIFT 变了，这里的推导失真，
-/// 表现是判据不稳（可见），不是假绿——下限另有断言钉住。
+/// τ内约 50 到 80 秒（收敛期间深度上行）。外环积分时间是 3 倍 τ内，该闭环欠阻尼；
+/// 实测收敛尾部的有效时间常数约 210 秒。等待期为判稳早退加硬上限的形式，
+/// 数值推导见 SteadyWaitSeconds 与 SettledProbeMs 的注释。若 native 下限或
+/// MAX_DRIFT 变了，这里的推导失真，表现是判据不稳（可见），不是假绿——
+/// 下限另有断言钉住。
 /// </summary>
 [Collection(nameof(RealDeviceCollection))]
 public class PlaybackAlignmentChecks(ITestOutputHelper output)
@@ -55,8 +56,23 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
     /// </summary>
     private const int InitialDelayBudgetMs = 80;
 
-    /// <summary>稳态等待，秒。推导见类注释。</summary>
-    private const int SteadyWaitSeconds = 330;
+    /// <summary>
+    /// 稳态等待的硬上限，秒。收敛时间 ∝ 初始偏差 × τ，而两者逐跑漂移：会话级链路
+    /// 延迟在校准后仍可再漂几毫秒（把有效初始偏差推到 ~25ms），且实测收敛尾部的
+    /// 有效时间常数约 210 秒，慢于欠阻尼包络的 2τ内 估计（二阶系统初始斜率为零，
+    /// 早期进度被高估）。固定等待编码的是这个分布的一个点估计——曾取 330 秒，
+    /// 四次实跑落点 -0.8/-2.7/-3.6/-5.3ms，最后一次撞线出界。形式改成判稳早退 +
+    /// 硬上限：上限按注入确认带最坏边 28ms 推，28 × exp(-480/230) ≈ 3.5ms，
+    /// 仍在 5ms 预算内；典型跑由早退保住时长。
+    /// </summary>
+    private const int SteadyWaitSeconds = 480;
+
+    /// <summary>
+    /// 判稳早退的探针阈值，毫秒。连续三次 15 秒探针 |e| 低于它才算进稳态——
+    /// 单次低读数可能是抖动路过零点。取预算的一半，早退后窗口中位必然远离判据线。
+    /// 探针读数恰为 0 不算数：死信号读 0，若拿它当已收敛就把活性锚绕过去了。
+    /// </summary>
+    private const double SettledProbeMs = 2.5;
 
     /// <summary>稳态采样窗，秒。取分位数而非瞬时值，10Hz 采样约 200 个样本。</summary>
     private const int WindowSeconds = 20;
@@ -151,14 +167,24 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         // 这条同时是「误差信号活着」的锚：信号死了读数是 0，落不进这个带。
         Assert.InRange(injectedMs, -InjectedErrorMs - 8, -InjectedErrorMs + 8);
 
-        // 稳态等待。期间记轨迹供诊断，不断言——断言全部收在窗口采样之后。
+        // 稳态等待：判稳早退 + 硬上限，推导见两常量注释。期间记轨迹供诊断，
+        // 不断言——断言全部收在窗口采样之后。
         var trajectory = Stopwatch.StartNew();
+        var settledProbes = 0;
         while (trajectory.Elapsed.TotalSeconds < SteadyWaitSeconds)
         {
             await Task.Delay(15_000);
             var probe = renderer.ReadStats();
             output.WriteLine(
                 $"t+{trajectory.Elapsed.TotalSeconds,5:F0}s : e={probe.PlayTimeErrorUs,7}us target={probe.TargetMsCurrent}ms ring={probe.RingMs:F0}ms 欠载={probe.UnderrunCount}");
+
+            var isSettledProbe = probe.PlayTimeErrorUs != 0
+                && Math.Abs(probe.PlayTimeErrorUs) < SettledProbeMs * 1_000;
+            settledProbes = isSettledProbe ? settledProbes + 1 : 0;
+            if (settledProbes >= 3)
+            {
+                break;
+            }
         }
 
         var window = await SampleErrorUsAsync(renderer, WindowSeconds);
