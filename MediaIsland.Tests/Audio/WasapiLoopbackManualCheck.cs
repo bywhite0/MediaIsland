@@ -54,6 +54,13 @@ public class WasapiLoopbackManualCheck(ITestOutputHelper output)
         Assert.Equal(48_000, sink.SampleRate);
         Assert.Equal(2, sink.Channels);
 
+        // 先断言确实有声音：静音端点采到全零时其余断言照样全绿，这条判据就假绿了。
+        Assert.True(sink.Peak >= AudioAlignmentThresholds.PeakAmplitudeLowerBound,
+            $"峰值振幅 {sink.Peak} 低于下界 {AudioAlignmentThresholds.PeakAmplitudeLowerBound}，端点疑似静音");
+        var nonZeroRatio = (double)sink.NonZeroCount / sink.Count;
+        Assert.True(nonZeroRatio >= AudioAlignmentThresholds.NonZeroFrameRatioLowerBound,
+            $"非零样本帧占比 {nonZeroRatio:F2} 低于下界 {AudioAlignmentThresholds.NonZeroFrameRatioLowerBound}");
+
         // 采集时长应逼近墙钟：偏差过大说明分帧或重采样把时间轴拉伸了。
         var drift = Math.Abs(sink.TotalDurationMs - sw.Elapsed.TotalMilliseconds);
         Assert.True(drift < 500, $"时长漂移 {drift:F0} ms 过大");

@@ -101,7 +101,8 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
             await WaitUntilAsync(() => audioHub.IsCapturing, "采集未在 play_start 后启动");
             output.WriteLine("采集已启动，等待音频帧…（请确保正在放音）");
 
-            var (header, pcmLength, frameCount) = await CollectAudioFramesAsync(client, TimeSpan.FromSeconds(3));
+            var (header, pcmLength, frameCount, peak, nonZeroFrames) =
+                await CollectAudioFramesAsync(client, TimeSpan.FromSeconds(3));
 
             output.WriteLine($"收到二进制帧 : {frameCount}");
             output.WriteLine($"trackToken   : {header.TrackToken}");
@@ -111,8 +112,17 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
             output.WriteLine($"seq          : {header.Seq}");
             output.WriteLine($"flags        : {header.Flags}");
             output.WriteLine($"PCM 字节     : {pcmLength}");
+            output.WriteLine($"峰值振幅     : {peak} / 32767");
+            output.WriteLine($"非零样本帧   : {nonZeroFrames} / {frameCount}");
 
             Assert.True(frameCount > 0, "未通过 WebSocket 收到任何音频帧");
+
+            // 先断言确实有声音：静音端点下全零帧照样走完整条链路，其余断言全绿。
+            Assert.True(peak >= AudioAlignmentThresholds.PeakAmplitudeLowerBound,
+                $"峰值振幅 {peak} 低于下界 {AudioAlignmentThresholds.PeakAmplitudeLowerBound}，端点疑似静音");
+            var nonZeroRatio = (double)nonZeroFrames / frameCount;
+            Assert.True(nonZeroRatio >= AudioAlignmentThresholds.NonZeroFrameRatioLowerBound,
+                $"非零样本帧占比 {nonZeroRatio:F2} 低于下界 {AudioAlignmentThresholds.NonZeroFrameRatioLowerBound}");
 
             // trackToken 必须与 media.updated 同源，否则合规客户端会丢弃全部音频。
             var expectedToken = MediaIsland.Services.MediaLink.Mapping.MediaLinkDtoMapper
@@ -178,10 +188,10 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// 收集二进制帧直到超时。解码放在同步方法里——ReadOnlySpan 是 ref struct，
-    /// C# 12 不允许它出现在 async 方法体内（CS9202）。
+    /// 收集二进制帧直到超时，顺带扫振幅。解码与扫描放在同步方法里——ReadOnlySpan
+    /// 是 ref struct，C# 12 不允许它出现在 async 方法体内（CS9202）。
     /// </summary>
-    private static async Task<(MediaLinkAudioFrameHeader Header, int PcmLength, int FrameCount)>
+    private static async Task<(MediaLinkAudioFrameHeader Header, int PcmLength, int FrameCount, int Peak, int NonZeroFrames)>
         CollectAudioFramesAsync(ClientWebSocket client, TimeSpan duration)
     {
         var buffer = new byte[128 * 1024];
@@ -189,6 +199,8 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
         var frameCount = 0;
         MediaLinkAudioFrameHeader header = default;
         var pcmLength = 0;
+        var peak = 0;
+        var nonZeroFrames = 0;
 
         while (DateTime.UtcNow < deadline)
         {
@@ -208,16 +220,18 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
                 continue; // media.updated 等文本帧
             }
 
-            if (TryDecodeFirst(buffer.AsSpan(0, result.Count), ref header, ref pcmLength))
+            if (TryDecodeAndScan(buffer.AsSpan(0, result.Count),
+                    ref header, ref pcmLength, ref peak, ref nonZeroFrames))
             {
                 frameCount++;
             }
         }
 
-        return (header, pcmLength, frameCount);
+        return (header, pcmLength, frameCount, peak, nonZeroFrames);
 
-        static bool TryDecodeFirst(
-            ReadOnlySpan<byte> frame, ref MediaLinkAudioFrameHeader header, ref int pcmLength)
+        static bool TryDecodeAndScan(
+            ReadOnlySpan<byte> frame, ref MediaLinkAudioFrameHeader header, ref int pcmLength,
+            ref int peak, ref int nonZeroFrames)
         {
             if (!MediaLinkAudioFrame.TryDecode(frame, out var decoded, out var pcm, out _))
             {
@@ -226,6 +240,28 @@ public class MediaLinkAudioEndToEndManualCheck(ITestOutputHelper output)
 
             header = decoded;
             pcmLength = pcm.Length;
+
+            var any = false;
+            for (var i = 0; i + 1 < pcm.Length; i += 2)
+            {
+                var sample = (short)(pcm[i] | (pcm[i + 1] << 8));
+                var amplitude = sample == short.MinValue ? short.MaxValue : Math.Abs(sample);
+                if (amplitude > peak)
+                {
+                    peak = amplitude;
+                }
+
+                if (sample != 0)
+                {
+                    any = true;
+                }
+            }
+
+            if (any)
+            {
+                nonZeroFrames++;
+            }
+
             return true;
         }
     }
