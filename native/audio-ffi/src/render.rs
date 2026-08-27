@@ -163,7 +163,7 @@ pub fn output_frames_for(device_frames: usize, device_rate: u32) -> usize {
 /// 正在出声的采样在累积轴（48k 域）上的位置。
 ///
 /// `read_cursor` 数的是从 ring 读走的 48k 帧，`padding_device_frames` 是端点里还压着
-/// 的**设备帧**——必须先折回 48k 域再减。这一步与 `prefill_silence_frames` 当年抽出的
+/// 的帧数——但那是设备帧，必须先折回 48k 域再减。这一步与 `prefill_silence_frames` 当年抽出的
 /// 理由相同：「用设备帧数还是 48k 帧数」内嵌在循环里无人看守时选错过一次，而这里
 /// 选错的后果是误差整体偏移一个端点缓冲长度（本机 22 毫秒），且各设备不同，
 /// 直接变成机间错位。padding 大于读游标（刚起播、硬重置刚过）时饱和到 0，
