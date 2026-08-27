@@ -565,6 +565,74 @@ namespace MediaIsland.Models
             }
         }
 
+        /// <summary>
+        /// 手动偏移的区间下界，毫秒。±500 够覆盖蓝牙链路常见的 100 到 200 毫秒并留余量；
+        /// 再往外的值更可能是误操作，而一个夸张的偏移会把对齐推到明显错位。
+        /// </summary>
+        public const int MinManualOffsetMs = -500;
+
+        /// <summary>手动偏移的区间上界，毫秒。取值理由见 <see cref="MinManualOffsetMs"/>。</summary>
+        public const int MaxManualOffsetMs = 500;
+
+        // 设置页 NumericUpDown 用的 decimal 镜像，理由同 PlaybackBufferMsMinimum：
+        // {x:Static} 不做字面量类型转换，由 int 常量推导保证区间只有一个真值源。
+        public const decimal ManualOffsetMsMinimum = MinManualOffsetMs;
+        public const decimal ManualOffsetMsMaximum = MaxManualOffsetMs;
+
+        private Dictionary<string, int> _mediaLinkManualOffsetsMs = new(StringComparer.Ordinal);
+
+        /// <summary>
+        /// 按输出设备记忆的手动出声偏移，毫秒。键是系统渲染端点 ID。
+        ///
+        /// 为什么按设备：偏移补的是自动估计看不见的硬件尾段（DAC、功放、蓝牙），
+        /// 那是设备的属性而不是这台机器的属性——蓝牙耳机调好的值对音箱就是错的。
+        /// 符号约定跟 native 的 actual 侧：正值表示这台设备真实出声比自动估计更晚。
+        ///
+        /// 读写走 <see cref="GetManualOffsetMs"/> / <see cref="SetManualOffsetMs"/>；
+        /// 属性本身只为序列化暴露。
+        /// </summary>
+        public Dictionary<string, int> MediaLinkManualOffsetsMs
+        {
+            get => _mediaLinkManualOffsetsMs;
+            set
+            {
+                _mediaLinkManualOffsetsMs = value ?? new(StringComparer.Ordinal);
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>
+        /// 读一个设备的手动偏移。未知设备（含拿不到设备标识）取 0，不取上一个设备的值——
+        /// 换设备后沿用旧偏移是一种会让人以为「校准丢了」的错。
+        ///
+        /// 读侧也夹紧：配置文件是整个字典一次性反序列化进来的，不走逐项 setter，
+        /// 手改出界的值只有这里能拦。
+        /// </summary>
+        public int GetManualOffsetMs(string? deviceId) =>
+            !string.IsNullOrEmpty(deviceId)
+            && _mediaLinkManualOffsetsMs.TryGetValue(deviceId, out var ms)
+                ? Math.Clamp(ms, MinManualOffsetMs, MaxManualOffsetMs)
+                : 0;
+
+        /// <summary>
+        /// 写一个设备的手动偏移。越界夹紧而不拒绝，理由同
+        /// <see cref="MediaLinkPlaybackBufferMs"/>；夹紧后同值早退，避免空发通知。
+        /// 拿不到设备标识时不写——没有键可挂，写进一个编造的键等于发明平行设备概念。
+        /// </summary>
+        public void SetManualOffsetMs(string? deviceId, int valueMs)
+        {
+            if (string.IsNullOrEmpty(deviceId)) return;
+            var clamped = Math.Clamp(valueMs, MinManualOffsetMs, MaxManualOffsetMs);
+            if (_mediaLinkManualOffsetsMs.TryGetValue(deviceId, out var current)
+                && current == clamped)
+            {
+                return;
+            }
+
+            _mediaLinkManualOffsetsMs[deviceId] = clamped;
+            OnPropertyChanged(nameof(MediaLinkManualOffsetsMs));
+        }
+
     }
     public class MediaSource : ObservableObject
     {
