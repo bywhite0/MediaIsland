@@ -1,3 +1,4 @@
+using MediaIsland.Models;
 using MediaIsland.Services.Audio;
 using MediaIsland.Services.Audio.Playback;
 using MediaIsland.Services.MediaLink;
@@ -88,14 +89,26 @@ public class MediaLinkAlignmentCoordinatorTests
         public (bool Available, long OffsetTicks) WireOffset { get; set; } = (true, 4242);
         public bool Enabled { get; set; } = true;
 
+        /// <summary>当前播放设备。可切换，模拟用户换默认输出设备。</summary>
+        public string? DeviceId { get; set; } = "dev-a";
+
+        /// <summary>
+        /// 手动偏移走真实的 PluginSettings 而不是假委托：生产接线就是
+        /// settings.GetManualOffsetMs，这里复用同一条组合，「未知设备取 0」
+        /// 之类的规则才是被这条链实测过，而不是被测试自己抄了一遍。
+        /// </summary>
+        public PluginSettings Settings { get; } = new();
+
         public Harness()
         {
-            Playback = new AudioPlaybackService(new NullSubmitter(), Renderer);
+            Playback = new AudioPlaybackService(
+                new NullSubmitter(), Renderer, deviceIdProvider: () => DeviceId);
             Coordinator = new MediaLinkAlignmentCoordinator(
                 Playback,
                 () => Declaration,
                 () => WireOffset,
                 () => Enabled,
+                deviceId => Settings.GetManualOffsetMs(deviceId),
                 Logger);
         }
     }
@@ -279,5 +292,68 @@ public class MediaLinkAlignmentCoordinatorTests
 
         Assert.False(harness.Renderer.LastAlignment!.Value.Enabled);
         Assert.Empty(harness.Logger.Entries);
+    }
+
+    [Fact]
+    public void TheManualOffset_ForTheCurrentDevice_ReachesTheRendererInTicks()
+    {
+        // 判据按 actual 侧的符号约定写（native 文档是权威：正 = 这台设备真实出声
+        // 比自动估计更晚，加在 actual_play_ticks 上，误差随之同量平移）——设置里的
+        // 正毫秒必须原符号、原数量地变成渲染器收到的正 100ns。期望值用字面量，
+        // 取反或错乘一个量级都在此处红。
+        var harness = new Harness();
+        harness.Settings.SetManualOffsetMs("dev-a", 120);
+        harness.Renderer.Stats = StartedStats();
+        harness.Playback.Configure(enabled: true, targetBufferMs: 200);
+
+        harness.Coordinator.Recompute();
+
+        Assert.Equal(1_200_000L, harness.Renderer.LastAlignment!.Value.ManualOffsetTicks);
+    }
+
+    [Fact]
+    public void SwitchingDevices_ReadsTheNewDevicesOffset_WithoutARestart()
+    {
+        // per-device 的意义在换设备那一刻：新设备读到自己的值，没调过的设备读 0
+        // 而不是上一个设备的值——沿用旧偏移看起来就像「校准丢了」。
+        // 全程不得停播重启：偏移走 ConfigureAlignment 播放中即时生效那条路。
+        var harness = new Harness();
+        harness.Settings.SetManualOffsetMs("dev-a", 120);
+        harness.Settings.SetManualOffsetMs("dev-b", -80);
+        harness.Renderer.Stats = StartedStats();
+        harness.Playback.Configure(enabled: true, targetBufferMs: 200);
+
+        harness.Coordinator.Recompute();
+        Assert.Equal(1_200_000L, harness.Renderer.LastAlignment!.Value.ManualOffsetTicks);
+        var startsBefore = harness.Renderer.StartCount;
+
+        harness.DeviceId = "dev-b";
+        harness.Coordinator.Recompute();
+        Assert.Equal(-800_000L, harness.Renderer.LastAlignment!.Value.ManualOffsetTicks);
+
+        harness.DeviceId = "dev-never-tuned";
+        harness.Coordinator.Recompute();
+        Assert.Equal(0L, harness.Renderer.LastAlignment!.Value.ManualOffsetTicks);
+
+        Assert.Equal(startsBefore, harness.Renderer.StartCount);
+        Assert.Equal(0, harness.Renderer.StopCount);
+        Assert.True(harness.Playback.IsPlaying);
+    }
+
+    [Fact]
+    public void AnInfeasibleBudget_StillDeliversTheManualOffset()
+    {
+        // 手动偏移是当前设备的硬件尾段这个事实，不是可行性结论：判不过归零的是
+        // D 与 offset（外环的目标），设备的尾段不因预算不够而改变。native 的误差
+        // 计算被 offset 可用性闸住，判不过时这个值无处施力，留着它只是让恢复对齐
+        // 的那一刻少一次参数摆动。
+        var harness = new Harness { Declaration = Declared(70) };
+        harness.Settings.SetManualOffsetMs("dev-a", 120);
+        harness.Renderer.Stats = StartedStats();
+        harness.Playback.Configure(enabled: true, targetBufferMs: 200);
+
+        harness.Coordinator.Recompute();
+
+        Assert.Equal((true, 0L, 0L, 1_200_000L), harness.Renderer.LastAlignment);
     }
 }

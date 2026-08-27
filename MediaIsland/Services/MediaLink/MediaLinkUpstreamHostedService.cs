@@ -207,12 +207,14 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     /// 播放侧据此拿到新深度并重启。把两者收在同一个信号里，比多接一条边少一处可漏的。
     ///
     /// 对齐开关同理搭这个信号的车：它既不影响订阅也不影响播放启停，要的只是让对齐
-    /// 协调方重算一次并把新开关下发给渲染器。
+    /// 协调方重算一次并把新开关下发给渲染器。手动偏移也是——用户拿耳朵调它，
+    /// 播放中每一步都要即时可闻，走的正是协调方重算下发那条既有路。
     /// </summary>
     internal static bool AffectsAudioRouting(string? propertyName) =>
         propertyName is nameof(PluginSettings.MediaLinkPlaybackIsEnabled)
             or nameof(PluginSettings.MediaLinkPlaybackBufferMs)
-            or nameof(PluginSettings.MediaLinkAlignmentIsEnabled);
+            or nameof(PluginSettings.MediaLinkAlignmentIsEnabled)
+            or nameof(PluginSettings.MediaLinkManualOffsetsMs);
 
     private void DebouncedReload()
     {
@@ -293,6 +295,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
                         ? (true, offsetTicks)
                         : (false, 0L),
                     () => _settingsFactory().MediaLinkAlignmentIsEnabled,
+                    deviceId => _settingsFactory().GetManualOffsetMs(deviceId),
                     _loggerFactory?.CreateLogger<MediaLinkAlignmentCoordinator>());
                 client.AudioClockStateChanged += OnAudioClockStateChanged;
             }

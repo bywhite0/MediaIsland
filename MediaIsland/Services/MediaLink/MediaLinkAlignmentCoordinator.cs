@@ -5,8 +5,9 @@ using Microsoft.Extensions.Logging;
 namespace MediaIsland.Services.MediaLink;
 
 /// <summary>
-/// 有状态的对齐协调方：把「服务端声明的预算」「本机设备事实」「对时结果」「用户开关」
-/// 四路输入捏成一次判定，并把结论下发给播放侧。它是 <see cref="MediaLinkAlignmentPolicy"/>
+/// 有状态的对齐协调方：把「服务端声明的预算」「本机设备事实」「对时结果」「用户开关
+/// 与当前设备的手动偏移」几路输入捏成一次判定，并把结论下发给播放侧。它是
+/// <see cref="MediaLinkAlignmentPolicy"/>
 /// 唯一的生产调用点——判定是纯函数，谁在什么时候拿什么喂它、结论去哪，都在这里。
 ///
 /// 触发全靠外部：hello 到达或重发、每轮对时探测、音源仲裁变化，都各自调一次
@@ -22,6 +23,7 @@ internal sealed class MediaLinkAlignmentCoordinator
     private readonly Func<MediaLinkServerDeclaration> _declaration;
     private readonly Func<(bool Available, long OffsetTicks)> _wireOffset;
     private readonly Func<bool> _alignmentEnabled;
+    private readonly Func<string?, int> _manualOffsetMs;
     private readonly ILogger? _logger;
     private readonly object _gate = new();
 
@@ -37,12 +39,14 @@ internal sealed class MediaLinkAlignmentCoordinator
         Func<MediaLinkServerDeclaration> declaration,
         Func<(bool Available, long OffsetTicks)> wireOffset,
         Func<bool> alignmentEnabled,
+        Func<string?, int> manualOffsetMs,
         ILogger? logger = null)
     {
         _playback = playback ?? throw new ArgumentNullException(nameof(playback));
         _declaration = declaration ?? throw new ArgumentNullException(nameof(declaration));
         _wireOffset = wireOffset ?? throw new ArgumentNullException(nameof(wireOffset));
         _alignmentEnabled = alignmentEnabled ?? throw new ArgumentNullException(nameof(alignmentEnabled));
+        _manualOffsetMs = manualOffsetMs ?? throw new ArgumentNullException(nameof(manualOffsetMs));
         _logger = logger;
     }
 
@@ -84,6 +88,14 @@ internal sealed class MediaLinkAlignmentCoordinator
             facts.MinTargetMs,
             offsetAvailable);
 
+        // 手动偏移与 enabled 一样无条件下发，不夹在 aligned 后面：它是当前设备的
+        // 硬件尾段这个事实，不是可行性结论，预算装不装得下都不改变它。native 只在
+        // 误差计算里用它，而那段被 offset 可用性闸住——判不过时它无处施力，
+        // 归零它只是让恢复对齐的那一刻多一次参数摆动。
+        // 毫秒换 100ns 与 D 同式；±500ms 的区间在设置层已夹紧，这里不会溢出。
+        var manualOffsetTicks = _manualOffsetMs(_playback.CurrentPlaybackDeviceId)
+            * MonotonicClock.TicksPerMs100Ns;
+
         // D 与 offset 只在判定通过时下发。判不过还带着值，外环就会拿着一个已被
         // 判死的目标继续走步——那正是「假装对齐」的形态。上界已在判定里挡过，
         // 这里换算 100ns 不会溢出。
@@ -94,7 +106,7 @@ internal sealed class MediaLinkAlignmentCoordinator
                 ? budgetMs * MonotonicClock.TicksPerMs100Ns
                 : 0,
             aligned ? offsetTicks : 0,
-            manualOffsetTicks: 0);
+            manualOffsetTicks);
 
         LogTransition(enabled, facts.HasStarted, decision);
     }

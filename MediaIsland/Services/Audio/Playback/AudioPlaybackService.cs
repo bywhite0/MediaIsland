@@ -27,6 +27,7 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
 
     private readonly IAudioFrameSubmitter _inner;
     private readonly IAudioRenderer _renderer;
+    private readonly Func<string?> _deviceIdProvider;
     private readonly ILogger? _logger;
     private readonly object _gate = new();
 
@@ -59,13 +60,27 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     private volatile bool _playing;
     private bool _disposed;
 
-    public AudioPlaybackService(IAudioFrameSubmitter inner, IAudioRenderer renderer, ILogger? logger = null)
+    public AudioPlaybackService(
+        IAudioFrameSubmitter inner,
+        IAudioRenderer renderer,
+        ILogger? logger = null,
+        Func<string?>? deviceIdProvider = null)
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
+        _deviceIdProvider = deviceIdProvider ?? DefaultRenderEndpoint.TryGetId;
         _logger = logger;
         _renderer.FramePlayed += OnFramePlayed;
     }
+
+    /// <summary>
+    /// 当前播放设备的标识，per-device 手动偏移用它作键；拿不到时为 null（当未知设备）。
+    ///
+    /// 语义是「渲染器出声的那个端点」。native 起播时恒绑系统默认渲染端点且不回传 ID，
+    /// 故这里按同一条规则取默认端点的 ID，两侧指向同一个端点；播放中换默认设备的
+    /// 短暂不一致窗口见 <see cref="DefaultRenderEndpoint"/>。
+    /// </summary>
+    public string? CurrentPlaybackDeviceId => _deviceIdProvider();
 
     /// <summary>真的在出声。请求开启但 native 不可用时为假。</summary>
     public bool IsPlaying => _playing;
