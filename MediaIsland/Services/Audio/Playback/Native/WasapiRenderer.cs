@@ -28,6 +28,19 @@ internal sealed class WasapiRenderer : IAudioRenderer
     private volatile bool _running;
     private bool _disposed;
 
+    /// <summary>
+    /// 暂存的对齐参数。曾经零句柄时直接丢弃：句柄在首次 <see cref="Start"/> 内才创建，
+    /// 于是进程首个播放会话起播前下发的对齐参数无声消失，而 48kHz 端点建不建重采样器
+    /// 恰在 native 起播那一刻按 enabled 定型——该会话从此没有执行器，且没有任何告警。
+    /// 存下来由 Start 在创建句柄之后、调 native 起播之前补发，接口契约
+    /// 「Start 前至少调用一次即生效」才对首个会话也成立。全部在 <see cref="_gate"/> 下读写。
+    /// </summary>
+    private bool _alignmentStored;
+    private bool _alignmentEnabled;
+    private long _alignmentDTicks;
+    private long _alignmentOffsetTicks;
+    private long _alignmentManualOffsetTicks;
+
     public WasapiRenderer(ILogger? logger = null)
     {
         _logger = logger;
@@ -48,18 +61,40 @@ internal sealed class WasapiRenderer : IAudioRenderer
         // 方法，规则见 IAudioRenderer.FramePlayed。
         lock (_gate)
         {
-            if (_disposed || _handle == nint.Zero)
+            if (_disposed)
             {
                 return;
             }
 
-            // 失败不抛也不停播：对齐是增强项，拿不到它应当退回非对齐而不是断声。
-            var status = AudioRenderNative.NativeMethods.RenderSetAlignment(
-                _handle, enabled, dTicks, offsetTicks, manualOffsetTicks);
-            if (status != 0)
+            _alignmentStored = true;
+            _alignmentEnabled = enabled;
+            _alignmentDTicks = dTicks;
+            _alignmentOffsetTicks = offsetTicks;
+            _alignmentManualOffsetTicks = manualOffsetTicks;
+
+            // 句柄还没建时只暂存，由 Start 补发；已建则即时下发（播放中更新 offset 的路径）。
+            if (_handle != nint.Zero)
             {
-                _logger?.LogDebug("[音频:播放] 下发对齐参数失败，状态 {Status}，按不对齐继续。", status);
+                PushAlignmentToNativeUnderGate();
             }
+        }
+    }
+
+    /// <summary>
+    /// 把暂存的对齐参数下发给 native。要求持有 <see cref="_gate"/> 且句柄非零。
+    /// 失败不抛也不停播：对齐是增强项，拿不到它应当退回非对齐而不是断声。
+    /// </summary>
+    private void PushAlignmentToNativeUnderGate()
+    {
+        var status = AudioRenderNative.NativeMethods.RenderSetAlignment(
+            _handle,
+            _alignmentEnabled,
+            _alignmentDTicks,
+            _alignmentOffsetTicks,
+            _alignmentManualOffsetTicks);
+        if (status != 0)
+        {
+            _logger?.LogDebug("[音频:播放] 下发对齐参数失败，状态 {Status}，按不对齐继续。", status);
         }
     }
 
@@ -112,6 +147,13 @@ internal sealed class WasapiRenderer : IAudioRenderer
             }
 
             EnsureHandleCreated();
+
+            // 暂存参数的补发点。必须在 RenderStart 之前：48kHz 端点建不建重采样器
+            // 在渲染线程起步那一刻按 enabled 定型，起播之后再发只能改数值，追不回执行器。
+            if (_alignmentStored)
+            {
+                PushAlignmentToNativeUnderGate();
+            }
 
             var status = AudioRenderNative.NativeMethods.RenderStart(_handle, (uint)targetBufferMs);
             if (status != AudioRenderNative.StatusOk)
