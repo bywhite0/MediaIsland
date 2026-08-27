@@ -262,4 +262,23 @@ public class PluginSettingsTests
         settings.SetManualOffsetMs(null, 60);
         Assert.Single(raised);
     }
+
+    [Fact]
+    public void SettingAManualOffset_ReplacesTheDictionary_InsteadOfMutatingIt()
+    {
+        // 写时复制的可观测性质：写落在新字典上、原子换引用，写前取得的引用
+        // 此后一个字都不再变。读侧（探测线程）无锁查字典靠的就是这条——
+        // 原地写让并发读可能撞上桶链中途态，TryGetValue 死循环挂死探测线程，
+        // try/catch 兜不住。
+        var settings = new PluginSettings();
+        settings.SetManualOffsetMs("dev-a", 100);
+        var before = settings.MediaLinkManualOffsetsMs;
+
+        settings.SetManualOffsetMs("dev-b", 200);
+
+        Assert.NotSame(before, settings.MediaLinkManualOffsetsMs);
+        Assert.False(before.ContainsKey("dev-b"));
+        Assert.Equal(100, settings.GetManualOffsetMs("dev-a"));
+        Assert.Equal(200, settings.GetManualOffsetMs("dev-b"));
+    }
 }

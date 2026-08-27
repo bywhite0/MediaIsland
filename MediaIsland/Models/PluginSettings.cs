@@ -607,29 +607,44 @@ namespace MediaIsland.Models
         ///
         /// 读侧也夹紧：配置文件是整个字典一次性反序列化进来的，不走逐项 setter，
         /// 手改出界的值只有这里能拦。
+        ///
+        /// 本方法在探测线程上被对齐重算调用，而写在 UI 线程——先把引用取成本地快照
+        /// 再查：写侧是写时复制换引用（见 <see cref="SetManualOffsetMs"/>），
+        /// 快照上的读永远面对一个不再变动的完整字典。
         /// </summary>
-        public int GetManualOffsetMs(string? deviceId) =>
-            !string.IsNullOrEmpty(deviceId)
-            && _mediaLinkManualOffsetsMs.TryGetValue(deviceId, out var ms)
+        public int GetManualOffsetMs(string? deviceId)
+        {
+            var offsets = _mediaLinkManualOffsetsMs;
+            return !string.IsNullOrEmpty(deviceId) && offsets.TryGetValue(deviceId, out var ms)
                 ? Math.Clamp(ms, MinManualOffsetMs, MaxManualOffsetMs)
                 : 0;
+        }
 
         /// <summary>
         /// 写一个设备的手动偏移。越界夹紧而不拒绝，理由同
         /// <see cref="MediaLinkPlaybackBufferMs"/>；夹紧后同值早退，避免空发通知。
         /// 拿不到设备标识时不写——没有键可挂，写进一个编造的键等于发明平行设备概念。
+        ///
+        /// 写时复制而不是原地写：读侧在探测线程上无锁查字典，Dictionary 被并发原地
+        /// 写时读到中途态的失败形态不止抛异常——桶链可成环，TryGetValue 死循环把
+        /// 探测线程永久挂死，任何 try/catch 都兜不住。拷到新字典再换引用，引用替换
+        /// 是原子的，旧引用上的读最迟下一轮重算跟上新值。写在 UI 线程上是串行的，
+        /// 拷贝之间不互踩；字典最多几十个端点，逐写一拷不构成负担。
         /// </summary>
         public void SetManualOffsetMs(string? deviceId, int valueMs)
         {
             if (string.IsNullOrEmpty(deviceId)) return;
             var clamped = Math.Clamp(valueMs, MinManualOffsetMs, MaxManualOffsetMs);
-            if (_mediaLinkManualOffsetsMs.TryGetValue(deviceId, out var current)
-                && current == clamped)
+            var current = _mediaLinkManualOffsetsMs;
+            if (current.TryGetValue(deviceId, out var existing) && existing == clamped)
             {
                 return;
             }
 
-            _mediaLinkManualOffsetsMs[deviceId] = clamped;
+            _mediaLinkManualOffsetsMs = new Dictionary<string, int>(current, StringComparer.Ordinal)
+            {
+                [deviceId] = clamped
+            };
             OnPropertyChanged(nameof(MediaLinkManualOffsetsMs));
         }
 
