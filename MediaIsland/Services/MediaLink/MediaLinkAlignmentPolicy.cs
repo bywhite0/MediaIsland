@@ -1,8 +1,9 @@
 namespace MediaIsland.Services.MediaLink;
 
 /// <summary>
-/// 为什么没对齐。三种原因的排查方向完全不同，故它们必须可分——合成一条
-/// 「对齐不可用」的消息，用户就无从知道该去检查服务端版本、网络、还是自己的设备。
+/// 为什么没对齐。四种原因的排查方向完全不同，故它们必须可分——合成一条
+/// 「对齐不可用」的消息，用户就无从知道该去检查服务端版本、发送端配置、
+/// 网络、还是自己的设备。
 /// </summary>
 internal enum MediaLinkAlignmentState
 {
