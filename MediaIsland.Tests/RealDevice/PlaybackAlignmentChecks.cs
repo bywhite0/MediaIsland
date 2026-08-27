@@ -80,13 +80,10 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         Assert.True(minMs <= 80, $"native 目标深度下限已变为 {minMs}ms，稳态等待的时长推导需重推");
         Assert.True(maxMs >= minMs + 50, $"深度区间 [{minMs},{maxMs}] 给外环的上行行程不足");
 
-        // 引晶：SetAlignment 对零句柄早退，而句柄在首次 Start 里才创建，
-        // 首次起播前下发的对齐参数会被静默丢弃——48k 端点那一个会话便没有执行器。
-        // 先起停一次让句柄存在，再下发对齐、再正式起播。
-        playback.Configure(enabled: true, targetBufferMs: targetMs);
-        Assert.True(playback.IsPlaying, $"引晶起播失败：{playback.LastError}");
-        playback.Configure(enabled: false, targetBufferMs: targetMs);
-
+        // 对齐参数在本实例首次 Start 之前下发——这正是曾被零句柄丢弃缺陷吞掉的
+        // 自然路径（渲染器暂存参数、起播时先补发再 render_start），本判据即其回归判据：
+        // 丢弃回归时 offset 永远不可用，下面的地基断言先红。
+        //
         // offset 传 1 tick 而不是 0：本机对时的真实 offset 就是零，但 native 侧
         // offset_available 用「非零」表示可用，传 0 等于宣告对时结果还没到，外环不走。
         // 1 tick = 100ns，对毫秒级判据是零。
@@ -302,6 +299,9 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         // 该形态不存在，跳过并留痕。
         if (closed.DeviceSampleRate == 48_000 && closed.DeviceClockAvailable)
         {
+            // 台账核对用的固定格式行，与跳过分支同形。
+            output.WriteLine(
+                $"无执行器段=已执行 端点采样率={closed.DeviceSampleRate} 设备时钟可用={closed.DeviceClockAvailable}");
             playback.ConfigureAlignment(
                 enabled: true, dTicks: 500 * TicksPerMs, offsetTicks: 1, manualOffsetTicks: 0);
             await Task.Delay(1_500);
@@ -325,8 +325,11 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         }
         else
         {
+            // 台账核对用的固定格式行，与已执行分支同形；端点事实跟在行内，
+            // 静默降级从此在输出里留痕。
             output.WriteLine(
-                $"端点 {closed.DeviceSampleRate}Hz（时钟可用 {closed.DeviceClockAvailable}）：起播即有重采样器或无时钟，无执行器形态不可构造，该段跳过");
+                $"无执行器段=跳过 端点采样率={closed.DeviceSampleRate} 设备时钟可用={closed.DeviceClockAvailable}");
+            output.WriteLine("起播即有重采样器或无设备时钟，无执行器形态在本端点不可构造");
         }
 
         await sine.StopAsync(CancellationToken.None);
@@ -348,16 +351,18 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
 
     private async Task<double> SampleRingMsAsync(WasapiRenderer renderer, int seconds)
     {
-        var samples = new List<long>();
+        var samples = new List<double>();
         var clock = Stopwatch.StartNew();
         while (clock.Elapsed.TotalSeconds < seconds)
         {
-            samples.Add(renderer.ReadStats().RingFrames);
+            // 折算收在 AudioRenderStats.RingMs 一处（按传输采样率），这里不再写换算式：
+            // 同一个 48000 散成两份各自为真的声明，改一处漏一处不会让任何判据变红。
+            samples.Add(renderer.ReadStats().RingMs);
             await Task.Delay(50);
         }
 
         samples.Sort();
-        return samples[samples.Count / 2] * 1_000.0 / 48_000;
+        return samples[samples.Count / 2];
     }
 
     private static double MedianMs(List<long> errorsUs)
