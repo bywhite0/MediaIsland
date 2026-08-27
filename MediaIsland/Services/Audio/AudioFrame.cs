@@ -14,12 +14,20 @@ namespace MediaIsland.Services.Audio;
 /// 本块是静音。仍携带完整长度的零值 PCM 而非空数组——接收端据此可跳过 FFT 计算，
 /// 但时间轴必须照常推进，否则可视化会冻结在最后一帧波形上而非归零。
 /// </param>
+/// <param name="SenderTimelineTicks100Ns">
+/// 本块在发送端时间轴上的采样时刻，100ns 单位，基准是发送端的 Unix 墙钟（1970 起算）。
+/// 0 表示无时刻——本机采集与老对端都落在这里，播放侧据此走不带时间轴的原路径。
+///
+/// 与 <paramref name="QpcPosition100Ns"/> 是两条不同的轴：那是本机单调钟，这是对端墙钟。
+/// 两轴之间的映射由对时层估计，不在本类型的职责内；这里只负责把时刻原样带到播放侧。
+/// </param>
 public readonly record struct AudioFrame(
     byte[] Pcm,
     long QpcPosition100Ns,
     int SampleRate,
     int Channels,
-    bool IsSilent)
+    bool IsSilent,
+    long SenderTimelineTicks100Ns = 0)
 {
     /// <summary>每声道采样数。i16 故每样本 2 字节。</summary>
     public int FrameCount => Channels == 0 ? 0 : Pcm.Length / (Channels * sizeof(short));

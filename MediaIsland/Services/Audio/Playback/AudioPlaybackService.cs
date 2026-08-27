@@ -242,8 +242,9 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
                 return;
             }
 
-            // 时刻留到对齐接线时透传。此刻恒传 0，播放逐字走原路径。
-            _renderer.Push(frame.Pcm, 0);
+            // 发送端时刻原样透传。要不要走时间轴由 native 侧判：时刻非零且对齐开着才走，
+            // 故对齐关闭或帧不带时刻（本机采集、老对端）时播放仍逐字走原路径。
+            _renderer.Push(frame.Pcm, frame.SenderTimelineTicks100Ns);
             return;
         }
 

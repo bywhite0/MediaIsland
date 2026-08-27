@@ -53,7 +53,7 @@ public class AudioPlaybackServiceTests
         public bool IsAvailable { get; set; } = true;
         public string? FailureReason { get; set; }
         public bool ThrowOnStart { get; set; }
-        public List<byte[]> Pushed { get; } = [];
+        public List<(byte[] Pcm, long SenderTicks)> Pushed { get; } = [];
         public int StartCount { get; private set; }
         public int StopCount { get; private set; }
         public int? LastTargetMs { get; private set; }
@@ -90,7 +90,7 @@ public class AudioPlaybackServiceTests
 
         public void Stop() => StopCount++;
 
-        public void Push(byte[] pcm, long senderTicks) => Pushed.Add(pcm);
+        public void Push(byte[] pcm, long senderTicks) => Pushed.Add((pcm, senderTicks));
 
         /// <summary>可写：Task 4 与 Task 5 的判据要让它返回特定统计。</summary>
         public AudioRenderStats Stats { get; set; }
@@ -398,6 +398,39 @@ public class AudioPlaybackServiceTests
 
         Assert.Single(renderer.Pushed);
         Assert.Equal(0, service.RejectedFrameCount);
+    }
+
+    [Fact]
+    public void Submit_PassesTheSenderTimelineThroughToTheRenderer()
+    {
+        // 发送端时刻是对齐播放算目标出声时刻的输入。这里若被吞成 0（「本帧没有时刻」
+        // 的哨兵），native 侧永远走不带时间轴的原路径——声音照出、判据照绿，只是永远对不齐。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.True(service.IsPlaying);
+
+        service.Submit(new AudioFrame(
+            new byte[8], 0, 48_000, 2, IsSilent: false,
+            SenderTimelineTicks100Ns: 17_000_000_000_000_000));
+
+        Assert.Equal(17_000_000_000_000_000, Assert.Single(renderer.Pushed).SenderTicks);
+    }
+
+    [Fact]
+    public void Submit_WithoutASenderTimeline_PushesTheNoTimestampSentinel()
+    {
+        // 本机采集与老对端的帧不带时刻。0 必须原样到达渲染器——它是「走原路径」的开关，
+        // 在这里被替换成任何别的值都会让不该走时间轴的帧走进时间轴。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        service.Submit(new AudioFrame(new byte[8], 0, 48_000, 2, IsSilent: false));
+
+        Assert.Equal(0, Assert.Single(renderer.Pushed).SenderTicks);
     }
 
     [Fact]

@@ -98,12 +98,19 @@ public sealed class MediaLinkAudioReceiver
         // QPC 填本地接收时刻，不用帧头的 capturedAtMs：后者是上游机器的时钟，
         // 跨机无意义。而下游只用它判断帧的新鲜度（本地语义），
         // 接收侧的「采样时刻」本就是本机对这块 PCM 的第一次观测。
+        //
+        // capturedAtMs 另走发送端时间轴那条参数：对齐播放要拿它算目标出声时刻。
+        // 非正值当「无时刻」传 0——0 是播放侧约定的「本帧没有时刻」哨兵，
+        // 而把一个非正的墙钟读数换算成时刻会让播放侧拿着编造的值走时间轴。
         _submitter.Submit(new AudioFrame(
             pcm.ToArray(),
             _nowQpc100Ns(),
             MediaLinkProtocol.AudioSampleRate,
             MediaLinkProtocol.AudioChannels,
-            header.Flags.HasFlag(MediaLinkAudioFrameFlags.Silent)));
+            header.Flags.HasFlag(MediaLinkAudioFrameFlags.Silent),
+            SenderTimelineTicks100Ns: header.CapturedAtMs > 0
+                ? header.CapturedAtMs * MonotonicClock.TicksPerMs100Ns
+                : 0));
 
         return MediaLinkAudioRejectReason.None;
     }

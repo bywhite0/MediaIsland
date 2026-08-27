@@ -105,6 +105,39 @@ public class MediaLinkAudioReceiverTests
     }
 
     [Fact]
+    public void SubmittedFrame_CarriesTheSenderTimelineInTicks()
+    {
+        var receiver = NewReceiver();
+
+        receiver.Handle(Encode(Token, Pcm(64)));
+
+        // 发送端时间轴走另一条参数：毫秒转 100ns 是乘一万，这里用字面量钉死换算本身——
+        // 换算若与生产侧共用一处声明，改错一处不会让任何判据变红。
+        Assert.Equal(UpstreamCapturedAtMs * 10_000, _submitter.Frames[0].SenderTimelineTicks100Ns);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void NonPositiveCapturedAt_YieldsTheNoTimestampSentinel(long capturedAtMs)
+    {
+        var receiver = NewReceiver();
+        var header = new MediaLinkAudioFrameHeader(
+            StartPositionMs: 5000,
+            CapturedAtMs: capturedAtMs,
+            ServerTimeMs: UpstreamCapturedAtMs,
+            Seq: 1,
+            TrackToken: Token,
+            Flags: MediaLinkAudioFrameFlags.None);
+
+        receiver.Handle(MediaLinkAudioFrame.Encode(in header, Pcm(64)));
+
+        // 0 是播放侧约定的「本帧没有时刻」。非正的墙钟读数不换算成时刻——
+        // 换算出来的负 tick 在播放侧看着像一个合法时刻，会被拿去走时间轴。
+        Assert.Equal(0, _submitter.Frames[0].SenderTimelineTicks100Ns);
+    }
+
+    [Fact]
     public void SilentFlag_PropagatesToTheFrame()
     {
         var receiver = NewReceiver();

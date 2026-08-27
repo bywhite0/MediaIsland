@@ -1,3 +1,4 @@
+using MediaIsland.Services.Audio.Playback.Native;
 using MediaIsland.Services.MediaLink;
 using MediaIsland.Services.MediaLink.Protocol;
 using Xunit;
@@ -6,8 +7,11 @@ namespace MediaIsland.Tests.MediaLink;
 
 public class MediaLinkAlignmentPolicyTests
 {
-    /// <summary>native 侧 MIN_TARGET_MS 的对端值。</summary>
-    private const int MinTargetMs = 50;
+    /// <summary>
+    /// native 侧 MIN_TARGET_MS，经 FFI 导出取得。不在托管侧抄一份 50：
+    /// 同一个数分散成两份各自为真的声明时，改一处而漏另一处不会让任何判据变红。
+    /// </summary>
+    private static readonly int MinTargetMs = (int)WasapiRenderer.TargetMsBounds().MinMs;
 
     private static MediaLinkAlignmentDecision Decide(
         bool capability = true,
@@ -53,12 +57,12 @@ public class MediaLinkAlignmentPolicyTests
     [Fact]
     public void ABudgetThatCannotHoldTheMinimumBuffer_FallsBack()
     {
-        // 预算 55、设备延迟 10，余量 45 装不下最小缓冲 50。
-        var decision = Decide(budgetMs: 55, deviceLatencyMs: 10);
+        // 预算 = 下限 + 5、设备延迟 10：余量比最小缓冲差 5 毫秒，装不下。
+        var decision = Decide(budgetMs: MinTargetMs + 5, deviceLatencyMs: 10);
 
         Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, decision.State);
         // 边界成对：余量恰等于最小缓冲时要对齐。
-        Assert.True(Decide(budgetMs: 60, deviceLatencyMs: 10).IsAligned);
+        Assert.True(Decide(budgetMs: MinTargetMs + 10, deviceLatencyMs: 10).IsAligned);
     }
 
     [Fact]
@@ -126,7 +130,7 @@ public class MediaLinkAlignmentPolicyTests
         // 时钟没对上是唯一会自己好转的一条，故它排在最后。排在前面的话，一台预算
         // 根本不够的机器在刚连上那几秒会报「还没对上时钟」——那条提示指向等待，
         // 于是用户就一直等下去。
-        var decision = Decide(budgetMs: 55, deviceLatencyMs: 10, offsetAvailable: false);
+        var decision = Decide(budgetMs: MinTargetMs + 5, deviceLatencyMs: 10, offsetAvailable: false);
         Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, decision.State);
 
         var noCapability = Decide(capability: false, budgetMs: null, offsetAvailable: false);
@@ -148,7 +152,7 @@ public class MediaLinkAlignmentPolicyTests
             Decide().Reason,
             Decide(capability: false).Reason,
             Decide(budgetMs: null).Reason,
-            Decide(budgetMs: 55).Reason,
+            Decide(budgetMs: MinTargetMs + 5).Reason,
             Decide(budgetMs: MediaLinkAlignmentPolicy.MaxBudgetMs + 1).Reason,
             Decide(offsetAvailable: false).Reason
         };
@@ -157,10 +161,10 @@ public class MediaLinkAlignmentPolicyTests
         Assert.All(reasons, reason => Assert.False(string.IsNullOrWhiteSpace(reason)));
 
         // 预算不足那条要带上三个数，否则用户不知道该调哪一个。
-        var tooSmall = Decide(budgetMs: 55, deviceLatencyMs: 10).Reason;
-        Assert.Contains("55", tooSmall);
+        var tooSmall = Decide(budgetMs: MinTargetMs + 5, deviceLatencyMs: 10).Reason;
+        Assert.Contains((MinTargetMs + 5).ToString(), tooSmall);
         Assert.Contains("10", tooSmall);
-        Assert.Contains("50", tooSmall);
+        Assert.Contains(MinTargetMs.ToString(), tooSmall);
     }
 
     [Fact]
@@ -169,7 +173,7 @@ public class MediaLinkAlignmentPolicyTests
         // server.hello 可以在连接存活期间重发并改 D，故判定不得缓存上一次的结论：
         // 同一台机器要能在两个方向上切换。
         Assert.True(Decide(budgetMs: 300).IsAligned);
-        Assert.False(Decide(budgetMs: 55).IsAligned);
+        Assert.False(Decide(budgetMs: MinTargetMs + 5).IsAligned);
         Assert.True(Decide(budgetMs: 300).IsAligned);
     }
 }
