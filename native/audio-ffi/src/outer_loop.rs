@@ -127,7 +127,10 @@ impl OuterLoop {
     }
 
     /// 撞上边界意味着偏差超出外环能力，是硬重置的前兆，而不是一次普通的夹紧。
-    /// 调用方据此记一次警告。
+    ///
+    /// native 侧没有日志设施，本期也没有生产调用方；告警落在托管侧——stats 已端出
+    /// `target_ms_current` 与 `play_time_error_us`，规则是「target_ms_current 贴在
+    /// 边界且 play_time_error_us 仍大」。这里保留判定本身，让那条规则有单一出处。
     pub fn is_saturated(target_ms: u32) -> bool {
         target_ms <= MIN_TARGET_MS || target_ms >= MAX_TARGET_MS
     }
@@ -169,6 +172,30 @@ mod tests {
     }
 
     #[test]
+    fn the_inner_time_constant_matches_the_real_drift_ratio_dynamics() {
+        // inner_loop_seconds 断言的是另一个模块（ring::drift_ratio）的动力学，
+        // 上面那条只把公式移项写一遍，与 drift_ratio 之间没有连接——把内环增益
+        // 乘 0.1，真实时间常数变十倍、分离度从 3 掉到 0.3，它照绿。
+        // 数值仿真把两者钉在一起：深度按 da/dt = 1000·(1 − drift_ratio(a, target))
+        // 演化（发送端与本机等速，即无晶振漂移），走完一个 inner_loop_seconds
+        // 后偏差应衰减到 1/e 附近。
+        for target in [50u32, 300, 1_000] {
+            let target_f = f64::from(target);
+            let dt = 0.05;
+            let steps = (inner_loop_seconds(target) / dt).round() as usize;
+            let mut a = target_f + 10.0;
+            for _ in 0..steps {
+                a += 1_000.0 * (1.0 - crate::ring::drift_ratio(a, target_f)) * dt;
+            }
+            let remaining = (a - target_f) / 10.0;
+            assert!(
+                (0.30..=0.40).contains(&remaining),
+                "target={target}: 一个时间常数后偏差剩 {remaining} 倍，应在 1/e 附近"
+            );
+        }
+    }
+
+    #[test]
     fn the_outer_loop_corrects_at_most_a_third_within_one_inner_time_constant() {
         // 分离度的行为形式：走完一个内环时间常数，外环最多修掉误差的三分之一。
         // 写成行为而不是 assert!(LOOP_SEPARATION >= 3.0)——后者是把常量换个写法
@@ -190,12 +217,30 @@ mod tests {
     #[test]
     fn a_late_output_lowers_the_target_depth() {
         // 出声偏晚要减小缓冲深度。符号接反的表现是缓慢发散，不是立刻错。
-        assert!(run(10.0, 1.0, 200) < TARGET);
+        // 逐步断言非增而不是只看终值：纯积分器本就单调，钉住它是为了挡住
+        // 将来加比例项或平滑时引入的非单调路径——那时终值判据仍会绿。
+        let mut loop_state = OuterLoop::default();
+        let mut target = TARGET;
+        let mut prev = TARGET;
+        for _ in 0..200 {
+            target = loop_state.step(10.0, 1.0, target);
+            assert!(target <= prev, "恒定正误差下从 {prev} 涨到 {target}");
+            prev = target;
+        }
+        assert!(target < TARGET);
     }
 
     #[test]
     fn an_early_output_raises_the_target_depth() {
-        assert!(run(-10.0, 1.0, 200) > TARGET);
+        let mut loop_state = OuterLoop::default();
+        let mut target = TARGET;
+        let mut prev = TARGET;
+        for _ in 0..200 {
+            target = loop_state.step(-10.0, 1.0, target);
+            assert!(target >= prev, "恒定负误差下从 {prev} 跌到 {target}");
+            prev = target;
+        }
+        assert!(target > TARGET);
     }
 
     #[test]
@@ -203,8 +248,9 @@ mod tests {
         // 小于预算分配额的误差不值得动 target_ms，而每次动都在改输出延迟。
         assert_eq!(run(0.9, 1.0, 10_000), TARGET);
         assert_eq!(run(-0.9, 1.0, 10_000), TARGET);
-        // 恰在死区边界上要动：成对钉住两侧。
+        // 恰在死区边界上要动：两个方向都成对钉住，死区若写成只判正侧，负侧会静默失聪。
         assert!(run(1.0, 1.0, 10_000) < TARGET);
+        assert!(run(-1.0, 1.0, 10_000) > TARGET);
     }
 
     #[test]
@@ -273,14 +319,28 @@ mod tests {
         }
         assert_eq!(loop_state.step(10.0, 0.0, TARGET), TARGET);
         assert_eq!(loop_state.step(10.0, -1.0, TARGET), TARGET);
+
+        // 坏输入之后残差必须还是干净的：只断言「当轮返回原值」挡不住污染——
+        // 若 NaN 进了残差，接下来第一步好输入就会把 target 打到夹紧值。
+        // 干净残差的节奏是每步 −1/90 毫秒：89 步攒不满一格，再走 11 步必然跨过。
+        for _ in 0..89 {
+            assert_eq!(loop_state.step(10.0, 1.0, TARGET), TARGET);
+        }
+        let mut target = TARGET;
+        for _ in 0..11 {
+            target = loop_state.step(10.0, 1.0, target);
+        }
+        assert!(target < TARGET, "残差若被坏输入污染，走不出这个干净的节奏");
     }
 
     #[test]
     fn reset_drops_the_accumulated_residual() {
         let mut loop_state = OuterLoop::default();
         let mut target = TARGET;
-        // 攒到差一点就够一格。
-        for _ in 0..90 {
+        // 攒到差一点就够一格。取 80 步（残差约 −0.889）而不是 90：90 步的和距 −1.0
+        // 只差 1.6e-15，任何常量变动都可能让第一条断言翻到另一侧，
+        // 而那时红的原因与 reset 无关。
+        for _ in 0..80 {
             target = loop_state.step(10.0, 1.0, target);
         }
         assert_eq!(target, TARGET, "这些步还不该凑够一格");
@@ -304,6 +364,11 @@ mod tests {
         assert!(actual_play_ticks(1_000, 0, 5 * TICKS_PER_MS) > base);
         // 手动偏移可以为负：用户听出来放晚了就往回拨。
         assert!(actual_play_ticks(1_000, 0, -5 * TICKS_PER_MS) < base);
+        // 溢出走饱和而不是回绕——这条链跑在实时渲染线程上，debug 下回绕是 panic。
+        assert_eq!(
+            actual_play_ticks(i64::MAX - 1, TICKS_PER_MS, TICKS_PER_MS),
+            i64::MAX
+        );
     }
 
     #[test]
@@ -317,6 +382,9 @@ mod tests {
         // （本机 QPC 自开机起算，发送端墙钟自 1970 起算）。
         let offset = -1_700_000_000_000_000;
         assert_eq!(target_play_ticks(sender, d, offset), sender + d + offset);
+        // 饱和边界：符号之外这条判据唯一多钉的东西——saturating_add 换成 +
+        // 在 debug 下是实时线程上的 panic。
+        assert_eq!(target_play_ticks(i64::MAX - 1, TICKS_PER_MS, 0), i64::MAX);
     }
 
     #[test]
@@ -332,5 +400,8 @@ mod tests {
 
         let early = actual_play_ticks(target - TICKS_PER_MS, 0, 0);
         assert!(play_time_error_ticks(early, target) < 0);
+
+        // 饱和边界，理由同 target_play_ticks 那条。
+        assert_eq!(play_time_error_ticks(i64::MIN, i64::MAX), i64::MIN);
     }
 }

@@ -160,6 +160,22 @@ pub fn output_frames_for(device_frames: usize, device_rate: u32) -> usize {
     device_frames * OUTPUT_SAMPLE_RATE as usize / device_rate as usize
 }
 
+/// 正在出声的采样在累积轴（48k 域）上的位置。
+///
+/// `read_cursor` 数的是从 ring 读走的 48k 帧，`padding_device_frames` 是端点里还压着
+/// 的**设备帧**——必须先折回 48k 域再减。这一步与 `prefill_silence_frames` 当年抽出的
+/// 理由相同：「用设备帧数还是 48k 帧数」内嵌在循环里无人看守时选错过一次，而这里
+/// 选错的后果是误差整体偏移一个端点缓冲长度（本机 22 毫秒），且各设备不同，
+/// 直接变成机间错位。padding 大于读游标（刚起播、硬重置刚过）时饱和到 0，
+/// 调用方经 `sender_ticks_at` 的本轮门自然得到 `None`。
+pub fn playing_position_frames(
+    read_cursor: u64,
+    padding_device_frames: usize,
+    device_rate: u32,
+) -> u64 {
+    read_cursor.saturating_sub(output_frames_for(padding_device_frames, device_rate) as u64)
+}
+
 /// 重采样比换成 ppm（百万分之一）。
 ///
 /// 为什么不把 f64 直接送出 FFI：跨 FFI 的结构体全字段用 u64 是为了消除 padding 歧义
@@ -601,9 +617,9 @@ mod wasapi {
 
     use super::{
         build_resampler, device_latency_us, frames_to_ms, output_frames_at_device_position,
-        output_frames_for, prefill_silence_frames, ratio_to_ppm, resample_ratio, target_frames,
-        AlignmentCell, PrefillState, RenderStatsCell, ResamplerState, TargetDepthCell,
-        MIN_TARGET_MS, RING_CAPACITY_FRAMES,
+        playing_position_frames, prefill_silence_frames, ratio_to_ppm, resample_ratio,
+        target_frames, AlignmentCell, PrefillState, RenderStatsCell, ResamplerState,
+        TargetDepthCell, MIN_TARGET_MS, RING_CAPACITY_FRAMES,
     };
     use crate::convert;
     use crate::convert::MixFormat;
@@ -676,7 +692,9 @@ mod wasapi {
         /// 播放中改目标深度。渲染循环下一轮即读到，越界值被夹到支持区间内。
         ///
         /// 本期不导出到 FFI：新增导出是 ABI 变更，而 ABI 只在一处升一次。
-        /// 这里先把内部表示改成可写的，供 crate 内的外环使用。
+        /// 这里先把内部表示改成可写的。当前 target 的唯一运行时写者是外环
+        /// （渲染线程内的读-改-写，无竞争）；一旦本方法接上第二个写者，
+        /// 外环那次读-改-写会静默吃掉这里的设置，届时外环必须改成 `fetch_update`。
         pub fn set_target_ms(&self, raw_ms: u32) {
             self.target.set_ms(raw_ms);
         }
@@ -797,7 +815,7 @@ mod wasapi {
 
         /// 送入交错 i16。
         ///
-        /// **帧对齐由调用方保证**：参数是帧数而非样本数，半帧无从表达，
+        /// 帧对齐由调用方保证：参数是帧数而非样本数，半帧无从表达，
         /// 而 [`PlaybackRing::push`] 不跨调用结转残样本——若调用方按字节数算帧数
         /// 且没向下取整到整帧，错位会一路传下去。
         /// `sender_ticks` 为 0 即「本帧没有时刻」，走不带时间轴的原路径。
@@ -990,14 +1008,37 @@ mod wasapi {
                 continue;
             }
 
-            // 设备端点里还压着 padding 帧，故正在出声的那个采样在累积轴上落在读游标
-            // 之前 padding 那么多。一次持锁取全，不为诊断多抢一次那把锁——
-            // 对面等它的是 WASAPI 实时线程。
-            let padding_frames = output_frames_for(padding as usize, session.mix.sample_rate);
+            // 设备位置紧贴 padding 取：两者是误差的两个端点，中间隔一次与网络线程
+            // 争用的 ring 锁会引入正偏的时差（锁等待不会为负），积分器平均不掉。
+            // 只在对齐开着时取——关闭时这一段此前不存在，「关闭走原路径」说的就是它；
+            // 代价是关闭时 device_position 两个诊断字段保持 0，与 clock 缺失同形。
+            let mut position_qpc = None;
+            if context.alignment.is_enabled() {
+                if let Some(clock) = session.clock.as_ref() {
+                    let mut position = 0u64;
+                    let mut qpc_100ns = 0u64;
+                    if clock
+                        .GetPosition(&mut position, Some(&mut qpc_100ns))
+                        .is_ok()
+                    {
+                        stats.set_device_position(
+                            output_frames_at_device_position(position, session.clock_frequency),
+                            qpc_100ns,
+                        );
+                        position_qpc = Some(qpc_100ns);
+                    }
+                }
+            }
+
+            // 端点里还压着 padding 帧，故正在出声的那个采样在累积轴上落在读游标
+            // 之前 padding 那么多——折算与减法抽在 playing_position_frames 里。
+            // 一次持锁取全，不为诊断多抢一次那把锁——对面等它的是 WASAPI 实时线程。
             let Ok((available, playing_sender_ticks)) = ring.lock().map(|ring| {
-                let playing_at = ring
-                    .read_cursor_frames()
-                    .saturating_sub(padding_frames as u64);
+                let playing_at = playing_position_frames(
+                    ring.read_cursor_frames(),
+                    padding as usize,
+                    session.mix.sample_rate,
+                );
                 (ring.available_frames(), ring.sender_ticks_at(playing_at))
             }) else {
                 break;
@@ -1034,27 +1075,13 @@ mod wasapi {
             stats.set_target_ms_current(target_ms);
             stats.set_clock_offset_available(context.alignment.offset_available());
 
-            // 设备位置与取位置时的 QPC 是一次调用的一对返回值，用于算出声时刻。
-            let mut position_qpc = None;
-            if let Some(clock) = session.clock.as_ref() {
-                let mut position = 0u64;
-                let mut qpc_100ns = 0u64;
-                if clock
-                    .GetPosition(&mut position, Some(&mut qpc_100ns))
-                    .is_ok()
-                {
-                    stats.set_device_position(
-                        output_frames_at_device_position(position, session.clock_frequency),
-                        qpc_100ns,
-                    );
-                    position_qpc = Some(qpc_100ns);
-                }
-            }
-
             // 外环走一步。offset 不可用时整段跳过——停步而不是喂 0：喂 0 落在死区里
             // 看着像「没误差」，而它会让上一轮攒下的残差继续被当成有效积分。
+            // 没有执行器（48k 端点起播时对齐没开、或建重采样器失败）时同样不走：
+            // target_ms 那时对出声时刻毫无作用，走步就是纯积分器一路 windup 到边界，
+            // 而 target_ms_current 贴在边界会指向一个不存在的结论。
             match (
-                context.alignment.offset_available(),
+                context.alignment.offset_available() && resampler.is_some(),
                 position_qpc,
                 playing_sender_ticks,
             ) {
@@ -1135,6 +1162,11 @@ mod wasapi {
                     // 第一次调整凭空多走一步。
                     outer.reset();
                     last_qpc = None;
+                    // prefill 重建到外环当下在追的深度，而不是沿用起播时冻结的目标：
+                    // 外环已把 target_ms 挪走时，填回旧深度会让内环随即用 τ内（默认
+                    // 300 秒）去追差额，两环在同一件事上做功。起播那条「prefill 不随
+                    // 外环变」说的是不要每轮重读，重置时重读一次不违反它。
+                    prefill = PrefillState::new(target_frames(target_ms));
                     let Ok(mut ring) = ring.lock() else { break };
                     ring.reset();
                     if let Some(state) = resampler.as_mut() {
@@ -1425,17 +1457,20 @@ mod wasapi {
         use crate::timeline::TICKS_PER_MS;
 
         /// 喂一段静音并返回实际经过的时间。
+        ///
+        /// 失败 panic 而不是 break：break 会让「没喂成」表现为「时间短」，而事实一
+        /// 的比较在 10 毫秒窗口下测不出任何东西——负向条件恰好满足的假通过。
         unsafe fn feed_silence(session: &RenderSession, rounds: u32) -> Duration {
             let started = Instant::now();
             for _ in 0..rounds {
                 std::thread::sleep(Duration::from_millis(10));
-                let Ok(padding) = session.client.GetCurrentPadding() else {
-                    break;
-                };
+                let padding = session
+                    .client
+                    .GetCurrentPadding()
+                    .expect("GetCurrentPadding 失败，窗口不可信");
                 let writable = session.buffer_frames.saturating_sub(padding);
-                if write_silence(&session.render_client, writable).is_err() {
-                    break;
-                }
+                write_silence(&session.render_client, writable)
+                    .expect("write_silence 失败，窗口不可信");
             }
             started.elapsed()
         }
@@ -1568,8 +1603,24 @@ mod wasapi {
                     let latency_100ns =
                         session.client.GetStreamLatency().expect("GetStreamLatency");
 
-                    // 先垫满一轮，避免第一次 GetPosition 落在还没起来的流上。
-                    feed_silence(&session, 5);
+                    // 等位置时钟真正起走再取基准，而不是垫固定几轮：流刚 Start 时端点
+                    // 先填缓冲，位置有一段启动死区（本机实测可近 200 毫秒），把死区算进
+                    // 窗口会把「启动延迟」误读成「归一错误」——比值判据在那种窗口下
+                    // 红的是端点行为，不是归一方式。位置两秒不走则端点本身不可测。
+                    let mut warmup_rounds = 0;
+                    loop {
+                        feed_silence(&session, 5);
+                        let mut p = 0u64;
+                        let mut q = 0u64;
+                        clock
+                            .GetPosition(&mut p, Some(&mut q))
+                            .expect("GetPosition");
+                        if p > 0 {
+                            break;
+                        }
+                        warmup_rounds += 1;
+                        assert!(warmup_rounds < 40, "位置时钟两秒不走，端点无从实测");
+                    }
 
                     let mut pos1 = 0u64;
                     let mut qpc1 = 0u64;
@@ -1631,11 +1682,20 @@ mod wasapi {
                     );
 
                     // 事实一：频率可用于归一，归一后的秒数逼近墙钟。
+                    // 窗口先立地基：50 轮 × 10ms 至少该有 400ms，且位置确实在走——
+                    // 窗口塌缩或时钟冻结时，任何差值比较都在真空里成立。
                     assert!(freq > 0, "GetFrequency 返回 0，位置无从归一");
-                    let clock_error = (seconds_by_clock - elapsed.as_secs_f64()).abs();
                     assert!(
-                        clock_error < 0.05,
-                        "位置经 GetFrequency 归一后与墙钟差 {clock_error:.4} s，归一方式有误"
+                        elapsed >= Duration::from_millis(400),
+                        "喂静音只维持了 {elapsed:?}，窗口不足以比较时钟"
+                    );
+                    assert!(pos_delta > 0, "位置时钟没有走动");
+                    // 比值判据，与事实二同形：绝对差在窗口变短时会自动落进容差，
+                    // 比值不会。
+                    let clock_ratio = seconds_by_clock / elapsed.as_secs_f64();
+                    assert!(
+                        (0.95..1.05).contains(&clock_ratio),
+                        "位置经 GetFrequency 归一后与墙钟之比 {clock_ratio:.4}，归一方式有误"
                     );
 
                     // 事实二：QPC 时间戳的单位是 100ns。零点同源留给托管侧验。
@@ -1833,11 +1893,24 @@ mod tests {
 
         target.set_ms(400);
         assert_eq!(prefill.target_frames(), target_frames(200));
-        assert_ne!(
-            prefill.target_frames(),
-            target_frames(target.current_ms()),
-            "prefill 的目标不该随运行时改动而变"
-        );
+        // （曾有第二个断言 prefill.target_frames() != target_frames(current_ms())：
+        // 在第一条成立的前提下它退化成 target_frames(200) != target_frames(400)，
+        // 说的是 target_frames 的单调性而非快照性质，已删。）
+    }
+
+    #[test]
+    fn playing_position_folds_the_padding_into_the_48k_domain() {
+        // padding 是设备帧，读游标是 48k 帧。漏掉折算或减号写错，误差整体偏移
+        // 一个端点缓冲长度（本机 22 毫秒），且各设备不同——直接变成机间错位。
+        // 期望值全部手算，不引用 output_frames_for 重算一遍。
+        assert_eq!(playing_position_frames(10_000, 960, 48_000), 9_040);
+        // 96k：960 设备帧只值 480 个 48k 帧——当年 prefill panic 的那一档。
+        assert_eq!(playing_position_frames(10_000, 960, 96_000), 9_520);
+        // 44.1k：960 × 48000 / 44100 截断为 1044。
+        assert_eq!(playing_position_frames(10_000, 960, 44_100), 8_956);
+        // 刚起播、硬重置刚过：padding 大于读游标，饱和到 0 而不是回绕，
+        // 下游 sender_ticks_at 的本轮门会把 0 判成 None。
+        assert_eq!(playing_position_frames(100, 960, 48_000), 0);
     }
 
     #[test]

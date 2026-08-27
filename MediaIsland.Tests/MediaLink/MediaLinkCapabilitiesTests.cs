@@ -384,7 +384,7 @@ internal sealed class MediaLinkClientCapabilityHarness(ScriptedClientSocket sock
 
     /// <summary>会话中途再投一条 hello，模拟服务端重建会话后的重新声明。</summary>
     public void QueueServerHello(long epoch, string capabilitiesJson) =>
-        socket.QueueRaw(BuildHello(epoch, capabilitiesJson));
+        Socket.QueueRaw(BuildHello(epoch, capabilitiesJson));
 
     public async Task WaitUntilAsync(Func<bool> condition)
     {

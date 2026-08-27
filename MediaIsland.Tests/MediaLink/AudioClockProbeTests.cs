@@ -38,16 +38,24 @@ public class AudioClockProbeTests
         /// </summary>
         internal double WallMinusQpcMs { get; set; }
 
-        /// <summary>正常回应：单程各 outboundMs / inboundMs，服务端时钟快 offsetMs。</summary>
-        internal FakePeer Answers(double offsetMs, double outboundMs = 1, double inboundMs = 1)
+        /// <summary>
+        /// 正常回应：单程各 outboundMs / inboundMs，服务端时钟快 offsetMs，
+        /// t2 到 t3 隔 serverProcessingMs。默认 1 毫秒而不是 0：t2 == t3 的脚本会让
+        /// 「桥配 t2」这类变异在走本脚本的判据上无判别力——估计器按定义排除服务端
+        /// 处理耗时，故这个默认值不改变任何 offset 与往返的断言值。
+        /// </summary>
+        internal FakePeer Answers(
+            double offsetMs, double outboundMs = 1, double inboundMs = 1, double serverProcessingMs = 1)
         {
             _script.Enqueue(t1 =>
             {
                 _clock.Advance(outboundMs);
                 var t2 = _clock.Now + (long)(offsetMs * Ms);
+                _clock.Advance(serverProcessingMs);
+                var t3 = _clock.Now + (long)(offsetMs * Ms);
                 var payload = new MediaLinkAudioClockPayload
                 {
-                    For = MediaLinkProtocol.TypeAudioClock, T1 = t1, T2 = t2, T3 = t2
+                    For = MediaLinkProtocol.TypeAudioClock, T1 = t1, T2 = t2, T3 = t3
                 };
                 _clock.Advance(inboundMs);
                 return payload;

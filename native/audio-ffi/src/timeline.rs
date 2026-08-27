@@ -47,6 +47,11 @@ pub fn ticks_to_frames(ticks: i128) -> i128 {
 /// 内容，是另一件事），若正向一侧连量化噪声一起补上，零均值的噪声就变成单边偏置：
 /// 48kHz 下 1 毫秒即 48 帧静音，每秒补上百次，比它要修的时间轴压缩严重得多。
 ///
+/// 代价也要记账：落在噪声带（约 2 毫秒）与丢帧（约 10 毫秒）之间的一次性停顿——
+/// 比如发送端 3–4 毫秒的调度毛刺——会被整段吞掉，越过它向过去外推的位置就偏那么多，
+/// 单次最坏接近 5 毫秒（预算的一半），随这段数据流出缓冲窗口（约 300 毫秒）而消失。
+/// 它与量化噪声在观测上不可分，故不可免；排查机间错位时这项要对账。
+///
 /// 采集周期短于约 7 毫秒的设备上这条线要重估——那时丢一帧的空档会落进噪声带里，
 /// 补与不补都不再可分。它是一处常量，重估只改这里。
 pub const MIN_GAP_TICKS: i64 = 5 * TICKS_PER_MS;
@@ -72,7 +77,10 @@ pub fn gap_silence_frames(expected_ticks: i64, actual_ticks: i64) -> usize {
         return 0;
     }
 
-    ticks_to_frames(delta).max(0) as usize
+    ticks_to_frames(delta)
+        .max(0)
+        .try_into()
+        .unwrap_or(usize::MAX)
 }
 
 /// 单锚点时间轴。
@@ -191,10 +199,9 @@ mod tests {
 
     #[test]
     fn tick_unit_is_expressed_once() {
-        // 两个常量之间的导出关系，而不是把 10_000_000 换个写法再断言一次：
-        // 后者改常量的同时改判据即可全绿。
-        assert_eq!(TICKS_PER_SECOND, 1_000 * TICKS_PER_MS);
         // 与本 crate 的输出率对照，钉住「一秒的 tick 数与一秒的帧数说的是同一秒」。
+        // （曾有一条 TICKS_PER_SECOND == 1_000 * TICKS_PER_MS：它逐字重复 :19 的定义式，
+        // 改常量时定义与断言一起变，挡不住任何错法，已删。）
         assert_eq!(
             frames_to_ticks(i128::from(OUTPUT_SAMPLE_RATE)),
             i128::from(TICKS_PER_SECOND)
@@ -228,11 +235,11 @@ mod tests {
     fn frame_count_survives_the_round_trip() {
         for frames in [1i128, 2, 3, 47, 480, 48_000, 1_234_567] {
             let back = ticks_to_frames(frames_to_ticks(frames));
-            // 非整数比下往返只丢不足一帧，且方向恒为向下。
-            assert!(
-                back == frames || back == frames - 1,
-                "frames={frames} back={back}"
-            );
+            // 钉到恰好：48kHz 下一帧是 625/3 tick，3 的倍数换算精确，非 3 的倍数
+            // 截断恰亏 1。旧写法（back == frames || back == frames - 1）下
+            // 一个恒少一帧的实现会全绿。
+            let expected = if frames % 3 == 0 { frames } else { frames - 1 };
+            assert_eq!(back, expected, "frames={frames}");
         }
     }
 

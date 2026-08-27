@@ -124,8 +124,18 @@ impl PlaybackRing {
     }
 
     fn write_silence(&mut self, frames: usize) {
-        for _ in 0..frames {
-            self.write_frame(&[0i16; CHANNELS]);
+        // 静音是零值区间，不必逐帧过 write_frame：环形缓冲至多绕一次，两段 fill 即可。
+        // 游标推进与逐帧写法逐字等价——write 前移取模、filled 饱和在容量、written
+        // 无条件累计。调用方已把 frames 夹在容量以内，循环至多两轮。
+        let mut remaining = frames;
+        while remaining > 0 {
+            let run = remaining.min(self.capacity_frames - self.write);
+            let dst = self.write * CHANNELS;
+            self.buffer[dst..dst + run * CHANNELS].fill(0);
+            self.write = (self.write + run) % self.capacity_frames;
+            self.filled = (self.filled + run).min(self.capacity_frames);
+            self.written += run as u64;
+            remaining -= run;
         }
     }
 
