@@ -130,6 +130,59 @@ public class AudioClockProbeTests
     }
 
     [Fact]
+    public async Task T4_ComesFromTheReplyReceivedTimestamp_NotTheClockAfterResumption()
+    {
+        // t4 必须是接收循环在应答文本就位时打的点。应答就位后要经 TrySetResult 与
+        // 一次线程池调度探测任务才恢复，这段延迟只加在 t4 一侧：每个样本的 offset
+        // 都系统性偏小，最小往返选择挑不掉单边残余。桩把「就位」与「恢复」拉开
+        // 20ms 并逐 tick 手算：用就位时刻（2ms）当 t4，rtt = (2 − 0) − (11 − 10) =
+        // 1ms、offset = ((10 − 0) + (11 − 2)) / 2 = 9.5ms；错用恢复后的现在（22ms），
+        // rtt = 21ms、offset = −0.5ms——两条断言都红。
+        var clock = new FakeClock();
+        var probe = new AudioClockProbe(
+            (t1, _) =>
+            {
+                clock.Advance(2);
+                var receivedAt = clock.Now;
+                clock.Advance(20);
+                return Task.FromResult<AudioClockProbeReply?>(new AudioClockProbeReply(
+                    new MediaLinkAudioClockPayload { T1 = t1, T2 = 10 * Ms, T3 = 11 * Ms },
+                    EnvelopeTsMs: 0,
+                    ReceivedAt100Ns: receivedAt));
+            },
+            clock.Read);
+
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+        Assert.True(probe.TryGetOffset(out var offset, out var rtt));
+        Assert.Equal(1 * Ms, rtt);
+        Assert.Equal(95_000, offset);
+    }
+
+    [Fact]
+    public async Task ReplyWithoutAReceivedTimestamp_FallsBackToTheClockAfterResumption()
+    {
+        // 回落语义即旧实现：t4 取探测任务恢复后的现在，调度延迟计入往返。脚本与
+        // 上一条判据完全相同，只是不带接收时刻——rtt 涨到 21ms、offset 掉到
+        // −0.5ms，正是上一条里「错误实现」的算术。两条合起来把取舍的两侧都钉住：
+        // 带时刻必须用时刻，不带时刻必须还原旧行为。
+        var clock = new FakeClock();
+        var probe = new AudioClockProbe(
+            (t1, _) =>
+            {
+                clock.Advance(22);
+                return Task.FromResult<AudioClockProbeReply?>(new AudioClockProbeReply(
+                    new MediaLinkAudioClockPayload { T1 = t1, T2 = 10 * Ms, T3 = 11 * Ms },
+                    EnvelopeTsMs: 0));
+            },
+            clock.Read);
+
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+        Assert.True(probe.TryGetOffset(out var offset, out var rtt));
+        Assert.Equal(21 * Ms, rtt);
+        Assert.Equal(-5_000, offset);
+    }
+
+    [Fact]
     public async Task FastPhase_LastsUntilTheWindowIsFull()
     {
         var (probe, _, _) = Build(p =>

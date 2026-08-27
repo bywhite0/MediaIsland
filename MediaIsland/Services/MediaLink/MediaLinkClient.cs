@@ -397,6 +397,12 @@ public sealed class MediaLinkClient : IAsyncDisposable
             while (!cancellationToken.IsCancellationRequested)
             {
                 var received = await socket.ReceiveAsync(cancellationToken);
+
+                // 接收时刻在这里取，进任何分支与 JSON 解析之前——它给 audio.clock
+                // 应答当 t4。原则与服务端取 t2 同形：解析与派发的耗时不得混进
+                // 时间戳的单边。时钟与探测请求的 t1 同源（都是 MonotonicClock）。
+                var receivedAt100Ns = Audio.MonotonicClock.Now100Ns();
+
                 if (received.IsClosed)
                 {
                     return; // 对端关闭，交给重连逻辑
@@ -410,7 +416,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
 
                 if (received.Text is { } text)
                 {
-                    Dispatch(text);
+                    Dispatch(text, receivedAt100Ns);
                 }
             }
         }
@@ -692,7 +698,10 @@ public sealed class MediaLinkClient : IAsyncDisposable
         _lastSeq = 0;
     }
 
-    private void Dispatch(string text)
+    /// <param name="receivedAt100Ns">
+    /// 本条消息在接收循环就位的时刻（JSON 解析前取）。audio.clock 应答拿它当 t4。
+    /// </param>
+    private void Dispatch(string text, long receivedAt100Ns)
     {
         MediaLinkMessage? message;
         try
@@ -738,7 +747,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
         {
             var clock = MediaLinkMessageSerializer.DeserializePayload<MediaLinkAudioClockPayload>(message.Payload);
             Interlocked.Exchange(ref _pendingClockExchange, null)?.TrySetResult(
-                clock is null ? null : new AudioClockProbeReply(clock, message.Ts));
+                clock is null ? null : new AudioClockProbeReply(clock, message.Ts, receivedAt100Ns));
             return;
         }
 

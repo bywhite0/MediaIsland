@@ -3,14 +3,21 @@ using MediaIsland.Services.MediaLink.Protocol;
 namespace MediaIsland.Services.MediaLink;
 
 /// <summary>
-/// 一次 audio.clock 往返带回的东西：载荷（t1 回显与 t2/t3），外加应答信封的墙钟 ts。
+/// 一次 audio.clock 往返带回的东西：载荷（t1 回显与 t2/t3），外加应答信封的墙钟 ts
+/// 与本机接收时刻。
 ///
 /// ts 不参与 QPC 轴的 offset 估计——墙钟会被 NTP 调整，不可用于跨分钟维持的时间关系。
 /// 带上它是因为它与 t3 由服务端在同一瞬取得（同一个延迟构造的报文里），是线上唯一
 /// 一对同瞬的墙钟/QPC 读数：「发送端墙钟轴」与「发送端 QPC 轴」之间的桥只能从这里来，
 /// 而音频帧头的 capturedAtMs 恰好在墙钟轴上。
+///
+/// ReceivedAt100Ns 是接收循环在应答文本就位时（JSON 解析之前）打的点，作 t4 用，
+/// 必须与 t1 同源（生产两侧都是 <see cref="Audio.MonotonicClock"/>；注入假时钟的
+/// 测试桩自己保证同源）。null 表示载体没带——t4 回落到探测任务恢复后的现在，
+/// 那会把 TrySetResult 之后的一次线程池调度单边算进 t4。
 /// </summary>
-internal readonly record struct AudioClockProbeReply(MediaLinkAudioClockPayload Payload, long EnvelopeTsMs);
+internal readonly record struct AudioClockProbeReply(
+    MediaLinkAudioClockPayload Payload, long EnvelopeTsMs, long? ReceivedAt100Ns = null);
 
 /// <summary>
 /// 回程对时的时序外壳：什么时候探一次、连续没回应算不算失联、对端是不是根本不支持。
@@ -150,13 +157,20 @@ internal sealed class AudioClockProbe
             response = null;
         }
 
-        var t4 = _now100Ns();
+        // await 恢复后立刻读一次「现在」。它只是 t4 的回落值：reply 若带接收时刻，
+        // t4 用那个——它取在应答文本就位的瞬间，不含 TrySetResult 之后那次线程池
+        // 调度。那段延迟只加在 t4 一侧，让每个样本的 offset 系统性偏小，最小往返
+        // 选择消不掉单边残余。回落路径留给不带时刻的测试桩与将来的防御，
+        // 语义与旧实现一致：把恢复后的现在当 t4，调度延迟计入往返。
+        var now = _now100Ns();
 
         if (response is not { } reply)
         {
             NoteMiss();
             return false;
         }
+
+        var t4 = reply.ReceivedAt100Ns ?? now;
 
         var payload = reply.Payload;
         if (payload.T2 is not { } t2 || payload.T3 is not { } t3)
