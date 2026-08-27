@@ -30,6 +30,13 @@ public enum MediaLinkAudioRejectReason
 /// </summary>
 public sealed class MediaLinkAudioReceiver
 {
+    /// <summary>
+    /// 帧头 capturedAtMs 能换算成 100ns 计次而不溢出 long 的最大毫秒数（约公元 31 万年）。
+    /// 真实发送端永远到不了这里；这是给敌意或损坏的帧头立的上界，
+    /// 与下面「非正值当无时刻」是同一道闸门的两侧。
+    /// </summary>
+    internal const long MaxCapturedAtMs = long.MaxValue / MonotonicClock.TicksPerMs100Ns;
+
     private readonly IAudioFrameSubmitter _submitter;
     private readonly Func<string?> _currentTrackToken;
     private readonly ILogger? _logger;
@@ -100,15 +107,17 @@ public sealed class MediaLinkAudioReceiver
         // 接收侧的「采样时刻」本就是本机对这块 PCM 的第一次观测。
         //
         // capturedAtMs 另走发送端时间轴那条参数：对齐播放要拿它算目标出声时刻。
-        // 非正值当「无时刻」传 0——0 是播放侧约定的「本帧没有时刻」哨兵，
-        // 而把一个非正的墙钟读数换算成时刻会让播放侧拿着编造的值走时间轴。
+        // 闸门两侧成对：非正值当「无时刻」传 0——0 是播放侧约定的「本帧没有时刻」哨兵，
+        // 而把一个非正的墙钟读数换算成时刻会让播放侧拿着编造的值走时间轴；
+        // 超过 MaxCapturedAtMs 的值同样当「无时刻」——那之外乘 10⁴ 会溢出 long，
+        // 产物可为负却不是 0 哨兵，会被当成合法时刻。只拦下界就是半个闸门。
         _submitter.Submit(new AudioFrame(
             pcm.ToArray(),
             _nowQpc100Ns(),
             MediaLinkProtocol.AudioSampleRate,
             MediaLinkProtocol.AudioChannels,
             header.Flags.HasFlag(MediaLinkAudioFrameFlags.Silent),
-            SenderTimelineTicks100Ns: header.CapturedAtMs > 0
+            SenderTimelineTicks100Ns: header.CapturedAtMs > 0 && header.CapturedAtMs <= MaxCapturedAtMs
                 ? header.CapturedAtMs * MonotonicClock.TicksPerMs100Ns
                 : 0));
 

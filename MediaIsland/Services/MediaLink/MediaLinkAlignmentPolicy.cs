@@ -28,10 +28,18 @@ internal enum MediaLinkAlignmentState
     NoClockOffset
 }
 
-/// <summary>一次对齐判定的结果。</summary>
+/// <summary>
+/// 一次对齐判定的结果。<paramref name="BudgetExceedsCap"/> 是
+/// <see cref="MediaLinkAlignmentState.BudgetTooSmall"/> 的方向位：预算超上界为真、
+/// 不足下界为假，其余状态恒为假。它存在的理由是归因出口按状态去重——两个方向
+/// 共用一个状态，方向互换若不落新日志，用户看到的旧警告会把排查方向指反；
+/// 而方向由本判定在生成 Reason 时就已知，让结果自己带出去，
+/// 消费方就不必对着预算把「超没超上界」再判一遍。
+/// </summary>
 internal readonly record struct MediaLinkAlignmentDecision(
     MediaLinkAlignmentState State,
-    string Reason)
+    string Reason,
+    bool BudgetExceedsCap = false)
 {
     public bool IsAligned => State == MediaLinkAlignmentState.Aligned;
 }
@@ -109,7 +117,8 @@ internal static class MediaLinkAlignmentPolicy
         {
             return new MediaLinkAlignmentDecision(
                 MediaLinkAlignmentState.BudgetTooSmall,
-                $"播放延迟预算 {budgetMs}ms 超出上界 {MaxBudgetMs}ms，本机无从执行，已按不对齐播放");
+                $"播放延迟预算 {budgetMs}ms 超出上界 {MaxBudgetMs}ms，本机无从执行，已按不对齐播放",
+                BudgetExceedsCap: true);
         }
 
         // 本机最小可达延迟 = 设备尾段延迟 + 端点缓冲容量 + 最小抖动缓冲深度。预算装不下

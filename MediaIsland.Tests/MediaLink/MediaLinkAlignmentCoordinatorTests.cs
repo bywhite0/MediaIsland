@@ -244,6 +244,29 @@ public class MediaLinkAlignmentCoordinatorTests
     }
 
     [Fact]
+    public void BudgetDirectionFlip_LogsANewWarningEvenThoughTheStateIsTheSame()
+    {
+        // BudgetTooSmall 的两个方向共用一个状态：超上界与不足下界都落在它上面。
+        // 方向互换若只按状态去重就不落新日志，挂着的旧警告会把「该往哪边改」指反——
+        // 预算从配得太大改过头成太小时，用户看到的仍是「超出上界」。
+        var harness = new Harness { Declaration = Declared(20_000) };
+        harness.Renderer.Stats = StartedStats();
+        harness.Playback.Configure(enabled: true, targetBufferMs: 200);
+        harness.Coordinator.Recompute();
+
+        var overCap = harness.Logger.Entries[^1];
+        Assert.Equal(LogLevel.Warning, overCap.Level);
+        Assert.Contains("上界", overCap.Message);
+
+        harness.Declaration = Declared(70);
+        harness.Coordinator.Recompute();
+
+        var tooSmall = harness.Logger.Entries[^1];
+        Assert.Equal(LogLevel.Warning, tooSmall.Level);
+        Assert.Contains("不足", tooSmall.Message);
+    }
+
+    [Fact]
     public void SwitchedOff_PushesTheSwitchAndStaysQuiet()
     {
         // 开关关着时四态归因没有听众；但 enabled=false 仍要到达渲染器——

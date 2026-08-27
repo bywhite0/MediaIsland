@@ -138,6 +138,26 @@ public class MediaLinkAudioReceiverTests
     }
 
     [Fact]
+    public void AnOverflowingCapturedAt_YieldsTheNoTimestampSentinel()
+    {
+        var receiver = NewReceiver();
+        var header = new MediaLinkAudioFrameHeader(
+            StartPositionMs: 5000,
+            CapturedAtMs: long.MaxValue,
+            ServerTimeMs: UpstreamCapturedAtMs,
+            Seq: 1,
+            TrackToken: Token,
+            Flags: MediaLinkAudioFrameFlags.None);
+
+        receiver.Handle(MediaLinkAudioFrame.Encode(in header, Pcm(64)));
+
+        // 上界与非正值是同一道闸门的两侧：毫秒数超过 long.MaxValue / 10⁴ 时乘法回绕，
+        // 产物是个负 tick——它不是 0 哨兵，播放侧会把它当合法时刻走时间轴。
+        // 真实发送端到不了这个量级，能到的只有敌意或损坏的帧头。
+        Assert.Equal(0, _submitter.Frames[0].SenderTimelineTicks100Ns);
+    }
+
+    [Fact]
     public void SilentFlag_PropagatesToTheFrame()
     {
         var receiver = NewReceiver();

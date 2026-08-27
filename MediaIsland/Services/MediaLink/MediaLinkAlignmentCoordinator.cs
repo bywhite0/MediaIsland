@@ -25,8 +25,12 @@ internal sealed class MediaLinkAlignmentCoordinator
     private readonly ILogger? _logger;
     private readonly object _gate = new();
 
-    /// <summary>上次落进日志的状态。归因出口只记转移，不逐秒重复同一句话。</summary>
-    private MediaLinkAlignmentState? _lastLoggedState;
+    /// <summary>
+    /// 上次落进日志的状态与方向。归因出口只记转移，不逐秒重复同一句话；
+    /// 方向位参与去重是因为 BudgetTooSmall 的两个方向共用一个状态——
+    /// 只按状态去重时方向互换不落新日志，旧警告会把「该往哪边改」指反。
+    /// </summary>
+    private (MediaLinkAlignmentState State, bool BudgetExceedsCap)? _lastLogged;
 
     internal MediaLinkAlignmentCoordinator(
         AudioPlaybackService playback,
@@ -105,16 +109,17 @@ internal sealed class MediaLinkAlignmentCoordinator
         if (!enabled)
         {
             // 开关关了再开要重新说一遍当时的状态，故清掉去重水位。
-            _lastLoggedState = null;
+            _lastLogged = null;
             return;
         }
 
-        if (decision.State == _lastLoggedState || (decision.IsAligned && !hasStarted))
+        if ((decision.State, decision.BudgetExceedsCap) == _lastLogged
+            || (decision.IsAligned && !hasStarted))
         {
             return;
         }
 
-        _lastLoggedState = decision.State;
+        _lastLogged = (decision.State, decision.BudgetExceedsCap);
         if (decision.IsAligned)
         {
             _logger?.LogInformation("[音频:对齐] {Reason}", decision.Reason);

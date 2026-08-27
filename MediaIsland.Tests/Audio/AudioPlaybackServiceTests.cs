@@ -428,12 +428,14 @@ public class AudioPlaybackServiceTests
     {
         // 本机采集与老对端的帧不带时刻。0 必须原样到达渲染器——它是「走原路径」的开关，
         // 在这里被替换成任何别的值都会让不该走时间轴的帧走进时间轴。
+        // QPC 给非零值是地基：帧上若只有 0 可抄，「拿别的字段编一个时刻」的错法
+        // 编出来还是 0，这条判据就分辨不出它。
         var inner = new RecordingSubmitter();
         var renderer = new FakeRenderer();
         using var service = new AudioPlaybackService(inner, renderer);
         service.Configure(enabled: true, targetBufferMs: 200);
 
-        service.Submit(new AudioFrame(new byte[8], 0, 48_000, 2, IsSilent: false));
+        service.Submit(new AudioFrame(new byte[8], 987_654_321, 48_000, 2, IsSilent: false));
 
         Assert.Equal(0, Assert.Single(renderer.Pushed).SenderTicks);
     }

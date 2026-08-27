@@ -42,17 +42,24 @@ internal sealed class WasapiRenderer : IAudioRenderer
 
     public void SetAlignment(bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks)
     {
-        if (_handle == nint.Zero)
+        // 与 Push / ReadStats 同一把锁：Dispose 可以在锁外读到非零句柄与调用 native 之间
+        // 销毁句柄，RenderSetAlignment 就打在已释放的 Box 上。本方法最快也只随探测节奏
+        // 每秒一次，锁代价可忽略。代价同样是 FramePlayed 的处理器不得回调进本类的任何
+        // 方法，规则见 IAudioRenderer.FramePlayed。
+        lock (_gate)
         {
-            return;
-        }
+            if (_disposed || _handle == nint.Zero)
+            {
+                return;
+            }
 
-        // 失败不抛也不停播：对齐是增强项，拿不到它应当退回非对齐而不是断声。
-        var status = AudioRenderNative.NativeMethods.RenderSetAlignment(
-            _handle, enabled, dTicks, offsetTicks, manualOffsetTicks);
-        if (status != 0)
-        {
-            _logger?.LogDebug("[音频:播放] 下发对齐参数失败，状态 {Status}，按不对齐继续。", status);
+            // 失败不抛也不停播：对齐是增强项，拿不到它应当退回非对齐而不是断声。
+            var status = AudioRenderNative.NativeMethods.RenderSetAlignment(
+                _handle, enabled, dTicks, offsetTicks, manualOffsetTicks);
+            if (status != 0)
+            {
+                _logger?.LogDebug("[音频:播放] 下发对齐参数失败，状态 {Status}，按不对齐继续。", status);
+            }
         }
     }
 
