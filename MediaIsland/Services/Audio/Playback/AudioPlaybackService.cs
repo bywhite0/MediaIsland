@@ -224,6 +224,23 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     private void ApplyAlignmentUnlocked() => _renderer.SetAlignment(
         _alignmentEnabled, _alignmentDTicks, _alignmentOffsetTicks, _alignmentManualOffsetTicks);
 
+    /// <summary>
+    /// 读对齐判定要的本机事实。缓冲容量按设备采样率换算——DeviceBufferFrames 是设备帧。
+    /// 未起播时两项设备量为零，HasStarted 一并带出，调用方据此区分「延迟为零」与「还不知道」。
+    /// </summary>
+    public AudioAlignmentFacts ReadAlignmentFacts()
+    {
+        var stats = _renderer.ReadStats();
+        var bufferMs = stats.DeviceSampleRate > 0
+            ? stats.DeviceBufferFrames * 1_000.0 / stats.DeviceSampleRate
+            : 0;
+        return new AudioAlignmentFacts(
+            stats.HasStarted,
+            stats.DeviceLatencyUs / 1_000.0,
+            bufferMs,
+            _renderer.TargetDepthBounds().MinTargetMs);
+    }
+
     public void Submit(AudioFrame frame)
     {
         // 分支判定不进锁：本方法在网络收循环上，50 帧每秒。_playing 是 volatile，

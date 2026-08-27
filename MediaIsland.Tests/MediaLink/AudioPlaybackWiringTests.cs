@@ -13,6 +13,7 @@ public class AudioPlaybackWiringTests
     [Theory]
     [InlineData(nameof(PluginSettings.MediaLinkPlaybackIsEnabled), true)]
     [InlineData(nameof(PluginSettings.MediaLinkPlaybackBufferMs), true)]
+    [InlineData(nameof(PluginSettings.MediaLinkAlignmentIsEnabled), true)]
     [InlineData(nameof(PluginSettings.MediaLinkUpstreamIsEnabled), false)]
     [InlineData(nameof(PluginSettings.MediaLinkUpstreamEndpoint), false)]
     [InlineData(nameof(PluginSettings.MediaLinkUpstreamToken), false)]

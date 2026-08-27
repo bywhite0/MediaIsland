@@ -55,10 +55,18 @@ public interface IAudioRenderer : IDisposable
 
     /// <summary>送一块 s16le 交错 PCM 进播放缓冲。未启动时静默忽略。</summary>
     /// <param name="senderTicks">
-    /// 本帧在发送端时间轴上的起始时刻，100ns。0 表示本帧没有时刻——此时播放侧不建
-    /// 时间轴、不按空档补静音，逐字走原路径。对齐模式关闭时就该传 0。
+    /// 本帧在发送端时间轴上的起始时刻，100ns。0 表示本帧没有时刻。走不走时间轴由
+    /// 播放侧按「时刻非零且对齐开着」两个条件一起判，故调用方带着时刻照传即可，
+    /// 不必按对齐开关分别传值——那会把同一个判断写在两侧，改一处漏一处。
     /// </param>
     void Push(byte[] pcm, long senderTicks);
+
+    /// <summary>
+    /// 抖动缓冲目标深度的受支持区间，毫秒。托管侧要下界来算「本机最小可达延迟」，
+    /// 判发送端声明的预算装不装得下。经实现方取自其常量而不是在调用方抄一份数：
+    /// 同一个数分散成两份各自为真的声明时，改一处而漏另一处不会让任何判据变红。
+    /// </summary>
+    (int MinTargetMs, int MaxTargetMs) TargetDepthBounds();
 
     /// <summary>
     /// 读运行时统计。native 不可用、句柄已释放或从未起播时返回全零

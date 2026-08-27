@@ -102,7 +102,10 @@ public static class MediaLinkServiceCollectionExtensions
                 // 转发目标是本机服务端的广播入口。同样用委托而不是互相注入。
                 audioForwarder: (frame, ct) =>
                     provider.GetRequiredService<MediaLinkHostedService>()
-                        .BroadcastAudioFrameAsync(frame, ct));
+                        .BroadcastAudioFrameAsync(frame, ct),
+                // 对齐协调要调 ConfigureAlignment 与读设备事实，两者只在具体类型上，
+                // 故这条边拿的是装饰器本体而非 IAudioFrameSubmitter 视图。
+                playback: provider.GetRequiredService<AudioPlaybackService>());
 
             // 三条重算边接在两个宿主服务之外。挂事件必须持有发布方实例，故这里只能即时解析，
             // 委托形式做不到。安全性由依赖方向单向保证：服务端的工厂不解析上游服务，
@@ -117,6 +120,10 @@ public static class MediaLinkServiceCollectionExtensions
                 upstream,
                 provider.GetRequiredService<AudioPlaybackService>(),
                 settingsAccessor);
+
+            // 对齐必须接在播放之后：同一事件按订阅顺序执行，播放先 Configure，
+            // 对齐重算才能读到起播后的设备事实。
+            MediaLinkAudioWiring.ConnectAlignment(upstream);
             return upstream;
         });
         services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());

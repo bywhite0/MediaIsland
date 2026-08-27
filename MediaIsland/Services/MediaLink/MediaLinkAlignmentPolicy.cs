@@ -70,13 +70,19 @@ internal static class MediaLinkAlignmentPolicy
     /// </summary>
     /// <param name="serverSupportsAudioClock">对端的 capabilities 里有没有 audio.clock。</param>
     /// <param name="declaredBudgetMs">对端声明的播放延迟预算。null 表示没声明。</param>
-    /// <param name="deviceLatencyMs">本机设备取走数据之后到出声那段的估计。</param>
+    /// <param name="deviceLatencyMs">本机设备取走数据之后到出声那段的估计（引擎周期加流延迟）。</param>
+    /// <param name="deviceBufferMs">
+    /// 端点缓冲的容量。渲染循环每轮把可写帧全写满，一个采样最坏要等整整一个容量才被
+    /// 取走，故它是下限的组成部分。是容量不是占用——占用由位置锚点逐轮测得并已在
+    /// <paramref name="deviceLatencyMs"/> 之外单独处理，两者相加是把同一段延迟计两次。
+    /// </param>
     /// <param name="minTargetMs">抖动缓冲的最小目标深度，即本机延迟的下限。</param>
     /// <param name="clockOffsetAvailable">跨机 offset 此刻可用。</param>
     public static MediaLinkAlignmentDecision Decide(
         bool serverSupportsAudioClock,
         long? declaredBudgetMs,
         double deviceLatencyMs,
+        double deviceBufferMs,
         int minTargetMs,
         bool clockOffsetAvailable)
     {
@@ -106,16 +112,17 @@ internal static class MediaLinkAlignmentPolicy
                 $"播放延迟预算 {budgetMs}ms 超出上界 {MaxBudgetMs}ms，本机无从执行，已按不对齐播放");
         }
 
-        // 本机最小可达延迟 = 设备尾段延迟 + 最小抖动缓冲深度。预算装不下它就对不齐，
-        // 此时不假装对齐——假装的表现是缓冲被压到下限后误差永久为正，而外环撞着边界
-        // 反复告警，看起来像控制律坏了。
-        var headroomMs = budgetMs - deviceLatencyMs;
+        // 本机最小可达延迟 = 设备尾段延迟 + 端点缓冲容量 + 最小抖动缓冲深度。预算装不下
+        // 它就对不齐，此时不假装对齐——假装的表现是缓冲被压到下限后误差永久为正，而外环
+        // 撞着边界反复告警，看起来像控制律坏了。缓冲容量缺了会把下限系统性低估约 20 毫秒
+        // （本仓请求 20ms 缓冲，设备可给更大），预算落在下限附近的机器就会误判「能对齐」。
+        var headroomMs = budgetMs - deviceLatencyMs - deviceBufferMs;
         if (headroomMs < minTargetMs)
         {
             return new MediaLinkAlignmentDecision(
                 MediaLinkAlignmentState.BudgetTooSmall,
-                $"播放延迟预算 {budgetMs}ms 减去本机设备延迟 {deviceLatencyMs:F1}ms 后"
-                + $"不足最小缓冲 {minTargetMs}ms，已按不对齐播放");
+                $"播放延迟预算 {budgetMs}ms 减去本机设备延迟 {deviceLatencyMs:F1}ms"
+                + $"与端点缓冲 {deviceBufferMs:F1}ms 后不足最小缓冲 {minTargetMs}ms，已按不对齐播放");
         }
 
         if (!clockOffsetAvailable)

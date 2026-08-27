@@ -30,9 +30,11 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     private readonly AudioVisualizationDemand? _demand;
     private readonly Func<bool>? _downstreamAudioDemand;
     private readonly Func<byte[], CancellationToken, Task>? _audioForwarder;
+    private readonly Audio.Playback.AudioPlaybackService? _playback;
 
     private MediaLinkClient? _client;
     private MediaLinkAudioRelay? _audioRelay;
+    private MediaLinkAlignmentCoordinator? _alignment;
     private PluginSettings? _boundSettings;
     private CancellationTokenSource? _debounceCts;
     private bool _upstreamAudioEnabled;
@@ -57,7 +59,8 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         IAudioFrameSubmitter? visualization = null,
         AudioVisualizationDemand? visualizationDemand = null,
         Func<bool>? downstreamAudioDemandAccessor = null,
-        Func<byte[], CancellationToken, Task>? audioForwarder = null)
+        Func<byte[], CancellationToken, Task>? audioForwarder = null,
+        Audio.Playback.AudioPlaybackService? playback = null)
     {
         _injectionStore = injectionStore ?? throw new ArgumentNullException(nameof(injectionStore));
         _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
@@ -69,6 +72,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         _demand = visualizationDemand;
         _downstreamAudioDemand = downstreamAudioDemandAccessor;
         _audioForwarder = audioForwarder;
+        _playback = playback;
     }
 
     public bool IsConnected => _client?.IsConnected == true;
@@ -201,10 +205,14 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
     ///
     /// 缓冲深度不影响订阅，但重算无论走哪条分支都会发出 <see cref="AudioSourceChanged"/>，
     /// 播放侧据此拿到新深度并重启。把两者收在同一个信号里，比多接一条边少一处可漏的。
+    ///
+    /// 对齐开关同理搭这个信号的车：它既不影响订阅也不影响播放启停，要的只是让对齐
+    /// 协调方重算一次并把新开关下发给渲染器。
     /// </summary>
     internal static bool AffectsAudioRouting(string? propertyName) =>
         propertyName is nameof(PluginSettings.MediaLinkPlaybackIsEnabled)
-            or nameof(PluginSettings.MediaLinkPlaybackBufferMs);
+            or nameof(PluginSettings.MediaLinkPlaybackBufferMs)
+            or nameof(PluginSettings.MediaLinkAlignmentIsEnabled);
 
     private void DebouncedReload()
     {
@@ -273,6 +281,21 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             client.LyricsReceived += OnLyricsReceived;
             client.ThumbnailReceived += OnThumbnailReceived;
             client.ConnectionStateChanged += OnClientConnectionStateChanged;
+
+            if (_playback is not null)
+            {
+                // 对齐协调方与客户端同生共死：委托捕获的是本次的 client，客户端随设置
+                // 热更新重建时协调方跟着重建，不存在跨代实例的订阅残留。
+                _alignment = new MediaLinkAlignmentCoordinator(
+                    _playback,
+                    () => client.ServerDeclaration,
+                    () => client.TryGetAudioClockWireOffset(out var offsetTicks, out _)
+                        ? (true, offsetTicks)
+                        : (false, 0L),
+                    () => _settingsFactory().MediaLinkAlignmentIsEnabled,
+                    _loggerFactory?.CreateLogger<MediaLinkAlignmentCoordinator>());
+                client.AudioClockStateChanged += OnAudioClockStateChanged;
+            }
 
             if (_visualization is not null)
             {
@@ -507,6 +530,16 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         RecomputeAudioSubscription();
     }
 
+    /// <summary>对时或声明变了就重算对齐。触发源见 <see cref="MediaLinkClient.AudioClockStateChanged"/>。</summary>
+    private void OnAudioClockStateChanged(object? sender, EventArgs e) => RecomputeAlignment();
+
+    /// <summary>
+    /// 重算对齐并下发。提升为 internal 供接线边调用：音源仲裁变化经
+    /// <see cref="AudioSourceChanged"/> 先驱动播放启停，再驱动本方法——顺序由接线的
+    /// 订阅次序保证，播放起来之后重算才能读到真实的设备事实。
+    /// </summary>
+    internal void RecomputeAlignment() => _alignment?.Recompute();
+
     /// <summary>
     /// HandleAsync 自身吞掉接收与转发两侧的全部异常，故此处不需要 try。
     ///
@@ -569,9 +602,11 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         _client.ThumbnailReceived -= OnThumbnailReceived;
         _client.ConnectionStateChanged -= OnClientConnectionStateChanged;
         _client.AudioFrameReceived -= OnAudioFrameReceived;
+        _client.AudioClockStateChanged -= OnAudioClockStateChanged;
         await _client.StopAsync();
         _client = null;
         _audioRelay = null;
+        _alignment = null;
         _upstreamAudioEnabled = false;
         // 忘掉已问记录：换了连接就得重新问，否则重连后当前曲目的封面永远补不上。
         _requestedThumbnailToken = null;

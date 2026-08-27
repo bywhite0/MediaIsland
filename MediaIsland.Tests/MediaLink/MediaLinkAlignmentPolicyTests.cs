@@ -17,9 +17,10 @@ public class MediaLinkAlignmentPolicyTests
         bool capability = true,
         long? budgetMs = 300,
         double deviceLatencyMs = 10,
+        double deviceBufferMs = 0,
         bool offsetAvailable = true) =>
         MediaLinkAlignmentPolicy.Decide(
-            capability, budgetMs, deviceLatencyMs, MinTargetMs, offsetAvailable);
+            capability, budgetMs, deviceLatencyMs, deviceBufferMs, MinTargetMs, offsetAvailable);
 
     [Fact]
     public void EverythingInPlace_Aligns()
@@ -73,6 +74,30 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Equal(
             MediaLinkAlignmentState.BudgetTooSmall,
             Decide(budgetMs: 300, deviceLatencyMs: 260).State);
+    }
+
+    [Fact]
+    public void TheEndpointBufferCapacityCountsTowardTheFloor()
+    {
+        // 渲染循环每轮把可写帧全写满，一个采样最坏要等整整一个缓冲容量才被取走。
+        // 下限算式缺这一项就是系统性低估约 20 毫秒：预算落在下限附近的机器会判
+        // 「能对齐」而实际达不到，表现是缓冲被压到下限后误差永久为正、外环撞边界告警。
+        Assert.Equal(
+            MediaLinkAlignmentState.BudgetTooSmall,
+            Decide(budgetMs: MinTargetMs + 30, deviceLatencyMs: 10, deviceBufferMs: 25).State);
+
+        // 边界成对：容量缩到余量恰好装得下时要对齐。
+        Assert.True(Decide(budgetMs: MinTargetMs + 30, deviceLatencyMs: 10, deviceBufferMs: 20).IsAligned);
+    }
+
+    [Fact]
+    public void TheBufferReasonNamesTheCapacitySoTheUserKnowsWhatToChange()
+    {
+        // 四个数各是一个可动的旋钮：预算（服务端配置）、设备延迟（换设备）、
+        // 缓冲容量（设备定的，换设备）、最小缓冲（本机常量）。少报一个就少一条排查路。
+        var reason = Decide(budgetMs: MinTargetMs + 30, deviceLatencyMs: 10, deviceBufferMs: 25).Reason;
+
+        Assert.Contains("25.0", reason);
     }
 
     [Fact]

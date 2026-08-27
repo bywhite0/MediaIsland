@@ -70,6 +70,21 @@ internal sealed class WasapiRenderer : IAudioRenderer
         return (min, max);
     }
 
+    /// <summary>
+    /// 接口形态的区间读取。native 不可用时返回 (0, 0)——那时播放起不来，
+    /// 对齐判定不会被真正消费；返回零比抛异常好，调用方读事实不该被库缺失打断。
+    /// </summary>
+    public (int MinTargetMs, int MaxTargetMs) TargetDepthBounds()
+    {
+        if (!AudioRenderNative.IsAvailable)
+        {
+            return (0, 0);
+        }
+
+        var (min, max) = TargetMsBounds();
+        return ((int)min, (int)max);
+    }
+
     public void Start(int targetBufferMs)
     {
         lock (_gate)

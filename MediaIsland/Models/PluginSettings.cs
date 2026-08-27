@@ -482,6 +482,27 @@ namespace MediaIsland.Models
             }
         }
 
+        private bool _mediaLinkAlignmentIsEnabled;
+
+        /// <summary>
+        /// 是否对齐跨机播放的出声时刻。默认关——按需付费的边界：开了对齐的用户才为
+        /// 48kHz 端点的重采样器付 CPU，而多数用户两台机器不在同一个房间，对不对齐
+        /// 无从听出。
+        ///
+        /// 只表示用户要不要，不表示此刻能不能：可行性由发送端声明的预算、本机设备
+        /// 延迟与对时状态在运行时判，判不过时声音照出、只是不对齐，并记下原因。
+        /// </summary>
+        public bool MediaLinkAlignmentIsEnabled
+        {
+            get => _mediaLinkAlignmentIsEnabled;
+            set
+            {
+                if (_mediaLinkAlignmentIsEnabled == value) return;
+                _mediaLinkAlignmentIsEnabled = value;
+                OnPropertyChanged();
+            }
+        }
+
         /// <summary>抖动缓冲的默认目标深度。对 WiFi 的重传与漫游尖峰够用。</summary>
         public const int DefaultPlaybackBufferMs = 200;
 

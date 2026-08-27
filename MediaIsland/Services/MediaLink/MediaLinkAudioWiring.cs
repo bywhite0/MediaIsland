@@ -89,4 +89,18 @@ public static class MediaLinkAudioWiring
         bool consumingUpstreamAudio) =>
         (settings.MediaLinkPlaybackIsEnabled && consumingUpstreamAudio,
             settings.MediaLinkPlaybackBufferMs);
+
+    /// <summary>
+    /// 接上对齐的重算边。必须在 <see cref="ConnectPlayback"/> 之后调用——两者都订阅
+    /// <see cref="MediaLinkUpstreamHostedService.AudioSourceChanged"/>，多播委托按订阅
+    /// 顺序执行，播放的 Configure 先跑完，对齐重算才能读到起播后的设备事实。
+    /// 反过来接，起播那一拍的重算读到的设备延迟与缓冲全是零，可行性会按空事实误判，
+    /// 直到下一轮对时探测（最长一秒）才纠正。
+    /// </summary>
+    public static void ConnectAlignment(MediaLinkUpstreamHostedService upstream)
+    {
+        ArgumentNullException.ThrowIfNull(upstream);
+
+        upstream.AudioSourceChanged += (_, _) => upstream.RecomputeAlignment();
+    }
 }

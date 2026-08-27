@@ -256,8 +256,9 @@ public sealed class MediaLinkClient : IAsyncDisposable
     public event EventHandler? ConnectionStateChanged;
 
     /// <summary>
-    /// 对时状态可能变了。每轮探测后触发，含失败轮——失联累积到清窗那一刻，
-    /// offset 由可用变不可用，消费方必须得到通知才能把播放退回非对齐。
+    /// 对时或对齐输入可能变了：每轮探测后触发（含失败轮——失联累积到清窗那一刻，
+    /// offset 由可用变不可用），server.hello 应用后也触发（能力与预算就是对齐判定的
+    /// 另一半输入，重发改 D 时消费方要立刻重算，不能等下一轮探测）。
     /// </summary>
     public event EventHandler? AudioClockStateChanged;
 
@@ -653,6 +654,10 @@ public sealed class MediaLinkClient : IAsyncDisposable
                 payload?.AudioClock?.BudgetMs));
 
         HandleEpoch(payload?.SessionEpoch ?? 0);
+
+        // 声明是对齐判定的输入之一。重发改 D 的那一刻就要让消费方重算——
+        // 退回或重新进入都不该等到下一轮探测才发生。
+        AudioClockStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>

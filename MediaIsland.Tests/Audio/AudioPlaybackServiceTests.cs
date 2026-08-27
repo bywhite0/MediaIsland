@@ -97,6 +97,11 @@ public class AudioPlaybackServiceTests
 
         public AudioRenderStats ReadStats() => Stats;
 
+        /// <summary>目标深度区间。真实实现取自 native 常量，这里可写以驱动判定边界。</summary>
+        public (int MinTargetMs, int MaxTargetMs) DepthBounds { get; set; } = (50, 1000);
+
+        public (int MinTargetMs, int MaxTargetMs) TargetDepthBounds() => DepthBounds;
+
         public void EmitPlayed(AudioFrame frame) => FramePlayed?.Invoke(frame);
 
         public void Dispose() { }
