@@ -51,33 +51,48 @@ internal sealed class MediaLinkAlignmentCoordinator
     {
         lock (_gate)
         {
-            var declaration = _declaration();
-            var enabled = _alignmentEnabled();
-            var facts = _playback.ReadAlignmentFacts();
-            var (offsetAvailable, offsetTicks) = _wireOffset();
-
-            var decision = MediaLinkAlignmentPolicy.Decide(
-                declaration.SupportsAudioClock,
-                declaration.AudioClockBudgetMs,
-                facts.DeviceLatencyMs,
-                facts.DeviceBufferMs,
-                facts.MinTargetMs,
-                offsetAvailable);
-
-            // D 与 offset 只在判定通过时下发。判不过还带着值，外环就会拿着一个已被
-            // 判死的目标继续走步——那正是「假装对齐」的形态。上界已在判定里挡过，
-            // 这里换算 100ns 不会溢出。
-            var aligned = decision.IsAligned;
-            _playback.ConfigureAlignment(
-                enabled,
-                aligned && declaration.AudioClockBudgetMs is { } budgetMs
-                    ? budgetMs * MonotonicClock.TicksPerMs100Ns
-                    : 0,
-                aligned ? offsetTicks : 0,
-                manualOffsetTicks: 0);
-
-            LogTransition(enabled, facts.HasStarted, decision);
+            try
+            {
+                RecomputeUnlocked();
+            }
+            catch (Exception ex)
+            {
+                // 对齐是增强项。重算的意外（读设备事实撞上任何异常）不该沿着触发它的
+                // 事件链上溯——那条链的另一端是音源仲裁与连接生命周期，炸在那里
+                // 的症状与对齐毫无关联。
+                _logger?.LogDebug(ex, "[音频:对齐] 重算失败，保持上一次下发的参数。");
+            }
         }
+    }
+
+    private void RecomputeUnlocked()
+    {
+        var declaration = _declaration();
+        var enabled = _alignmentEnabled();
+        var facts = _playback.ReadAlignmentFacts();
+        var (offsetAvailable, offsetTicks) = _wireOffset();
+
+        var decision = MediaLinkAlignmentPolicy.Decide(
+            declaration.SupportsAudioClock,
+            declaration.AudioClockBudgetMs,
+            facts.DeviceLatencyMs,
+            facts.DeviceBufferMs,
+            facts.MinTargetMs,
+            offsetAvailable);
+
+        // D 与 offset 只在判定通过时下发。判不过还带着值，外环就会拿着一个已被
+        // 判死的目标继续走步——那正是「假装对齐」的形态。上界已在判定里挡过，
+        // 这里换算 100ns 不会溢出。
+        var aligned = decision.IsAligned;
+        _playback.ConfigureAlignment(
+            enabled,
+            aligned && declaration.AudioClockBudgetMs is { } budgetMs
+                ? budgetMs * MonotonicClock.TicksPerMs100Ns
+                : 0,
+            aligned ? offsetTicks : 0,
+            manualOffsetTicks: 0);
+
+        LogTransition(enabled, facts.HasStarted, decision);
     }
 
     /// <summary>
