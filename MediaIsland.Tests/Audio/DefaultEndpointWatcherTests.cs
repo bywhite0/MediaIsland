@@ -7,8 +7,9 @@ namespace MediaIsland.Tests.Audio;
 /// 默认渲染端点的轮询检测器。判据全部用手动泵，不碰真设备：变化判定与缓存语义是
 /// 纯托管逻辑，接真 COM 只会让结果取决于跑测试的机器插了什么。
 ///
-/// 这里钉四件事——变化只报一次且只认「非 null → 不同的非 null」、不变与首拍零触发、
-/// null 往返的三种走向、读缓存永不触发枚举（频次的界只由泵拍数决定）。
+/// 这里钉五件事——变化只报一次且只认「非 null → 不同的非 null」、不变与首拍零触发、
+/// null 往返的三种走向、读缓存永不触发枚举（频次的界只由泵拍数决定）、
+/// 泵拍语义分化（恢复拍静默对齐、进场拍只刷缓存，两者都不派发事件）。
 /// </summary>
 public class DefaultEndpointWatcherTests
 {
@@ -196,7 +197,7 @@ public class DefaultEndpointWatcherTests
     [Fact]
     public void UiVisibility_OpensTheGateAndPrimesTheCacheImmediately()
     {
-        // 设置页要读 HasPlaybackDevice 与 per-device 偏移。进场即泵一拍，
+        // 设置页要读 HasPlaybackDevice 与 per-device 偏移。进场拍只刷缓存，
         // 页面打开第一眼就有值；离场后门随之关上，不再为看不见的页面枚举。
         var provider = new ScriptedIdProvider("dev-a");
         using var watcher = new DefaultEndpointWatcher(provider.Next, static () => false);
@@ -210,6 +211,91 @@ public class DefaultEndpointWatcherTests
         watcher.Poll();
 
         Assert.Equal(1, provider.Calls);
+    }
+
+    [Fact]
+    public void GateReopening_AlignsSilentlyToTheDeviceChangedWhileClosed()
+    {
+        // 门关时段无会话在跑，关门期间换的设备不是「变化」是历史：
+        // 开门首拍（恢复拍）静默对齐基线，不得按 stale 基线多余重启一次。
+        var provider = new ScriptedIdProvider("dev-a", "dev-b");
+        var gateOpen = true;
+        // ReSharper disable once AccessToModifiedClosure
+        using var watcher = new DefaultEndpointWatcher(provider.Next, () => gateOpen);
+        var changes = 0;
+        watcher.DefaultEndpointChanged += (_, _) => changes++;
+
+        watcher.Poll();
+        gateOpen = false;
+        watcher.Poll();
+        gateOpen = true;
+        watcher.Poll();
+
+        Assert.Equal(0, changes);
+        Assert.Equal("dev-b", watcher.CachedId);
+    }
+
+    [Fact]
+    public void AfterRealignment_DetectionResumes_RaisingExactlyOnceForTheNextChange()
+    {
+        // 恢复拍只吞历史差异，不禁用后续检测。中间那个 dev-b 稳态拍钉住
+        // 「对齐真的更新了基线」——基线若停在 dev-a，稳态拍就会多报一次。
+        var provider = new ScriptedIdProvider("dev-a", "dev-b", "dev-b", "dev-c");
+        var gateOpen = true;
+        // ReSharper disable once AccessToModifiedClosure
+        using var watcher = new DefaultEndpointWatcher(provider.Next, () => gateOpen);
+        var changes = 0;
+        watcher.DefaultEndpointChanged += (_, _) => changes++;
+
+        watcher.Poll();
+        gateOpen = false;
+        watcher.Poll();
+        gateOpen = true;
+        watcher.Poll();
+        watcher.Poll();
+        watcher.Poll();
+
+        Assert.Equal(1, changes);
+        Assert.Equal("dev-c", watcher.CachedId);
+    }
+
+    [Fact]
+    public void EntryBeat_WithAStaleBaseline_RefreshesTheCacheWithoutRaising()
+    {
+        // 门关期间设备已换，进场拍只刷缓存：页面第一眼就有新值，但不比对不发事件
+        // ——事件发了重启链就同步跑在 UI 线程上。
+        var provider = new ScriptedIdProvider("dev-a", "dev-b");
+        var gateOpen = true;
+        // ReSharper disable once AccessToModifiedClosure
+        using var watcher = new DefaultEndpointWatcher(provider.Next, () => gateOpen);
+        var changes = 0;
+        watcher.DefaultEndpointChanged += (_, _) => changes++;
+
+        watcher.Poll();
+        gateOpen = false;
+        watcher.Poll();
+        watcher.SetUiVisible(true);
+
+        Assert.Equal(0, changes);
+        Assert.Equal("dev-b", watcher.CachedId);
+    }
+
+    [Fact]
+    public void EntryBeat_DoesNotSwallowAChange_TheNextTimerBeatStillRaises()
+    {
+        // 进场拍先看到了 A→B，但不动基线：变化留给下一个节拍拍在计时器线程上检出。
+        // 进场拍若顺手更新基线，这次变化就被吞了，重启永远不会发生。
+        var (watcher, _, changes) = Pumped("dev-a", "dev-b", "dev-b");
+        using var _ = watcher;
+
+        watcher.Poll();
+        watcher.SetUiVisible(true);
+        Assert.Equal(0, changes());
+
+        watcher.Poll();
+
+        Assert.Equal(1, changes());
+        Assert.Equal("dev-b", watcher.CachedId);
     }
 
     [Fact]
