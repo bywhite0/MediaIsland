@@ -85,6 +85,22 @@ public class MediaLinkAlignmentStatusLineTests
         Assert.Equal("误差 暂无", error);
     }
 
+    [Theory]
+    [InlineData((int)MediaLinkAlignmentState.NoCapability, "服务端不支持跨机对时，已按不对齐播放")]
+    [InlineData((int)MediaLinkAlignmentState.NoBudgetDeclared, "服务端未声明播放延迟预算，已按不对齐播放")]
+    [InlineData((int)MediaLinkAlignmentState.BudgetTooSmall, "播放延迟预算 12000ms 超出上界 10000ms，本机无从执行，已按不对齐播放")]
+    public void OtherPassThroughStates_EchoTheReasonVerbatim(int stateRaw, string reason)
+    {
+        // 归因臂对未特判态原样透出 s.Reason，而此前判据只过了 Aligned / NoClockOffset
+        // 两态——透传臂改成常量串时其余三个透传态无声。五态逐一过一遍才闸得住。
+        // 状态经 int 走线：枚举是 internal，公开测试方法的签名带不了它（xUnit v2
+        // 只发现 public 方法）。
+        var (attribution, _, _) = MediaLinkAlignmentStatusLine.Compose(
+            Snapshot(state: (MediaLinkAlignmentState)stateRaw, reason: reason));
+
+        Assert.Equal(reason, attribution);
+    }
+
     [Fact]
     public void BeforeSound_TheDepthValueIsUnavailableButTheRangeShows()
     {

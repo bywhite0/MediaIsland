@@ -542,4 +542,32 @@ public class AudioClockProbeTests
         Assert.Equal(2 * Ms, rtt);
         Assert.Equal(-(40 + 30) * Ms, wire);
     }
+
+    [Fact]
+    public async Task InconsistentWindowCount_IsReadableThroughTheProbe()
+    {
+        // 计数语义在估计器层已钉（AudioClockConsistencyTests），这里钉的是壳的委托：
+        // 生产侧（客户端探测循环的日志）只拿得到 probe，不透出计数就生产不可达。
+        // 构造与估计器判据的混窗同形：两个样本往返正常（各 2ms），offset 却差 5 秒，
+        // 一致性上界只有 (2 + 2) / 2 + 1 = 3 毫秒，互相对质必失败。
+        var (probe, _, _) = Build(p => p
+            .Answers(offsetMs: 40)
+            .Answers(offsetMs: 5040));
+
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+        Assert.True(await probe.ProbeOnceAsync(CancellationToken.None));
+
+        // 取 offset 之前计数不动：不一致是评估时才判的，喂样本本身不计。
+        Assert.Equal(0, probe.InconsistentWindows);
+        Assert.False(probe.TryGetOffset(out _, out _));
+        Assert.Equal(1, probe.InconsistentWindows);
+    }
+
+    [Fact]
+    public void SteadyInterval_IsPinnedToOneSecondLiterally()
+    {
+        // 字面锚防误改空转：既有接线判据引用常量自身，常量误改则判据跟着漂，
+        // 稳态周期缩水后探测循环对着对端空转刷 CPU 而无人知。
+        Assert.Equal(TimeSpan.FromSeconds(1), AudioClockProbe.SteadyInterval);
+    }
 }
