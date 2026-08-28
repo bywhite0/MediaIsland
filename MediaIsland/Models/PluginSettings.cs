@@ -589,14 +589,22 @@ namespace MediaIsland.Models
         /// 符号约定跟 native 的 actual 侧：正值表示这台设备真实出声比自动估计更晚。
         ///
         /// 读写走 <see cref="GetManualOffsetMs"/> / <see cref="SetManualOffsetMs"/>；
-        /// 属性本身只为序列化暴露。
+        /// 属性本身只为序列化暴露。声明 IReadOnlyDictionary 而非 Dictionary：
+        /// getter 交出可变字典等于绕过写侧的夹紧与写时复制，原地改写面在类型上堵死。
+        /// System.Text.Json 对该接口的收发都支持（反序列化实体化成 Dictionary），
+        /// 线格式不变，往返由 ManualOffsets_SurviveJsonRoundTrip 看守。
         /// </summary>
-        public Dictionary<string, int> MediaLinkManualOffsetsMs
+        public IReadOnlyDictionary<string, int> MediaLinkManualOffsetsMs
         {
             get => _mediaLinkManualOffsetsMs;
             set
             {
-                _mediaLinkManualOffsetsMs = value ?? new(StringComparer.Ordinal);
+                // 拷贝而不是收下引用：调用方（含反序列化器之外的任何人）手里若还留着
+                // 原字典，事后原地改它就等于绕过只读声明改内部状态——别名一断，
+                // 「不再变动的完整快照」这条读侧前提才在所有入口上成立。
+                _mediaLinkManualOffsetsMs = value is null
+                    ? new(StringComparer.Ordinal)
+                    : new Dictionary<string, int>(value, StringComparer.Ordinal);
                 OnPropertyChanged();
             }
         }

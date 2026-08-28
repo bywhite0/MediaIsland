@@ -281,4 +281,20 @@ public class PluginSettingsTests
         Assert.Equal(100, settings.GetManualOffsetMs("dev-a"));
         Assert.Equal(200, settings.GetManualOffsetMs("dev-b"));
     }
+
+    [Fact]
+    public void AssigningADictionary_CopiesInsteadOfKeepingTheAlias()
+    {
+        // IReadOnlyDictionary 只堵得住经属性拿出去的引用；调用方自己留着的原字典
+        // 不受声明约束，setter 收下引用的话，事后原地改原字典照样改进内部状态——
+        // 且绕过读侧夹紧之外的一切约定。别名断掉，只读声明才是完整的。
+        var incoming = new Dictionary<string, int> { ["dev-a"] = 100 };
+        var settings = new PluginSettings { MediaLinkManualOffsetsMs = incoming };
+
+        incoming["dev-a"] = 400;
+        incoming["dev-b"] = 50;
+
+        Assert.Equal(100, settings.GetManualOffsetMs("dev-a"));
+        Assert.Equal(0, settings.GetManualOffsetMs("dev-b"));
+    }
 }
