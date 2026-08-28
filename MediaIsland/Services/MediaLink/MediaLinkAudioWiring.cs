@@ -103,4 +103,30 @@ public static class MediaLinkAudioWiring
 
         upstream.AudioSourceChanged += (_, _) => upstream.RecomputeAlignment();
     }
+
+    /// <summary>
+    /// 接上默认设备变化的跟随边。变化后三个动作按序执行：播放按暂存请求停播重启，
+    /// 采集停止再启动（异步不等待，与播放侧无依赖），最后触发对齐重算——顺序与
+    /// <see cref="ConnectAlignment"/> 的排序理由相同，重算要读到重启后的新设备事实，
+    /// 反过来接会拿旧会话的事实判一次可行性，最长一秒后才纠正。watcher 的缓存在
+    /// 事件发出前已更新，重算取 per-device 偏移用的已经是新设备的键。
+    /// </summary>
+    public static void ConnectDeviceWatcher(
+        DefaultEndpointWatcher watcher,
+        AudioPlaybackService playback,
+        MediaLinkHostedService server,
+        MediaLinkUpstreamHostedService upstream)
+    {
+        ArgumentNullException.ThrowIfNull(watcher);
+        ArgumentNullException.ThrowIfNull(playback);
+        ArgumentNullException.ThrowIfNull(server);
+        ArgumentNullException.ThrowIfNull(upstream);
+
+        watcher.DefaultEndpointChanged += (_, _) =>
+        {
+            playback.RestartForDeviceChange();
+            _ = server.RestartAudioCaptureAsync();
+            upstream.RecomputeAlignment();
+        };
+    }
 }

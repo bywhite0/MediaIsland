@@ -50,10 +50,25 @@ public static class MediaLinkServiceCollectionExtensions
         // 容器持有 renderer，故它的 native 句柄与 GCHandle 随容器一起释放。
         services.AddSingleton<IAudioRenderer>(provider => new WasapiRenderer(
             provider.GetService<ILoggerFactory>()?.CreateLogger<WasapiRenderer>()));
+
+        // 默认设备 watcher：1 Hz 轮询检测 + 最近读值缓存。会话门用请求值而非在播——
+        // 重启失败后播放停在关闭态，设备再变仍要能重试。门与两侧的委托都延迟解析，
+        // 不产生构造期环（watcher 工厂本身什么都不解析）。
+        services.AddSingleton<DefaultEndpointWatcher>(provider => new DefaultEndpointWatcher(
+            DefaultRenderEndpoint.TryGetId,
+            sessionGate: () => provider.GetRequiredService<AudioPlaybackService>().RequestedIsEnabled
+                || provider.GetRequiredService<MediaLinkHostedService>().IsAudioCapturing,
+            pollInterval: TimeSpan.FromSeconds(1),
+            logger: provider.GetService<ILoggerFactory>()?.CreateLogger<DefaultEndpointWatcher>()));
+
         services.AddSingleton<AudioPlaybackService>(provider => new AudioPlaybackService(
             provider.GetRequiredService<AudioVisualizationService>(),
             provider.GetRequiredService<IAudioRenderer>(),
-            provider.GetService<ILoggerFactory>()?.CreateLogger<AudioPlaybackService>()));
+            provider.GetService<ILoggerFactory>()?.CreateLogger<AudioPlaybackService>(),
+            // 设备 ID 改读 watcher 缓存：每秒全仓只枚举一次（rv-t8 Minor 3 收口），
+            // 读多少遍都不再碰 COM。逐次解析以保持延迟，watcher 不在此处被构造。
+            deviceIdProvider: () =>
+                provider.GetRequiredService<DefaultEndpointWatcher>().CachedId));
         // 呈现侧只需要「本机输出延迟是多少」，不需要认识播放层。别名注册同 IEffectiveMediaSource：
         // 这条边断了不会报错，只会让跨机播放时歌词一直领先耳朵一个抖动缓冲的深度。
         services.AddSingleton<IAudioOutputLatency>(provider =>
@@ -124,6 +139,14 @@ public static class MediaLinkServiceCollectionExtensions
             // 对齐必须接在播放之后：同一事件按订阅顺序执行，播放先 Configure，
             // 对齐重算才能读到起播后的设备事实。
             MediaLinkAudioWiring.ConnectAlignment(upstream);
+
+            // 设备跟随边也在这里接：watcher 是惰性单例，upstream 工厂随宿主启动
+            // 必然执行，在此解析保证插件一起来 watcher 的节拍就在走。
+            MediaLinkAudioWiring.ConnectDeviceWatcher(
+                provider.GetRequiredService<DefaultEndpointWatcher>(),
+                provider.GetRequiredService<AudioPlaybackService>(),
+                provider.GetRequiredService<MediaLinkHostedService>(),
+                upstream);
             return upstream;
         });
         services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());

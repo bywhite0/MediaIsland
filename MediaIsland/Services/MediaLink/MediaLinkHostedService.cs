@@ -475,6 +475,16 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     /// <summary>下游是否有会话要音频。上游服务据此决定要不要向上游订阅 audio。</summary>
     public bool HasDownstreamAudioDemand => _hub?.HasDownstreamAudioDemand ?? false;
 
+    /// <summary>本机采集是否进行中。默认设备 watcher 的轮询门控读它——有采集会话就得盯着设备。</summary>
+    public bool IsAudioCapturing => _audioHub?.IsCapturing ?? false;
+
+    /// <summary>
+    /// 默认渲染端点变化后的采集跟随入口。hub 实例随服务端生命周期私有重建，
+    /// 外部接线只能经本服务转发；服务端没起来时无采集可重启，空操作。
+    /// </summary>
+    public Task RestartAudioCaptureAsync() =>
+        _audioHub?.RestartCaptureAsync(CancellationToken.None) ?? Task.CompletedTask;
+
     /// <summary>把一帧音频原样广播给订阅了 audio 的会话。无会话时是廉价的空操作。</summary>
     public Task BroadcastAudioFrameAsync(byte[] frame, CancellationToken cancellationToken = default) =>
         _hub?.BroadcastAudioFrameAsync(frame, cancellationToken) ?? Task.CompletedTask;

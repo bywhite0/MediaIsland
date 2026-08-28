@@ -88,7 +88,9 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     ///
     /// 语义是「渲染器出声的那个端点」。native 起播时恒绑系统默认渲染端点且不回传 ID，
     /// 故这里按同一条规则取默认端点的 ID，两侧指向同一个端点；播放中换默认设备的
-    /// 短暂不一致窗口见 <see cref="DefaultRenderEndpoint"/>。
+    /// 短暂不一致窗口见 <see cref="DefaultRenderEndpoint"/>。生产接线把 provider 指到
+    /// <see cref="DefaultEndpointWatcher"/> 的缓存——每秒全仓只枚举一次，
+    /// 本属性读多少遍都不再碰 COM。
     /// </summary>
     public string? CurrentPlaybackDeviceId => _deviceIdProvider();
 

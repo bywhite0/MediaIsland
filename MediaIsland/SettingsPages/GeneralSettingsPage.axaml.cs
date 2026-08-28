@@ -48,6 +48,7 @@ namespace MediaIsland.SettingsPages
         private readonly MediaLinkInjectionStore? _injectionStore;
         private readonly MediaLinkUpstreamHostedService? _upstream;
         private readonly AudioPlaybackService? _playback;
+        private readonly DefaultEndpointWatcher? _endpointWatcher;
         private string _mediaLinkStatusText = "未启用";
         private string _mediaLinkExposureWarning = string.Empty;
         private string _mediaLinkUpstreamStatusText = "未启用";
@@ -330,7 +331,8 @@ namespace MediaIsland.SettingsPages
             IEffectiveMediaSource? effectiveMediaSource = null,
             MediaLinkInjectionStore? injectionStore = null,
             MediaLinkUpstreamHostedService? upstream = null,
-            AudioPlaybackService? playback = null)
+            AudioPlaybackService? playback = null,
+            DefaultEndpointWatcher? endpointWatcher = null)
         {
             Plugin = plugin;
             Settings = Plugin.Settings;
@@ -342,12 +344,23 @@ namespace MediaIsland.SettingsPages
             _injectionStore = injectionStore;
             _upstream = upstream;
             _playback = playback;
+            _endpointWatcher = endpointWatcher;
             RemoveNullMediaSources();
             InitializeComponent();
             LoadLyricsSettings();
+            // 页面可见时为设备 watcher 开门：HasPlaybackDevice 与 per-device 偏移读的是
+            // watcher 缓存，没有这扇门，无会话时打开设置页会读到停更的旧值。
+            // 进场泵一拍后缓存已有值，回发通知让两个绑定立即回读。
+            AttachedToVisualTree += (_, _) =>
+            {
+                _endpointWatcher?.SetUiVisible(true);
+                OnPropertyChanged(nameof(HasPlaybackDevice));
+                OnPropertyChanged(nameof(MediaLinkManualOffsetMs));
+            };
             DetachedFromVisualTree += (_, _) =>
             {
                 _isDetached = true;
+                _endpointWatcher?.SetUiVisible(false);
                 UnsubscribeMediaLinkGateway();
                 UnsubscribeUpstream();
                 Settings.PropertyChanged -= OnPluginSettingsChangedForMediaLink;
