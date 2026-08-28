@@ -1022,8 +1022,11 @@ function alignState() {
   // 判据归属同上：由 Python 侧自检钉住。
   if (budget + Math.max(manualOffsetMs(), 0) > MAX_BUFFER_MS) {
     // 深度超过积压上限时，帧在等到目标时刻之前就会被「丢最新」边界顶掉，
-    // 对齐会被静默顶穿——与其那样，不如退回并说明。
-    align.fellBack = `预算 dMs=${align.dMs}ms 超出本示例缓冲上限 ${MAX_BUFFER_MS}ms——调小发送端 dMs，或回拨偏移滑块`;
+    // 对齐会被静默顶穿——与其那样，不如退回并说明。滑块在 0 时不提滑块：
+    // 空指的建议会把排查方向指错（照 Python 侧 aligned_depth_ms 的形态条件化）。
+    const plus = manualOffsetMs() > 0 ? ` 加正向手动偏移 ${manualOffsetMs()}ms` : '';
+    align.fellBack = `预算 dMs=${align.dMs}ms${plus} 超出本示例缓冲上限 ${MAX_BUFFER_MS}ms——调小发送端 dMs`
+      + (manualOffsetMs() > 0 ? '，或回拨偏移滑块' : '');
     return 'off';
   }
   if (clock.unsupported) {
