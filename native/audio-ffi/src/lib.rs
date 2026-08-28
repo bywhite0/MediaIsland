@@ -500,9 +500,9 @@ pub unsafe extern "C" fn mediaisland_audio_render_create(
 /// 不支持在线调整深度：改动设置即停播重启。深度变更要么丢音要么静音填充，
 /// 两者都不如一次干净的重启，而这是罕见操作。
 ///
-/// 对齐设置必须先于本函数设好。48kHz 端点的内环在这一刻定型——起播时若对齐是关的，
-/// 该端点不建重采样器，此后打开对齐也没有执行器可用。见
-/// [`mediaisland_audio_render_set_alignment`] 的时序契约。
+/// `alignment_enabled` 是起播参数：48kHz 端点的内环在起播这一刻定型——据它决定
+/// 建不建重采样器，会话内不可变——故它随本函数进来，先写进对齐载体再拉起渲染线程。
+/// 运行时会变的三个量走 [`mediaisland_audio_render_set_alignment`]。
 ///
 /// # Safety
 /// `handle` 必须是 [`mediaisland_audio_render_create`] 返回且尚未销毁的指针。
@@ -510,6 +510,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_create(
 pub unsafe extern "C" fn mediaisland_audio_render_start(
     handle: *mut RenderHandle,
     target_buffer_ms: u32,
+    alignment_enabled: bool,
 ) -> i32 {
     let Some(handle) = handle.as_ref() else {
         return STATUS_INVALID_ARG;
@@ -517,14 +518,16 @@ pub unsafe extern "C" fn mediaisland_audio_render_start(
 
     #[cfg(not(windows))]
     {
-        let _ = target_buffer_ms;
+        let _ = (target_buffer_ms, alignment_enabled);
         handle.set_error(Some("当前平台不支持音频播放".to_string()));
         STATUS_UNSUPPORTED_PLATFORM
     }
 
     #[cfg(windows)]
     {
-        match catch_unwind(AssertUnwindSafe(|| handle.inner.start(target_buffer_ms))) {
+        match catch_unwind(AssertUnwindSafe(|| {
+            handle.inner.start(target_buffer_ms, alignment_enabled)
+        })) {
             Ok(Ok(())) => {
                 handle.set_error(None);
                 STATUS_OK
@@ -748,35 +751,26 @@ impl FfiBuffer {
     }
 }
 
-/// 下发对齐参数。
+/// 下发运行时对齐参数。
 ///
 /// `d_ticks` 是发送端声明的播放延迟预算（`出声时刻 = capturedAt + D`），
 /// `offset_ticks` 是本机单调时钟减发送端时钟，`manual_offset_ticks` 是用户为本设备
-/// 手调的偏移。三者单位均为 100ns。
+/// 手调的偏移。三者单位均为 100ns，都是随对时结果与设置变化的运行时量：
+/// 播放中随时可调，未起播的句柄也可以调用——参数存在句柄上，渲染循环每轮读。
 ///
-/// `enabled` 是用户的对齐设置，仅此而已——它不兼作 offset 的可用性标志。
-/// offset 不可用由 `offset_ticks` 为 0 表示：offset 是本机 QPC（自开机起算）减发送端
-/// 墙钟的 100ns 表示（自 1970 起算），两者相差约 1.7e16 tick，恰好抵成 0 要求发送端的
-/// 墙钟等于本机的开机时长，故 0 是不可能值。调用方必须知道这条编码约定。
+/// 对齐开关不在参数表里：enabled 是起播时点的量（决定建不建执行器，会话内不可变），
+/// 随 [`mediaisland_audio_render_start`] 进来。
 ///
-/// 把「offset 不可用」写成 `enabled` 为假是错的，且错法是静默的：48kHz 端点的内环
-/// 在起播那一刻按 `enabled` 决定建不建重采样器，起播时传假就永远没有执行器，
-/// 而几秒后 offset 到了也无处施力——声音照出，判据照绿，只是永远对不齐。
-///
-/// 时序契约：48kHz 端点的内环在 [`mediaisland_audio_render_start`] 那一刻定型，
-/// 故对齐设置必须在 `render_start` 之前设好。起播后再打开对齐，48kHz 端点不会获得内环
-/// （非 48kHz 端点本就为重采样建了，不受此限）。未起播的句柄可以调用本函数：
-/// 参数存在句柄上，下次起播的渲染循环会读到。
-///
-/// 播放中调用是允许的，用于更新 `offset_ticks` 与 `manual_offset_ticks` 这两个会随
-/// 对时结果变化的量；但把 `enabled` 由假改真不会追补内环。
+/// offset 不可用由 `offset_ticks` 为 0 表示，它不兼作别的：offset 是本机 QPC
+/// （自开机起算）减发送端墙钟的 100ns 表示（自 1970 起算），两者相差约 1.7e16 tick，
+/// 恰好抵成 0 要求发送端的墙钟等于本机的开机时长，故 0 是不可能值。
+/// 调用方必须知道这条编码约定。
 ///
 /// # Safety
 /// `handle` 同 [`mediaisland_audio_render_start`]。
 #[no_mangle]
 pub unsafe extern "C" fn mediaisland_audio_render_set_alignment(
     handle: *mut RenderHandle,
-    enabled: bool,
     d_ticks: i64,
     offset_ticks: i64,
     manual_offset_ticks: i64,
@@ -787,7 +781,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_set_alignment(
 
     #[cfg(not(windows))]
     {
-        let _ = (enabled, d_ticks, offset_ticks, manual_offset_ticks);
+        let _ = (d_ticks, offset_ticks, manual_offset_ticks);
         handle.set_error(Some("当前平台不支持音频播放".to_string()));
         STATUS_UNSUPPORTED_PLATFORM
     }
@@ -796,7 +790,7 @@ pub unsafe extern "C" fn mediaisland_audio_render_set_alignment(
     {
         handle
             .inner
-            .set_alignment(enabled, d_ticks, offset_ticks, manual_offset_ticks);
+            .set_alignment(d_ticks, offset_ticks, manual_offset_ticks);
         STATUS_OK
     }
 }
@@ -942,7 +936,7 @@ mod tests {
     #[test]
     fn render_start_rejects_null_handle() {
         assert_eq!(
-            unsafe { mediaisland_audio_render_start(ptr::null_mut(), 200) },
+            unsafe { mediaisland_audio_render_start(ptr::null_mut(), 200, false) },
             STATUS_INVALID_ARG
         );
     }

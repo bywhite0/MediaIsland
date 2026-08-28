@@ -313,19 +313,20 @@ pub fn build_resampler(
 
 /// 对齐参数的可写载体。
 ///
-/// 与 [`TargetDepthCell`] 同一形态与同一理由：托管侧要在播放中改它，而渲染线程每轮读。
-/// 四个值各自一个原子、不保证同一瞬间——它们变化的时间尺度是秒级（对时窗口更新、
-/// 用户拖动偏移），而渲染轮次是十毫秒级，跨轮取到新旧混合的一组至多影响一轮。
+/// 与 [`TargetDepthCell`] 同一形态与同一理由：托管侧写它，渲染线程每轮读。
+/// 四个值按生命周期分成两半，写入口也分成两半：
 ///
-/// `enabled` 与「offset 是否可用」是两件事，不能合成一个位：
+/// - `enabled` 是起播时点的量：它决定要不要付重采样器的代价，而那个决定只能在
+///   起播那一刻做（重建要在实时线程上分配），会话内不可变。[`WasapiRenderer::start`]
+///   在拉起渲染线程之前写它恰好一次，此后没有别的写者——「先设好再起播」不再是
+///   调用方要记住的约定，而是参数表的形状。
+/// - d / offset / manual_offset 是运行时量，随对时结果与设置变化，播放中随时可写。
+///   三个值各自一个原子、不保证同一瞬间——它们变化的时间尺度是秒级（对时窗口更新、
+///   用户拖动偏移），而渲染轮次是十毫秒级，跨轮取到新旧混合的一组至多影响一轮。
 ///
-/// - `enabled` 是用户的对齐设置，起播前已知、极少变。它决定要不要付重采样器的代价，
-///   而那个决定只能在起播那一刻做（重建要在实时线程上分配）。
-/// - offset 可用性是运行时状态，连上几秒后才有，且会在对端失联时消失。它决定外环
-///   此刻能不能动。
-///
-/// 两者合一的写法会让 48k 端点在「起播时还没对上时钟、几秒后对上了」这条最常见的
-/// 时序上没有内环——重采样器在起播那一刻已经决定不建了。
+/// `enabled` 与「offset 是否可用」仍是两件事，不能合成一个位：前者决定建不建执行器，
+/// 后者决定外环此刻能不能动。两者合一的写法会让 48k 端点在「起播时还没对上时钟、
+/// 几秒后对上了」这条最常见的时序上没有内环。
 ///
 /// offset 不可用由 `offset_ticks` 为 0 表示。0 是不可能值：offset 是本机 QPC（自开机
 /// 起算）减发送端墙钟的 100ns 表示（自 1970 起算），两者相差约 1.7e16 tick，
@@ -340,30 +341,34 @@ pub struct AlignmentCell {
 }
 
 impl AlignmentCell {
-    pub fn set(&self, enabled: bool, d_ticks: i64, offset_ticks: i64, manual_offset_ticks: i64) {
+    /// 写起播参数。只该由 [`WasapiRenderer::start`] 在拉起渲染线程之前调用。
+    ///
+    /// Release 与 [`AlignmentCell::is_enabled`] 的 Acquire 配对。托管侧的起播路径
+    /// 先补发暂存的运行时三项（另一次 FFI 调用，同一条托管线程），随后才走到这里——
+    /// Release store 把程序顺序上先行的那三次 Relaxed store 一并带给读到真值的读者，
+    /// 故读到启用位为真即保证起播前下发的三项也已可见。
+    ///
+    /// x86-TSO 下硬件本就不重排 store，这处写对与写错在本机实测上不可区分——
+    /// 它只能靠推理保证，不能靠一条判据。
+    pub fn set_enabled(&self, enabled: bool) {
+        self.enabled
+            .store(u32::from(enabled), AtomicOrdering::Release);
+    }
+
+    /// 写运行时三项。播放中随时可调，未起播时也可调——值存在这里等下次会话读。
+    pub fn set_runtime(&self, d_ticks: i64, offset_ticks: i64, manual_offset_ticks: i64) {
         self.d_ticks.store(d_ticks, AtomicOrdering::Relaxed);
         self.offset_ticks
             .store(offset_ticks, AtomicOrdering::Relaxed);
         self.manual_offset_ticks
             .store(manual_offset_ticks, AtomicOrdering::Relaxed);
-        // 启用位最后写，且必须是 Release：它是其余三项的闸门。
-        //
-        // 光靠「程序顺序上最后写」不构成闸门。Relaxed 只保证单个地址上的原子性，
-        // 不在不同地址之间建立任何顺序——编译器可以重排这四次对不同地址的 store，
-        // 于是读者可以看到启用位为真配上三个旧值，正是这里要挡的那种形态。
-        // Release 与 is_enabled 的 Acquire 配对，把前三次 store 一并带到读者那侧。
-        //
-        // x86-TSO 下硬件本就不重排 store，故这处写对与写错在本机实测上不可区分——
-        // 它只能靠推理保证，不能靠一条判据。
-        self.enabled
-            .store(u32::from(enabled), AtomicOrdering::Release);
     }
 
-    /// 用户的对齐设置。决定要不要建重采样器，故只在起播时被读一次。
+    /// 用户的对齐设置，即本会话的起播参数。
     ///
-    /// Acquire 而非 Relaxed：与 [`AlignmentCell::set`] 末尾那次 Release 配对，
-    /// 读到启用位为真即保证同批写入的另外三项也已可见。其余三个读取器可以留 Relaxed，
-    /// 因为通往它们的路径都先经过这里。
+    /// Acquire 而非 Relaxed：与 [`AlignmentCell::set_enabled`] 那次 Release 配对，
+    /// 读到启用位为真即保证起播前下发的运行时三项也已可见。其余三个读取器可以留
+    /// Relaxed，因为通往它们的路径都先经过这里。
     pub fn is_enabled(&self) -> bool {
         self.enabled.load(AtomicOrdering::Acquire) != 0
     }
@@ -717,23 +722,18 @@ mod wasapi {
             self.target.set_ms(raw_ms);
         }
 
-        /// 下发对齐参数。渲染循环下一轮即读到。
-        pub fn set_alignment(
-            &self,
-            enabled: bool,
-            d_ticks: i64,
-            offset_ticks: i64,
-            manual_offset_ticks: i64,
-        ) {
+        /// 下发运行时对齐参数。渲染循环下一轮即读到。
+        /// 对齐开关不在这里——它是起播参数，走 [`WasapiRenderer::start`]。
+        pub fn set_alignment(&self, d_ticks: i64, offset_ticks: i64, manual_offset_ticks: i64) {
             self.alignment
-                .set(enabled, d_ticks, offset_ticks, manual_offset_ticks);
+                .set_runtime(d_ticks, offset_ticks, manual_offset_ticks);
         }
 
         /// 起渲染线程，同步等它汇报启动结果再返回。
         ///
         /// 必须等：设备被独占、混音格式不受支持这些失败只有线程里知道，不等就只能靠
         /// 「声音没出来」感知，而那与「上游没在发」无从区分——两者的排查方向相反。
-        pub fn start(&self, target_ms: u32) -> Result<(), AudioError> {
+        pub fn start(&self, target_ms: u32, alignment_enabled: bool) -> Result<(), AudioError> {
             // 持锁贯穿整个启动：并发两次 start 时，后者应当看到前者已把线程装好，
             // 从而走 ALREADY_RUNNING，而不是各起一个线程抢同一个设备。
             let Ok(mut thread) = self.thread.lock() else {
@@ -752,6 +752,9 @@ mod wasapi {
 
             // 夹紧在 cell 的写入侧，这里只管把起播值交给它。
             self.target.set_ms(target_ms);
+            // 起播参数先落 cell 再拉线程：渲染线程首轮读到的就是本次起播的开关值，
+            // 「起播前设好」由此变成参数表的形状，不再是调用方要记住的时序。
+            self.alignment.set_enabled(alignment_enabled);
 
             let stop_handle = unsafe { CreateEventW(None, true, false, None) }
                 .map_err(|err| AudioError::device(format!("创建停止事件失败：{err}")))?;
@@ -1479,7 +1482,7 @@ mod wasapi {
         #[test]
         fn gap_classifications_reach_the_stats_counters() {
             let renderer = WasapiRenderer::new(noop, 0);
-            renderer.alignment.set(true, 0, 0, 0);
+            renderer.alignment.set_enabled(true);
             let tone = [7i16; PACKET_FRAMES * 2];
             // 基准取非零：0 是「本帧没有时刻」的哨兵，第一包也不能落在它上。
             let base = 1_000_000_000i64;
@@ -1930,14 +1933,20 @@ mod tests {
         let cell = AlignmentCell::default();
         assert!(!cell.is_enabled());
 
-        cell.set(true, 3_000_000, -1_234, 500);
+        cell.set_runtime(3_000_000, -1_234, 500);
+        cell.set_enabled(true);
         assert!(cell.is_enabled());
         assert_eq!(cell.d_ticks(), 3_000_000);
         // offset 与手动偏移都可以为负，故两者都不能存成无符号。
         assert_eq!(cell.offset_ticks(), -1_234);
         assert_eq!(cell.manual_offset_ticks(), 500);
 
-        cell.set(false, 0, 0, 0);
+        // 运行时三项在开关不动时随时可改——这正是两个写入口分开的形态。
+        cell.set_runtime(4_000_000, 42, -7);
+        assert!(cell.is_enabled());
+        assert_eq!(cell.offset_ticks(), 42);
+
+        cell.set_enabled(false);
         assert!(!cell.is_enabled());
     }
 
