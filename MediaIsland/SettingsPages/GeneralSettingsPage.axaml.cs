@@ -354,6 +354,7 @@ namespace MediaIsland.SettingsPages
                 if (_effectiveMediaSource is not null)
                 {
                     _effectiveMediaSource.EffectiveMediaChanged -= EffectiveMediaSource_OnMediaInfoChanged;
+                    _effectiveMediaSource.EffectiveLyricsChanged -= EffectiveMediaSource_OnEffectiveLyricsChanged;
                 }
 
                 _mediaService.MediaInfoChanged -= MediaService_OnMediaInfoChanged;
@@ -366,13 +367,14 @@ namespace MediaIsland.SettingsPages
             if (_effectiveMediaSource is not null)
             {
                 _effectiveMediaSource.EffectiveMediaChanged += EffectiveMediaSource_OnMediaInfoChanged;
+                _effectiveMediaSource.EffectiveLyricsChanged += EffectiveMediaSource_OnEffectiveLyricsChanged;
             }
             else
             {
                 _mediaService.MediaInfoChanged += MediaService_OnMediaInfoChanged;
+                _lyricsSearchService.CurrentResultChanged += LyricsSearchService_OnCurrentResultChanged;
             }
-            _lyricsSearchService.CurrentResultChanged += LyricsSearchService_OnCurrentResultChanged;
-            UpdateCurrentLyricsSource(_lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo));
+            UpdateCurrentLyricsSource(CurrentUiLyrics);
             _ = RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
             StartMediaServiceAsync();
             AddCurrentMediaSourceIfAvailable();
@@ -418,12 +420,19 @@ namespace MediaIsland.SettingsPages
         private MediaInfo? CurrentUiMediaInfo =>
             _effectiveMediaSource.GetCurrentUiMediaInfo(_mediaService);
 
+        private LyricsSearchResult? CurrentUiLyrics =>
+            _effectiveMediaSource.GetCurrentUiLyrics(_lyricsSearchService, _mediaService);
+
         private void MediaService_OnMediaInfoChanged(object? sender, MediaInfoChangedEventArgs e)
         {
             if (e.ChangeKind is MediaInfoChangeKind.CurrentSession or MediaInfoChangeKind.MediaProperties)
             {
+                // 有协调器时经它读，纯接收端上注入歌词才到得了这一行；
+                // 缺席时保持旧读法，用事件里的媒体避免与 CurrentMediaInfo 的时序差。
                 Dispatcher.UIThread.Post(() => UpdateCurrentLyricsSource(
-                    _lyricsSearchService.GetCurrentResultFor(e.MediaInfo)));
+                    _effectiveMediaSource is null
+                        ? _lyricsSearchService.GetCurrentResultFor(e.MediaInfo)
+                        : CurrentUiLyrics));
                 CancelLyricsCandidateApply();
                 _ = RefreshLyricsCandidatesAsync(e.MediaInfo);
             }
@@ -443,6 +452,13 @@ namespace MediaIsland.SettingsPages
         {
             Dispatcher.UIThread.Post(() => UpdateCurrentLyricsSource(
                 _lyricsSearchService.GetCurrentResultFor(_mediaService.CurrentMediaInfo)));
+        }
+
+        private void EffectiveMediaSource_OnEffectiveLyricsChanged(
+            object? sender,
+            LyricsSearchResultChangedEventArgs e)
+        {
+            Dispatcher.UIThread.Post(() => UpdateCurrentLyricsSource(CurrentUiLyrics));
         }
 
         private void UpdateCurrentLyricsSource(LyricsSearchResult? result)
