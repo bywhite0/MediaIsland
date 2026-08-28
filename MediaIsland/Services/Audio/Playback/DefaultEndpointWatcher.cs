@@ -19,6 +19,7 @@ namespace MediaIsland.Services.Audio.Playback;
 ///
 /// 轮询只在有播放/采集会话或设置页可见时枚举。节拍照走，门关着时每拍只花一次
 /// 委托求值：会话门与页面可见性之外没有读点需要这个值，闲时不必每秒抓一次 COM。
+/// 门刚从关转开的首个枚举拍静默对齐基线而不比对——关门时段的历史差异不属于「变化」。
 /// </summary>
 public sealed class DefaultEndpointWatcher : IDisposable
 {
@@ -29,14 +30,15 @@ public sealed class DefaultEndpointWatcher : IDisposable
     private readonly object _gate = new();
     private string? _cachedId;
     private string? _lastNonNullId;
+    private bool _lastBeatEnumerated;
     private int _uiVisibleCount;
     private int _polling;
     private volatile bool _disposed;
 
     /// <summary>
-    /// 默认渲染端点从一个设备变成了另一个设备。处理器在轮询线程（生产为计时器线程）
-    /// 上执行；新值不随事件携带——消费方要的是「按当下状态重启」，读 <see cref="CachedId"/>
-    /// 即可，事件发出前缓存已更新。
+    /// 默认渲染端点从一个设备变成了另一个设备。事件只在节拍拍上派发，处理器在轮询线程
+    /// （生产为计时器线程）上执行；进场拍只刷缓存，不派发本事件。新值不随事件携带——
+    /// 消费方要的是「按当下状态重启」，读 <see cref="CachedId"/> 即可，事件发出前缓存已更新。
     /// </summary>
     public event EventHandler? DefaultEndpointChanged;
 
@@ -81,15 +83,16 @@ public sealed class DefaultEndpointWatcher : IDisposable
 
     /// <summary>
     /// 设置页的可见性开门。计数而非布尔：页面重建时新页的进场可能先于旧页的离场，
-    /// 布尔会被后到的离场误关。进场顺手泵一拍，页面打开第一眼就有值，
-    /// 不必等下一秒的节拍。
+    /// 布尔会被后到的离场误关。进场拍只刷 <see cref="CachedId"/>，页面打开第一眼就有值；
+    /// 不比对、不发事件、不动基线——重启链因此永不在 UI 线程执行，而恰在进场前发生的
+    /// 变化仍由下一个节拍拍在计时器线程上按旧基线检出，不吞变化。
     /// </summary>
     public void SetUiVisible(bool visible)
     {
         if (visible)
         {
             Interlocked.Increment(ref _uiVisibleCount);
-            Poll();
+            RefreshCache();
             return;
         }
 
@@ -100,7 +103,43 @@ public sealed class DefaultEndpointWatcher : IDisposable
     }
 
     /// <summary>
+    /// 进场拍：读一次设备 ID 只刷 <see cref="CachedId"/>，不比对、不发事件、不动基线、
+    /// 不动恢复拍追踪。与 <see cref="Poll"/> 共用同一进入闸，任何时刻至多一次枚举在跑。
+    /// </summary>
+    private void RefreshCache()
+    {
+        if (_disposed || Interlocked.Exchange(ref _polling, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            string? id;
+            try
+            {
+                id = _idProvider();
+            }
+            catch
+            {
+                // 与 Poll 的兜底同义：任意异常折成「此刻无设备」。
+                id = null;
+            }
+
+            lock (_gate)
+            {
+                _cachedId = id;
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _polling, 0);
+        }
+    }
+
+    /// <summary>
     /// 泵一拍：门开着就枚举一次，与最近的非 null 读值比对，不同的非 null 才发变化事件。
+    /// 门刚从关转开的首个枚举拍（含从未枚举过的首拍）是恢复拍，只静默对齐不比对。
     /// 生产由构造时的计时器供拍，判据手动调用。整体不抛：计时器线程上没有人接得住
     /// 往外抛的东西。
     /// </summary>
@@ -115,6 +154,7 @@ public sealed class DefaultEndpointWatcher : IDisposable
         {
             if (!ShouldEnumerate())
             {
+                _lastBeatEnumerated = false;
                 return;
             }
 
@@ -130,11 +170,18 @@ public sealed class DefaultEndpointWatcher : IDisposable
                 id = null;
             }
 
+            var recovering = !_lastBeatEnumerated;
+            _lastBeatEnumerated = true;
+
             bool changed;
             lock (_gate)
             {
                 _cachedId = id;
-                changed = id is not null
+                // 恢复拍（上一拍没枚举，含首拍）静默对齐、不比对：门关时段无会话在跑，
+                // 开门首拍看到的差异全是历史，对齐基线即可；门开着时枚举连续，
+                // 真变化走原路，故本分支吞不到真变化。
+                changed = !recovering
+                    && id is not null
                     && _lastNonNullId is not null
                     && !string.Equals(_lastNonNullId, id, StringComparison.Ordinal);
                 if (id is not null)
