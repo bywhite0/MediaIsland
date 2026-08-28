@@ -321,6 +321,8 @@ class JitterBuffer:
         self.aligned = False
         self.align_reason = ""
         self.target_of = None
+        self.engaged = False           # 当前流已按目标时刻排过锚点（对齐真正生效）
+        self.fell_back = ""            # 运行期退回非对齐的原因；非空即已退回（可恢复的文案态）
         self.head_captured_ms = None   # 缓冲头部字节的采样时刻（发送端墙钟毫秒）
         self.first_feed_mono = None    # 等待时钟就绪的起点
         self.first_err_ms = None       # 首块排程误差——判据看它，不看稳态
@@ -328,7 +330,9 @@ class JitterBuffer:
 
     def set_aligned(self, aligned, reason="", target_of=None):
         """开关对齐模式。hello 可在连接存活期间重发并改声明，故随时可切换；
-        已开闸的流不回头重排——本示例只做启动排程对齐。"""
+        已开闸的流不回头重排——本示例只做启动排程对齐。运行期状态（engaged、
+        fell_back）不在此处动：声明变化不改变时钟就绪性，流也仍按旧锚在放，
+        新声明在下一次缓冲重置重排时生效。"""
         with self.lock:
             self.aligned = aligned
             self.align_reason = reason
@@ -365,21 +369,35 @@ class JitterBuffer:
 
         对齐模式下开启条件换成「出声时刻 ≥ 目标时刻」。时钟未就绪（offset、
         墙钟桥、设备出声时刻任一缺）时先等：快速探测约 1.6 秒填满样本窗；
-        超过 ALIGN_WAIT_MS 就退回深度闸门——宁可不对齐也要出声。
+        超过 ALIGN_WAIT_MS 就退回深度闸门——宁可不对齐也要出声。退回不弃
+        对齐（fell_back 只是文案态）：对时恢复后，下一次缓冲重置丢锚重排时
+        经下方试探重新入闸——与浏览器示例「每次锚点重排重新判定」同构。
         """
-        if self.aligned:
+        if self.aligned and not self.fell_back:
             verdict = self._align_gate(play_ticks)
             if verdict is not None:
                 return verdict
             if (self.first_feed_mono is None
                     or time.monotonic() - self.first_feed_mono < ALIGN_WAIT_MS / 1000):
                 return False
-            self.aligned = False
-            self.align_reason = f"时钟超 {ALIGN_WAIT_MS}ms 未就绪，已退回缓冲深度控制"
+            self.fell_back = (f"时钟超 {ALIGN_WAIT_MS}ms 未就绪，已退回缓冲深度控制"
+                              f"（对时恢复后于下一次缓冲重置重新入闸）")
+        elif self.aligned and self._align_ready(play_ticks):
+            # 已退回但对时已恢复且锚可用：回对齐路径重新入闸。不再重复等待——
+            # 首次超时已把「等」的预算用完，与浏览器的等待窗口不重置同构。
+            verdict = self._align_gate(play_ticks)
+            if verdict is not None:
+                return verdict
         if len(self.buf) < self.target:
             return False
         self.gate_open = True
         return True
+
+    def _align_ready(self, play_ticks):
+        """退回后的恢复试探：时钟三件套与锚全部就绪才回对齐路径。"""
+        return (play_ticks is not None and self.target_of is not None
+                and self.head_captured_ms is not None
+                and self.target_of(self.head_captured_ms) is not None)
 
     def _align_gate(self, play_ticks):
         """对齐闸门本体：True 开闸 / False 还没到点 / None 时钟未就绪。"""
@@ -403,6 +421,7 @@ class JitterBuffer:
             self.head_captured_ms = None
             return False
         self.gate_open = True
+        self.engaged = True   # 本流已按目标时刻排过锚点——对齐真正生效的事实位
         tgt = self.target_of(self.head_captured_ms)
         self.first_err_ms = None if tgt is None else (play_ticks - tgt) / 1e4
         return True
@@ -442,8 +461,13 @@ class JitterBuffer:
                 self.underrun_ms = 0.0
                 # 硬重置后丢锚：下一段来料重新按目标时刻排程，闸门语义与首次
                 # 启动一致——对齐的「恢复」就这样复用了既有的重置规则。
+                # engaged 与误差痕迹一并清：锚已废，误差描述的是不存在的排程
+                # （重新入闸时 _align_gate 会重写 first_err_ms）。
                 self.head_captured_ms = None
                 self.first_feed_mono = None
+                self.engaged = False
+                self.first_err_ms = None
+                self.err_ms = None
             return out + bytes(need - take)
 
 
@@ -787,6 +811,10 @@ class MediaLinkClient:
             return (f" · 对齐 D={self.d_ms}ms 误差 首块 {j.first_err_ms:+.1f}ms /"
                     f" 当前 {j.err_ms:+.1f}ms（漂移刻意不修）")
         if j.aligned:
+            if j.fell_back:
+                # 退回是文案态而非放弃：恢复条件（对时恢复 + 下一次缓冲重置）
+                # 已写在 fell_back 里，与实际状态机一致。
+                return f" · 非对齐（{j.fell_back}）"
             off = "有" if self.clock.online_offset() is not None else "无"
             return f" · 对齐等待排程（offset {off}）"
         if j.align_reason or self.align_reason:
@@ -1080,7 +1108,7 @@ def self_test():
     ok(jb.take(need, 12_500_000) == pcm[:need] and jb.gate_open,
        "新帧按它自己的目标时刻照常开闸")
 
-    # ---- 时钟未就绪：等待期内不开，超时退回深度闸门 ----
+    # ---- 时钟未就绪：等待期内不开，超时退回深度闸门（退回可恢复）----
     jb = JitterBuffer(48000, 2)
     jb.set_aligned(True, "", lambda ms: None)
     jb.feed(pcm, 1000)
@@ -1088,11 +1116,27 @@ def self_test():
        "offset/桥未就绪：等待期内不开闸也不放弃对齐")
     jb.first_feed_mono -= ALIGN_WAIT_MS / 1000 + 1
     jb.take(need, 10_000_000)
-    ok(not jb.aligned and jb.align_reason, "超过等待上限退回缓冲深度控制并说明")
+    ok(jb.aligned and jb.fell_back and not jb.engaged,
+       "超过等待上限退回缓冲深度控制并说明——退回是文案态，不放弃对齐（与浏览器同构）")
     jb.feed(pcm, None)
     jb.feed(pcm, None)
     ok(jb.take(need) == pcm[:need] and jb.gate_open,
        "退回后按攒深度的老规则开闸出真样本")
+
+    # ---- 退回后对时恢复：下一次缓冲重置丢锚重排时重新入闸（恢复链闭合）----
+    while len(jb.buf):
+        jb.take(need)                        # 排干
+    for _ in range(50):
+        jb.take(need)                        # 欠载填零累计 500ms → 硬重置丢锚
+    ok(not jb.gate_open and jb.head_captured_ms is None and not jb.engaged,
+       "退回态的硬重置同样关闸丢锚，为恢复腾出重排机会")
+    jb.target_of = ticks_of                  # 对时恢复（fell_back 留着文案不清）
+    jb.feed(pcm, 3000)                       # 新锚 3000 → 目标 30_000_000 tick
+    jb.feed(pcm, None)                       # 深度已够老规则的目标
+    ok(jb.take(need, 29_950_000) == bytes(need) and not jb.gate_open,
+       "恢复试探生效：深度已够也不按深度开，重新按目标时刻等待")
+    ok(jb.take(need, 30_000_000) == pcm[:need] and jb.engaged and jb.fell_back,
+       "到点重新入闸：「超时退回 → 对时恢复 → 重新入闸」链条闭合（fell_back 只是文案）")
 
     # ---- 欠载硬重置丢锚：对齐恢复复用既有的重置规则 ----
     jb = JitterBuffer(48000, 2)

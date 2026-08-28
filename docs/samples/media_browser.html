@@ -1103,7 +1103,7 @@ function schedule(view, pcmAt, pcmBytes, flags, capturedAtMs) {
         audio.dropped++;
         return;
       }
-      align.fellBack = `时钟超 ${ALIGN_WAIT_MS}ms 未就绪，已退回缓冲深度控制`;
+      align.fellBack = `时钟超 ${ALIGN_WAIT_MS}ms 未就绪，已退回缓冲深度控制（对时恢复后于下一次锚点重排重新入闸）`;
     }
     if (audio.frames > 0) audio.underruns++;
     skipSec = anchorNextTime(st === 'ready' ? capturedAtMs : null, frameSec);
