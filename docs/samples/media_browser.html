@@ -57,6 +57,13 @@
   }
   button.ghost[aria-pressed="true"] { background: var(--accent); color: #000; border-color: transparent; }
   button.ghost:disabled { color: var(--dim); border-color: rgba(255, 255, 255, 0.12); }
+  /* 手动偏移滑块：对齐模式的旁路，只在服务端声明了播放延迟预算时展示。 */
+  #offset-box {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 0.8em; color: var(--dim);
+  }
+  #offset-box input { padding: 0; min-width: 120px; }
+  #offset-val { font-variant-numeric: tabular-nums; min-width: 4em; }
 
   #stage {
     flex: 1; display: flex; gap: 32px; align-items: center;
@@ -115,6 +122,11 @@
     <input id="token" type="password" placeholder="Token" aria-label="Token">
     <button id="go" type="button">连接</button>
     <button id="audio" type="button" class="ghost" aria-pressed="false" disabled>声音</button>
+    <label id="offset-box" hidden>偏移
+      <input id="offset" type="range" min="-500" max="500" step="5" value="0"
+             aria-label="手动出声偏移，毫秒">
+      <span id="offset-val">+0ms</span>
+    </label>
   </div>
 
   <div id="stage">
@@ -160,6 +172,7 @@ const $ = (id) => document.getElementById(id);
 
 const state = {
   ws: null,
+  authed: false,        // 已过认证。对时探测须先认证，故单独记
   epoch: null,          // server.hello 的 sessionEpoch
   lastSeq: 0,           // 已处理的 seq 水位，epoch 变化时清零
   reqId: 0,
@@ -182,6 +195,89 @@ const TARGET_BUFFER_MS = 200;
 // 不设上限就是把延迟永久背下去。
 const MAX_BUFFER_MS = 600;
 
+// ---- 回程对时（audio.clock）与跨机启动排程对齐 ----
+
+// offset 样本窗与最小往返上限。8 个样本配 1 秒稳态周期覆盖约 8 秒，其间两台
+// 机器单调时钟的相互漂移只有约 0.08ms，整窗可当常量，不必估 skew。
+// offset 误差上界是往返的一半：50ms 往返即 25ms 误差，已吃掉整个对齐预算，
+// 故超限报不可用而不是照样给值。
+const CLOCK_WINDOW = 8;
+const MAX_RTT_TICKS = 50 * 10_000;      // 100ns tick
+// 探测节奏：窗口没满每 200ms（约 1.6 秒填满），满了降到 1 秒保活。阶段按
+// 「已接受的样本数」判断——样本没配成时窗口仍是空的，该继续密集探。
+const CLOCK_FAST_MS = 200;
+const CLOCK_STEADY_MS = 1000;
+const CLOCK_TIMEOUT_MS = 1000;          // 单次应答等待上限，超时按「没成」计
+// 连续 3 次没成算失联清窗。取 3 而非 1：单次丢包在无线链路上是常态，
+// 一次丢包就清窗会让 offset 反复进出可用状态。
+const CLOCK_MAX_MISSES = 3;
+// 时钟三件套（offset、墙钟桥、设备延迟）未就绪时最多等 3 秒再退回深度锚定：
+// 快速探测 1.6 秒填窗，3 秒足够；宁可不对齐也要出声。
+const ALIGN_WAIT_MS = 3000;
+// 预算防御上界：真实链路用不到 10 秒量级，落在其外只可能是单位错填；
+// 且换算成 100ns tick 要乘一万，上界把溢出堵在换算之前。
+const D_MS_MAX = 10_000;
+
+// 本地单调时钟，100ns tick——与协议的 t1–t4 同单位，不用毫秒（offset 估计的
+// 误差只有 0.5ms 量级，毫秒量化会污染它）。performance.now() 的分辨率被浏览器
+// 的 Spectre 缓解钳制：非跨源隔离的页面通常只有 0.1ms 量级。0.1ms 仍在预算内，
+// 但这是浏览器侧特有的误差下界（Python 与 .NET 都没有），人工实测时应顺带记录
+// 真实分辨率。墙钟（Date.now）不参与：NTP 一次调整就让此前所有样本失效。
+function nowTicks() { return Math.round(performance.now() * 1e4); }
+
+// 回程对时的状态：样本窗、墙钟桥、对端支持性、连续未成计数、在途探测。
+const clock = {
+  samples: [],        // [rtt, offset] 最近 CLOCK_WINDOW 个
+  bridgeW: null,      // 发送端墙钟 − 发送端单调钟，100ns（取自最近被接受样本的应答）
+  unsupported: false, // 对端只实现三时刻（应答缺 t2/t3），本条连接内不再探
+  misses: 0,          // 连续未成：超时、回显不符、负 rtt 都算
+  accepted: 0,        // 已接受样本数，决定快速/稳态节奏
+  pending: null,      // { t1, timer } 在途探测
+  probeTimer: 0,
+  active: false       // 探测循环是否在跑
+};
+
+// 跨机对齐的声明与运行状态。归因是第三种「没对齐」，与「没声音」的两种分开：
+// 对时只服务于对齐，缺了它音频照放，只退回本地缓冲深度控制。
+const align = {
+  cap: false,         // hello 声明了 audio.clock
+  dMs: null,          // 合法的播放延迟预算；null 即不进对齐（原因在 reason）
+  reason: '',         // 协议层不对齐的原因（能力缺失 / 预算未声明 / 预算办不到）
+  fellBack: '',       // 运行期退回非对齐的原因（时钟未就绪 / 预算装不下）
+  engaged: false,     // 当前流已按目标时刻排过锚点
+  errMs: null,        // 最近一帧的排程误差，正值即晚于目标；随漂移累积，刻意不修
+  firstErrMs: null    // 首块排程误差——判据看它，不看稳态
+};
+
+function clockAdd(t1, t2, t3, t4) {
+  const rtt = (t4 - t1) - (t3 - t2);
+  // 负往返物理上不可能：字段错位或对端时钟被重置。丢弃而不是夹紧到零——
+  // 夹紧会让坏样本看起来像最好的那一个，而「最好的那一个」正是选择依据。
+  if (rtt < 0) return false;
+  clock.samples.push([rtt, ((t2 - t1) + (t3 - t4)) / 2]);
+  if (clock.samples.length > CLOCK_WINDOW) clock.samples.shift();
+  return true;
+}
+
+// 挑最小 rtt 那次，不取平均：排队延迟只会让 rtt 变大，对 offset 的污染上界是
+// rtt/2，取最小者即取污染上界最小者；取平均会把所有样本的排队延迟都掺进结果。
+function clockOffset() {
+  if (!clock.samples.length) return null;
+  let best = clock.samples[0];
+  for (const s of clock.samples) if (s[0] < best[0]) best = s;
+  return best[0] > MAX_RTT_TICKS ? null : best[1];
+}
+
+// 线上offset = −offset − W：本机单调钟（performance.now 轴）− 发送端墙钟的
+// 100ns 表示。两段刻意分开：offset 走四时刻最小往返（0.5ms 量级），W 走同瞬的
+// （信封 ts，t3）一对（±0.5ms 量化）；把墙钟直接混进 offset 估计会让 NTP 调整
+// 污染整窗。任一不可用即整体不可用。
+function onlineOffset() {
+  const off = clockOffset();
+  return off == null || clock.bridgeW == null ? null : -off - clock.bridgeW;
+}
+
+
 const audio = {
   ctx: null,
   format: { sampleRate: 48000, channels: 2 },  // 由 server.hello 的 audio 字段覆盖
@@ -197,6 +293,7 @@ const audio = {
   underruns: 0,
   frameMs: 0,           // 最近一帧的实际时长，按 PCM 字节数算出
   serverDelayMs: 0,     // 服务端内部从采样到发送的延迟
+  alignWaitAt: 0,       // 对齐等待时钟就绪的起点（performance.now 毫秒）
   bandPeak: 0,          // 自上次呈现以来的低频带 RMS 峰值
   bandMax: 0,           // 缓慢衰减的峰值，自适应增益的分母
   bandLevel: 1,         // 平滑后喂给 AMLL 的低频音量
@@ -284,6 +381,14 @@ $('go').addEventListener('click', () => {
 
 $('audio').addEventListener('click', toggleAudio);
 
+// 手动偏移旁路：硬件尾段（功放、蓝牙）在任何 API 里都读不到，滑块是对可观测性
+// 边界的承认。本示例只做启动排程，改动在下一次锚定（欠载重排/重开声音）才生效。
+$('offset').addEventListener('input', () => {
+  $('offset-val').textContent = fmtMs(manualOffsetMs());
+});
+
+function manualOffsetMs() { return Number($('offset').value) || 0; }
+
 // 粘贴配置码到地址栏时自动拆成地址与 Token，省去手抄 32 字节密钥。
 $('url').addEventListener('input', () => {
   const parsed = parseConfigCode($('url').value);
@@ -324,21 +429,29 @@ function connect() {
 
   ws.onopen = () => setStatus('已连接，等待 server.hello…');
   ws.onmessage = (e) => {
+    // t4 的取点义务（对称于服务端的 t2）：收到应答字节处、进任何分支与 JSON
+    // 解析之前取，且与 t1 同源（都出自 performance.now）。
+    const t4 = nowTicks();
     // 不走 JSON 信封的入站帧只有音频，按类型分流即可。
     if (e.data instanceof ArrayBuffer) { onAudioFrame(e.data); return; }
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
-    handle(msg);
+    handle(msg, t4);
   };
   ws.onerror = () => setStatus('连接出错（多半是 Origin 未加入白名单，或 Token 错误）');
   ws.onclose = (e) => {
     state.ws = null;
+    state.authed = false;
     state.media = null;
     player.pause();
     // 只收掉输出，不动 audio.wanted：意愿与连接解耦，重连后自动恢复，
     // 否则断一次线用户就得再点一次「声音」。
     stopAudio();
     audio.supported = false;
+    // 断连即清空：样本窗、墙钟桥与「对端不支持」判定。重连后的对端可以是
+    // 另一台机器，旧样本与旧桥描述的是一段已经不存在的时钟映射；「不支持」
+    // 同理指向旧对端，不清的话连过一个三时刻对端后连到谁都不再对时。
+    clockReset();
     syncAudio();
     $('go').textContent = '连接';
     if (state.closedByUser) {
@@ -361,10 +474,16 @@ function send(type, payload) {
 
 // ---------- 消息分发 ----------
 
-function handle(msg) {
+function handle(msg, t4) {
   // server.hello 不带 seq，先处理 epoch 再做 seq 去重。
   if (msg.type === 'event' && msg.name === 'server.hello') {
     onHello(msg.payload || {});
+    return;
+  }
+
+  // 对时应答也不带 seq，且要配 t4，先分流；回显 t1 的比对在 onClockReply 里做。
+  if (msg.type === 'audio.clock') {
+    onClockReply(msg, t4);
     return;
   }
 
@@ -376,7 +495,9 @@ function handle(msg) {
 
   switch (msg.type) {
     case 'auth_ok':
+      state.authed = true;
       requestChannels();
+      syncClockProbe();
       break;
     case 'auth_fail':
       state.closedByUser = true;   // Token 错了，重连也没用
@@ -429,6 +550,27 @@ function onHello(p) {
     };
   }
   if (!audio.supported) stopAudio();
+
+  // 「没对齐」是第三种归因，与上面两种「没声音」分开。能力与 dMs 出自同一条
+  // hello，成组读取——分两次取回的两半可能来自两条 hello，会让归因指错方向。
+  // hello 可重发并改 dMs，一律以最新一条为准：改小到办不到就退回非对齐，
+  // 改回来要能重新进入（下一次锚定自然生效）。
+  align.cap = caps.includes('audio.clock');
+  const dMs = (p.audioClock || {}).dMs;
+  align.dMs = null;
+  if (!align.cap) {
+    align.reason = '服务端未声明 audio.clock 能力（不支持跨机对齐，可升级服务端）';
+  } else if (dMs == null) {
+    // 缺声明不得回落默认值：两端各自默认成一个数，看起来一致，实际是两份
+    // 各自为真的声明，改了一端就静默失配，症状像硬件延迟。查发送端版本与配置。
+    align.reason = '服务端未声明播放延迟预算 dMs（查发送端版本与配置完整性）';
+  } else if (!(dMs > 0 && dMs <= D_MS_MAX)) {
+    align.reason = `播放延迟预算 dMs=${dMs} 不在 (0, ${D_MS_MAX}] 毫秒内（改发送端配置，先查单位是不是毫秒）`;
+  } else {
+    align.dMs = dMs;
+    align.reason = '';
+  }
+  syncClockProbe();
   syncAudio();
 
   send('auth', { token: $('token').value });
@@ -455,6 +597,104 @@ function requestChannels() {
 function onError(p) {
   if (p.code === 'no_session') return;  // 无媒体会话不是异常
   setStatus('服务端返回错误：' + (p.code || '?') + ' ' + (p.message || ''));
+}
+
+// ---------- 回程对时（audio.clock）----------
+
+// 探测的开与停全部收敛到这一个函数：需先认证、hello 声明了 audio.clock、
+// 用户确实要声音（对时只服务于对齐，没人听就不必探）、对端没被判不支持。
+// 这些条件里任何一个都可能中途翻转（hello 重发、按钮开关、断连）。
+function syncClockProbe() {
+  const want = !!(state.ws && state.authed && align.cap && !clock.unsupported
+                  && audio.wanted && audio.supported);
+  if (want === clock.active) return;
+  clock.active = want;
+  if (want) { probeOnce(); return; }
+  clearTimeout(clock.probeTimer);
+  clock.probeTimer = 0;
+  if (clock.pending) { clearTimeout(clock.pending.timer); clock.pending = null; }
+}
+
+function probeOnce() {
+  const t1 = nowTicks();
+  if (send('audio.clock', { t1 }) == null) { syncClockProbe(); return; }
+  clock.pending = {
+    t1,
+    timer: setTimeout(() => {
+      // 超时无回应：按「这次没成」计入连续计数。
+      clock.pending = null;
+      clockMiss();
+      probeLater();
+    }, CLOCK_TIMEOUT_MS)
+  };
+}
+
+function probeLater() {
+  if (!clock.active) return;
+  clock.probeTimer = setTimeout(
+    probeOnce, clock.accepted < CLOCK_WINDOW ? CLOCK_FAST_MS : CLOCK_STEADY_MS);
+}
+
+// 消化一条对时应答。所有失败路径只进计数，不断连——对时坏了不该波及
+// media / lyrics / audio 三条数据通道。
+function onClockReply(msg, t4) {
+  const pend = clock.pending;
+  if (!pend) return;                 // 迟到或重复的应答，没有在途探测可配
+  clearTimeout(pend.timer);
+  clock.pending = null;
+  const p = msg.payload || {};
+  if (p.t2 == null || p.t3 == null) {
+    // 对端只实现了三时刻。不退化成「假设服务端处理耗时为零」——那会给出一个
+    // 看起来可用的错值，比报不可用坏得多。判不支持，本条连接内不再探。
+    clock.unsupported = true;
+    clock.samples.length = 0;
+    syncClockProbe();
+    return;
+  }
+  if (p.t1 !== pend.t1) {
+    // 回显不符：这条应答配的是别的请求。拿它与本次的 t4 凑样本，往返会算成
+    // 两次探测的间隔——一个大得离谱又看起来合法的数。
+    clockMiss();
+    probeLater();
+    return;
+  }
+  if (!clockAdd(p.t1, p.t2, p.t3, t4)) {
+    clockMiss();
+    probeLater();
+    return;
+  }
+  // 桥与样本同处写入：信封 ts 与载荷 t3 是服务端同瞬取的一对（协议义务），
+  // 桥必须配被接受的样本。ts×10⁴ ≈ 1.8e16 超出 Number 的整数精度，这里的
+  // 舍入约 ±2 tick（0.2µs），远小于 ts 本身 ±0.5ms 的毫秒量化，可忽略。
+  clock.bridgeW = msg.ts * 1e4 - p.t3;
+  clock.misses = 0;
+  clock.accepted++;
+  probeLater();
+}
+
+// 记一次没成。超时、回显不符、负 rtt 都计入——否则一个每次都回应但样本恒
+// 不可用的对端永远到不了失联阈值，旧 offset 被无限期沿用。
+function clockMiss() {
+  if (++clock.misses < CLOCK_MAX_MISSES) return;
+  // 失联：丢掉整窗，accepted 清零让节奏回到快速阶段重新填窗。留着旧样本会让
+  // 上层在链路已断时继续按一个越来越旧的 offset 对齐，而它的误差没有上界。
+  // 桥不清：合成被「offset 不可用」挡住，且下一个被接受的样本会覆写它。
+  clock.samples.length = 0;
+  clock.accepted = 0;
+}
+
+// 断连清空（义务）：样本窗、墙钟桥、「对端不支持」判定与在途状态一起清。
+function clockReset() {
+  clearTimeout(clock.probeTimer);
+  if (clock.pending) clearTimeout(clock.pending.timer);
+  clock.samples.length = 0;
+  clock.bridgeW = null;
+  clock.unsupported = false;
+  clock.misses = 0;
+  clock.accepted = 0;
+  clock.pending = null;
+  clock.probeTimer = 0;
+  clock.active = false;
 }
 
 // ---------- 媒体 ----------
@@ -626,6 +866,10 @@ function stopAudio() {
   audio.lastFrameAt = 0;
   audio.frames = audio.dropped = audio.underruns = 0;
   audio.frameMs = audio.serverDelayMs = 0;
+  audio.alignWaitAt = 0;
+  align.engaged = false;
+  align.errMs = align.firstErrMs = null;
+  align.fellBack = '';
   audio.ctx?.suspend();
   releaseBackground();
 }
@@ -635,6 +879,7 @@ async function toggleAudio() {
     audio.wanted = false;
     stopAudio();
     syncAudio();
+    syncClockProbe();
     requestChannels();
     return;
   }
@@ -651,6 +896,7 @@ async function toggleAudio() {
   }
   audio.wanted = true;
   syncAudio();
+  syncClockProbe();
   requestChannels();
 }
 
@@ -662,6 +908,8 @@ function syncAudio() {
   btn.disabled = !audio.supported || !state.ws;
   btn.setAttribute('aria-pressed', String(on));
   btn.textContent = on ? '静音' : '声音';
+  // 手动偏移只在对齐可能生效时展示，免得成为一个什么都不做的滑块。
+  $('offset-box').hidden = !(on && align.dMs != null);
 }
 
 // 一帧入站二进制即一帧音频。整条函数的失败路径全是「丢帧但不断连」：
@@ -697,7 +945,92 @@ function onAudioFrame(buf) {
   // 刻意不理 TrackStart 标志。协议说接收端「可」据此重置缓冲，那是给可视化用的：
   // 它要的是别把上一首的波形画到新曲目上。而播放侧的采集流本身是连续的，
   // 切歌处丢掉缓冲里那 200ms 真实音频只会换来一个断口。
-  if (audio.wanted && audio.ctx) schedule(view, pcmAt, pcmBytes, flags);
+  if (audio.wanted && audio.ctx) schedule(view, pcmAt, pcmBytes, flags, capturedAtMs);
+}
+
+// ---------- 排程与对齐 ----------
+
+// AudioContext 时钟与 performance.now() 的配对。getOutputTimestamp 一次返回
+// 同一时刻的 contextTime 与 performanceTime，正是为此设计的 API；不可用时
+// 回落到分别读两个时钟——那会引入一次读取间隔的误差，故只作兜底。
+function contextTimeAt(perfMs) {
+  const ts = audio.ctx.getOutputTimestamp?.();
+  if (ts && ts.contextTime != null && ts.performanceTime) {
+    return ts.contextTime + (perfMs - ts.performanceTime) / 1000;
+  }
+  return audio.ctx.currentTime + (perfMs - performance.now()) / 1000;
+}
+
+// 设备尾段延迟（秒）。outputLatency → baseLatency → 0 三级回落；回落到 0 时
+// 排程仍可用但精度未知，状态行要标注出来。「何时出声」在浏览器侧是现成的
+// （这两个属性本页早已在用），Python 侧是 PortAudio 回调自带的 time_info；
+// 同一个信息在 .NET/WASAPI 侧要新开一条 FFI 并变更 ABI 才能拿到——成本差
+// 来自平台的可观测性，不是设计。
+function deviceLatencySec() {
+  return audio.ctx?.outputLatency || audio.ctx?.baseLatency || 0;
+}
+
+// 本帧的目标出声时刻（AudioContext 轴，秒）；时钟未就绪时 null。
+// capturedAt + D + 手动偏移在发送端墙钟轴，经线上offset 搬到 performance 轴，
+// 再过时钟配对搬到 context 轴，最后减设备尾段——对齐落在 DAC 出声处，
+// 不是排程处。1e12 量级毫秒上的浮点舍入在 0.1µs 量级，可忽略。
+function targetCtxTime(capturedAtMs) {
+  const online = onlineOffset();
+  if (online == null || align.dMs == null) return null;
+  return contextTimeAt(capturedAtMs + align.dMs + manualOffsetMs() + online / 1e4)
+       - deviceLatencySec();
+}
+
+// 对齐当前处于哪一态：ready（可按目标时刻排）/ waiting（预算合法，等时钟
+// 就绪）/ off（协议层不支持，或本机静态不可行）。判定顺序即诊断顺序——
+// 先协议层，再本机静态可行性，最后才是运行时的 offset 可用性：运行时是唯一
+// 会自己好转的一条，排在前面会让用户把配置错误当成「再等等」。
+function alignState() {
+  if (align.dMs == null || !audio.ctx) return 'off';
+  const budget = align.dMs - deviceLatencySec() * 1000;
+  if (budget < TARGET_BUFFER_MS) {
+    // TARGET_BUFFER_MS 在对齐模式下从目标深度降为下界：深度由预算决定。
+    align.fellBack = `预算 dMs=${align.dMs}ms 减设备延迟后不足最小缓冲 ${TARGET_BUFFER_MS}ms——调大发送端 dMs`;
+    return 'off';
+  }
+  if (budget > MAX_BUFFER_MS) {
+    // 深度超过积压上限时，帧在等到目标时刻之前就会被「丢最新」边界顶掉，
+    // 对齐会被静默顶穿——与其那样，不如退回并说明。
+    align.fellBack = `预算 dMs=${align.dMs}ms 超出本示例缓冲上限 ${MAX_BUFFER_MS}ms——调小发送端 dMs`;
+    return 'off';
+  }
+  if (clock.unsupported) {
+    align.fellBack = '服务端应答缺 t2/t3（只实现三时刻对时），无法对齐';
+    return 'off';
+  }
+  return onlineOffset() == null ? 'waiting' : 'ready';
+}
+
+// 重排时间锚点。对齐就绪时锚到本帧的目标出声时刻——启动排程对齐只发生在
+// 这里；否则锚到 currentTime 之前目标深度处（原有行为）。返回本帧应跳过的
+// 秒数（对齐落后时掐掉帧内已过期的部分），整帧已过期返回 NaN。
+function anchorNextTime(capturedAtMs, frameSec) {
+  const ctx = audio.ctx;
+  const at = capturedAtMs == null ? null : targetCtxTime(capturedAtMs);
+  if (at == null) {
+    audio.nextTime = ctx.currentTime + TARGET_BUFFER_MS / 1000;
+    align.engaged = false;
+    return 0;
+  }
+  const late = ctx.currentTime - at;
+  if (late >= frameSec) return NaN;
+  align.engaged = true;
+  if (late > 0) {
+    // 目标已过但帧内还有活的部分：掐掉过期的开头立即接上，残余误差 ~0。
+    audio.nextTime = ctx.currentTime;
+    align.errMs = 0;
+    align.firstErrMs ??= 0;
+    return late;
+  }
+  audio.nextTime = at;
+  align.errMs = 0;          // 锚定帧按构造零误差；此后的帧才量得出漂移
+  align.firstErrMs ??= 0;
+  return 0;
 }
 
 // 排程一块 PCM 到 AudioContext 时间轴上。
@@ -705,15 +1038,21 @@ function onAudioFrame(buf) {
 // 抖动缓冲就是「排在 currentTime 之前多远」这一个量：排得越远越抗网络抖动，
 // 也越晚出声。这里不做重采样调速（本仓的 native 渲染器用 ±0.1% 的比率把深度
 // 拉回目标），示例改用两条硬边界——够用，且读者不必先读懂一个控制律。
-function schedule(view, pcmAt, pcmBytes, flags) {
+//
+// 对齐模式只改锚点的落法：非对齐锚在「现在 + 目标深度」，对齐锚在
+// 「capturedAt + D + 手动偏移」换算出的目标时刻。锚定之后帧靠 nextTime 顺序
+// 续排，不做持续微调——状态行里误差随两端晶振漂移慢慢走远，这是刻意的：
+// 它怎么长，就是产品实现为什么必须有内环（重采样调速）的实测演示。
+function schedule(view, pcmAt, pcmBytes, flags, capturedAtMs) {
   const ctx = audio.ctx;
   const { sampleRate, channels } = audio.format;
   const bytesPerFrame = 2 * channels;
   const frameCount = Math.floor(pcmBytes / bytesPerFrame);
   if (frameCount < 1) return;   // 帧合法，只是没有内容
+  const frameSec = frameCount / sampleRate;
 
   // 帧时长按实际字节数算，绝不写死 10ms：采集设备一变，写死的下游会静默漂移。
-  audio.frameMs = frameCount / sampleRate * 1000;
+  audio.frameMs = frameSec * 1000;
 
   const depth = audio.nextTime - ctx.currentTime;
   if (depth > MAX_BUFFER_MS / 1000) {
@@ -723,15 +1062,36 @@ function schedule(view, pcmAt, pcmBytes, flags) {
     return;
   }
 
+  let skipSec = 0;
   if (depth < 0.005) {
-    // 落后了（或刚开播）。start() 会把过期时刻当成「立即」，缓冲深度再也长不回来，
-    // 表现为持续断续，故必须重新把锚点推到目标深度处。
+    // 落后了（或刚开播/欠载后）。start() 会把过期时刻当成「立即」，缓冲深度
+    // 再也长不回来，表现为持续断续，故必须重排锚点。
+    const st = alignState();
+    if (st === 'waiting') {
+      // 预算合法但时钟未就绪（快速探测约 1.6 秒填满窗）。这段时间不排帧——
+      // 它们的目标时刻多半会在等待中过期，排了也要被对齐丢掉。超时退回
+      // 深度锚定：宁可不对齐也要出声。
+      if (!audio.alignWaitAt) audio.alignWaitAt = performance.now();
+      if (performance.now() - audio.alignWaitAt < ALIGN_WAIT_MS) {
+        audio.dropped++;
+        return;
+      }
+      align.fellBack = `时钟超 ${ALIGN_WAIT_MS}ms 未就绪，已退回缓冲深度控制`;
+    }
     if (audio.frames > 0) audio.underruns++;
-    audio.nextTime = ctx.currentTime + TARGET_BUFFER_MS / 1000;
+    skipSec = anchorNextTime(st === 'ready' ? capturedAtMs : null, frameSec);
+    if (Number.isNaN(skipSec)) { audio.dropped++; return; }
+  } else if (align.engaged) {
+    // 顺排的帧记录时刻误差：本帧实际排在哪 vs 它的目标在哪。正值即晚于目标。
+    const want = targetCtxTime(capturedAtMs);
+    if (want != null) {
+      align.errMs = (audio.nextTime - want) * 1000;
+      align.firstErrMs ??= align.errMs;
+    }
   }
 
   const startAt = audio.nextTime;
-  audio.nextTime += frameCount / sampleRate;
+  audio.nextTime += frameSec - skipSec;
   audio.frames++;
   audio.playing = true;
 
@@ -765,7 +1125,8 @@ function schedule(view, pcmAt, pcmBytes, flags) {
   src.connect(ctx.destination);
   src.onended = () => audio.sources.delete(src);
   audio.sources.add(src);
-  src.start(startAt);
+  // 第二个参数跳过帧内已过期的开头（仅对齐落后接上的那一帧非零）。
+  src.start(startAt, skipSec);
 }
 
 // ---------- 低频音量（驱动 AMLL 背景跳动） ----------
@@ -846,14 +1207,17 @@ function streaming() {
   return audio.playing && performance.now() - audio.lastFrameAt < 500;
 }
 
-// 本机出声引入的延迟。喇叭此刻放的是抖动缓冲里攒了一段的内容，
-// 而媒体时钟给的是服务端的实时位置，故呈现必须后移同样多才对得上听觉。
+// 本机呈现（歌词/进度）该后移多少。
 //
-// 取目标深度而非实测占用：后者在目标值附近持续波动，直接用会让进度与歌词来回抖，
-// 而恒定偏一点远比来回跳好看。没在出声时为零——那时没有本机引入的延迟，
-// 减一个缓冲深度只会把歌词推到听觉后面。
+// 非对齐：抖动缓冲目标深度 + 设备延迟。取目标深度而非实测占用：后者在目标值
+// 附近持续波动，直接用会让进度与歌词来回抖，而恒定偏一点远比来回跳好看。
+// 对齐：整条链路的延迟就是声明的 D——「采样时刻 + D 出声」是排程不变量，
+// 缓冲深度与设备延迟都已折算在目标时刻里，不再另加。
+// 没在出声时为零——那时没有本机引入的延迟，减一个缓冲深度只会把歌词推到
+// 听觉后面。
 function outputLatencyMs() {
   if (!streaming()) return 0;
+  if (align.engaged) return align.dMs;
   const device = audio.ctx?.outputLatency || audio.ctx?.baseLatency || 0;
   return TARGET_BUFFER_MS + device * 1000;
 }
@@ -896,8 +1260,10 @@ function renderAudioLine() {
   const el = $('audio-line');
   if (!streaming()) {
     // 三种「没声音」要分开说，否则用户无从判断该改设置、该装库，还是该等一等。
+    // 帧在来但还没排程的窗口只有一个：对齐在等时钟就绪。
     el.textContent = !state.ws ? ''
       : !audio.supported ? audio.reason
+      : audio.wanted && performance.now() - audio.lastFrameAt < 500 ? '对齐等待时钟（offset 不可用）…'
       : audio.wanted ? '已请求音频，但没有收到帧——服务端的原生音频库可能不可用'
       : '';
     return;
@@ -910,7 +1276,31 @@ function renderAudioLine() {
     + ` · 服务端内部延迟 ${audio.serverDelayMs}ms`
     + ` · 已放 ${audio.frames} 帧`
     + ` · 丢 ${audio.dropped}`
-    + ` · 欠载 ${audio.underruns}`;
+    + ` · 欠载 ${audio.underruns}`
+    + ` · ${alignLine()}`;
+}
+
+// 对齐段的状态文案：时刻误差与 offset 可用性。误差随时间累积是刻意的——
+// 本示例只排首块、不做持续微调，这个数怎么走就是产品实现为什么必须有内环
+// （重采样调速）的实测演示。四类文案各自可归因，混成一句会把排查方向指错。
+function alignLine() {
+  if (align.engaged) {
+    // 设备延迟三级回落到 0 时目标时刻仍能算，但少补了一段未知的尾巴。
+    const noDev = deviceLatencySec() === 0 ? '，设备延迟未知、精度存疑' : '';
+    return `对齐 D=${align.dMs}ms 偏移 ${fmtMs(manualOffsetMs())}`
+      + ` 误差 首块 ${fmtMs(align.firstErrMs)} / 当前 ${fmtMs(align.errMs)}`
+      + `（漂移刻意不修${noDev}）`;
+  }
+  if (align.dMs != null) {
+    return clockOffset() == null && !align.fellBack
+      ? '对齐等待时钟（offset 不可用）…'
+      : `非对齐：${align.fellBack || 'offset 不可用（等待自愈，或查网络）'}`;
+  }
+  return `不支持对齐：${align.reason}`;
+}
+
+function fmtMs(v) {
+  return v == null ? '?' : (v >= 0 ? '+' : '') + v.toFixed(1) + 'ms';
 }
 
 function fmt(ms) {
