@@ -1161,8 +1161,10 @@ def self_test():
     jb.take(need, 10_000_000)                # 开闸
     for _ in range(9 + 50):                  # 排干 90ms，再欠载填零 500ms
         jb.take(need, 10_000_000)
-    ok(not jb.gate_open and jb.head_captured_ms is None,
-       "累计欠载硬重置：闸门关闭并丢锚，下一段来料重新按目标时刻排程")
+    ok(not jb.gate_open and jb.head_captured_ms is None
+       and not jb.engaged and jb.first_err_ms is None and jb.err_ms is None,
+       "累计欠载硬重置：关闸、丢锚、清 engaged 与误差痕迹——锚已废，"
+       "补偿与状态行不得再按旧排程声称对齐生效")
 
     print(f"✓ self-test 通过：{n[0]} 条断言全绿")
 
