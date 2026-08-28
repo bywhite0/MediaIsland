@@ -321,6 +321,26 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         Assert.Equal(targetMs, closed.TargetMsCurrent);
         Assert.False(closed.ClockOffsetAvailable, "对齐从未开启，offset 不该被判可用");
 
+        // 闸住性质的端到端回栓：运行时三项播放中随时可下发（offset 传非零——对时
+        // 结果到了就会走这条路），但会话起播时对齐是关的，native 的可用性判定被
+        // 启用位闸住：offset 不判可用、锚点不产生、误差不算、外环不动。这同时是
+        // 「同值零重启」的 false 侧——enabled 同为关绝不触发重启。重启在这里的
+        // 可观测量不是帧水位（关闭会话重启前后三元组同为零，分不开），而是会话
+        // 起播值：重启会经 StartUnlocked 记录会话值，它保持 false 即无重启发生。
+        playback.ConfigureAlignment(
+            enabled: false, dTicks: 500 * TicksPerMs, offsetTicks: 1, manualOffsetTicks: 0);
+        await Task.Delay(1_500);
+
+        var gated = renderer.ReadStats();
+        Assert.False(playback.SessionAlignmentEnabled, "同值（关）下发不该触发重启改写会话起播值");
+        Assert.False(
+            gated.ClockOffsetAvailable,
+            "关闭会话里下发非零 offset 不该被判可用：启用位的闸门漏了");
+        Assert.Equal(0, gated.DevicePositionFrames);
+        Assert.Equal(0, gated.DevicePositionQpc);
+        Assert.Equal(0, gated.PlayTimeErrorUs);
+        Assert.Equal(targetMs, gated.TargetMsCurrent);
+
         // ABI 5 起对齐开关是起播参数，native 会话内不可变——而托管侧的生效方式是
         // Task 4 的新契约：播放中拨开关，ConfigureAlignment 比对会话起播值，不一致
         // 即恰一次停播重启，新会话携带新开关；同值绝不重启（对时结果每秒下发走的
