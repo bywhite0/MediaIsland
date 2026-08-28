@@ -1488,14 +1488,19 @@ mod wasapi {
             let base = 1_000_000_000i64;
 
             renderer.push(&tone, base);
-            // 比预期晚 3 毫秒：亚下限空档。
-            renderer.push(&tone, base + PACKET_TICKS + 3 * TICKS_PER_MS);
+            // 两类事件刻意取不等次数（亚下限 2 次、重叠 1 次）：各触发一次时，
+            // 把 push 里 match 两臂对调后两计数仍各为 1，判据照绿——1/1 分不出互串。
+            // 每包比锚点末端晚 3 毫秒：亚下限空档。
+            let second = base + PACKET_TICKS + 3 * TICKS_PER_MS;
+            renderer.push(&tone, second);
+            let third = second + PACKET_TICKS + 3 * TICKS_PER_MS;
+            renderer.push(&tone, third);
             // 相对新锚点末端倒走 3 毫秒：重叠。
-            let overlapped = base + 2 * PACKET_TICKS + 3 * TICKS_PER_MS - 3 * TICKS_PER_MS;
-            renderer.push(&tone, overlapped);
+            let fourth = third + PACKET_TICKS - 3 * TICKS_PER_MS;
+            renderer.push(&tone, fourth);
 
             let stats = renderer.stats();
-            assert_eq!(stats.swallowed_gap_count, 1);
+            assert_eq!(stats.swallowed_gap_count, 2);
             assert_eq!(stats.overlap_count, 1);
         }
 
