@@ -481,9 +481,30 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     /// <summary>
     /// 默认渲染端点变化后的采集跟随入口。hub 实例随服务端生命周期私有重建，
     /// 外部接线只能经本服务转发；服务端没起来时无采集可重启，空操作。
+    /// 调用侧是 fire-and-forget（丢弃返回任务），faulted 在此就地观察，
+    /// 返回任务不再上抛。
     /// </summary>
     public Task RestartAudioCaptureAsync() =>
-        _audioHub?.RestartCaptureAsync(CancellationToken.None) ?? Task.CompletedTask;
+        ObserveCaptureRestartFaults(
+            _audioHub?.RestartCaptureAsync(CancellationToken.None) ?? Task.CompletedTask,
+            _logger);
+
+    /// <summary>
+    /// 兜底观察：等待重启任务，faulted 记一行 Warning 后吞掉。RestartCaptureAsync
+    /// 内部已吞常规异常，这里堵的是它吞漏时的未观察终结器噪声。抽成静态方法是
+    /// 为了判据能直接注入 faulted task——hub 是具体类，无缝造出 faulted 的重启。
+    /// </summary>
+    internal static async Task ObserveCaptureRestartFaults(Task restart, ILogger? logger)
+    {
+        try
+        {
+            await restart.ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            logger?.LogWarning(ex, "[音频] 采集重启失败且未被内部处理，已就地观察；设备再变时会重试。");
+        }
+    }
 
     /// <summary>把一帧音频原样广播给订阅了 audio 的会话。无会话时是廉价的空操作。</summary>
     public Task BroadcastAudioFrameAsync(byte[] frame, CancellationToken cancellationToken = default) =>
