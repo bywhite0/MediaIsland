@@ -107,6 +107,13 @@ internal sealed class AudioClockProbe
         _estimator.TryGetOffset(out offsetTicks, out chosenRoundTripTicks);
 
     /// <summary>
+    /// 窗口一致性，见 <see cref="AudioClockOffsetEstimator.WindowIsConsistent"/>。
+    /// 暴露给客户端探测循环做「一致与不一致互相转移」的日志——转移要逐轮探测看，
+    /// 不能等到有人取 offset 失败才知道。
+    /// </summary>
+    internal bool WindowIsConsistent => _estimator.WindowIsConsistent;
+
+    /// <summary>
     /// 线上时间轴的 offset：本机 QPC（自开机起算）减发送端墙钟的 100ns 表示（自 1970 起算）。
     /// 播放侧把「帧头时刻 + D + 本值」当作本机时间轴上的目标出声时刻，方向是本机减发送端。
     ///

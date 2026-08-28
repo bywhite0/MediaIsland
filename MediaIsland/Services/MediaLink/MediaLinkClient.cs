@@ -200,6 +200,14 @@ public sealed class MediaLinkClient : IAsyncDisposable
     private TaskCompletionSource<AudioClockProbeReply?>? _pendingClockExchange;
 
     /// <summary>
+    /// 上一轮探测后窗口是否一致，供探测循环在一致与不一致互相转移时记一行日志。
+    /// 初值取一致：空窗真空一致。断连时随窗口一并复位，转移按每条连接各自计——
+    /// 恒坏对端在每条连接里都留下一条日志，比跨连接沉默更好排查。
+    /// 只在探测循环里读写（复位发生在探测循环退出之后），不需要同步。
+    /// </summary>
+    private bool _audioClockWindowConsistent = true;
+
+    /// <summary>
     /// 服务端最近一条 server.hello 的声明，一次读取即取到成组的两个值。
     ///
     /// 判定对齐要同时吃「有没有 audio.clock 能力」与「预算是多少」，而下面那几个属性
@@ -433,6 +441,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
             // 重连后的对端可以是另一台机器，旧样本描述的是一段已经不存在的映射关系。
             // 挂着的等待者一并放掉，否则它要空等满一个超时。
             _audioClockProbe.Reset();
+            _audioClockWindowConsistent = true;
             Interlocked.Exchange(ref _pendingClockExchange, null)?.TrySetResult(null);
             RaiseAudioClockStateChanged();
         }
@@ -461,6 +470,18 @@ public sealed class MediaLinkClient : IAsyncDisposable
                 }
 
                 await _audioClockProbe.ProbeOnceAsync(cancellationToken);
+
+                // 一致与不一致的转移各记一行。状态不进事件——订阅方吃的是「可不可用」，
+                // 这里是「为什么不可用」，只对翻日志的人有意义。
+                var consistent = _audioClockProbe.WindowIsConsistent;
+                if (consistent != _audioClockWindowConsistent)
+                {
+                    _audioClockWindowConsistent = consistent;
+                    _logger?.LogDebug(consistent
+                        ? "对时窗口恢复一致"
+                        : "对时窗口不一致，offset 报不可用，等坏样本流出窗口");
+                }
+
                 RaiseAudioClockStateChanged();
                 await Task.Delay(_audioClockProbe.NextInterval, cancellationToken);
             }
