@@ -433,6 +433,12 @@ mod tests {
     }
 
     #[test]
+    fn min_gap_ticks_is_pinned_to_its_literal() {
+        // 5ms 真空档下限的字面锚，防系数或 TICKS_PER_MS 误改静默漂移。
+        assert_eq!(MIN_GAP_TICKS, 50_000);
+    }
+
+    #[test]
     fn a_gap_at_the_floor_is_filled_in_full_not_docked() {
         // 判定用下限，补的量仍是实测全量：下限是「是不是空档」的门，不是要减掉的偏置。
         let mut timeline = Timeline::default();
