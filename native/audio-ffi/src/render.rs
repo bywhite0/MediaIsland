@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering as AtomicOrder
 
 use rubato::{SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
+use crate::timeline::CumulativeFrames;
 use crate::{OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE};
 
 /// 抖动缓冲目标深度的取值范围。
@@ -135,7 +136,7 @@ pub fn frames_to_ms(frames: usize) -> f64 {
 pub fn prefill_silence_frames(
     prefill: &mut PrefillState,
     available_frames: usize,
-    writable_device_frames: usize,
+    writable_device_frames: DeviceFrames,
     device_rate: u32,
     max_input_frames: usize,
 ) -> Option<usize> {
@@ -146,18 +147,36 @@ pub fn prefill_silence_frames(
     Some(output_frames_for(writable_device_frames, device_rate).min(max_input_frames))
 }
 
-/// 设备帧数折算成同时长的传输帧数（48k 域）。
+/// 设备帧轴上的帧数：WASAPI 端点按自身混音率数出来的帧，本轮 padding、本轮可写数、
+/// 端点缓冲容量都在这条轴上。
+///
+/// 与累积帧轴（timeline 侧的 CumulativeFrames，48k 域）是两条互不通约的轴：设备率
+/// 不等于 48000 时两侧一帧的时长不同，直接混用曾把误差整体偏移一个端点缓冲长度
+/// （本机 22 毫秒），且各设备不同。故本类型不提供跨轴算术，也不实现 Deref、From
+/// 一类会重新打开混用面的转换；换轴的唯一通道是 output_frames_for，
+/// 裸整数只在 WASAPI 交数的那一处进入。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeviceFrames(usize);
+
+impl DeviceFrames {
+    /// 从裸整数进入设备帧轴。只该出现在 WASAPI 边界与测试里。
+    pub fn new(raw: usize) -> Self {
+        Self(raw)
+    }
+}
+
+/// 设备帧数折算成同时长的传输帧数（48k 域）。两轴之间唯一的换算通道。
 ///
 /// 两个域必须分清。送给 `played_cb` 的缓冲按 48k 输入帧分配，而 WASAPI 说的
 /// 「本轮可写几帧」是设备帧。设备率 >48000 时设备帧数多于同时长的 48k 帧数，
 /// 拿设备帧数去索引按 48k 分配的缓冲就是越界——96kHz / 20ms 下是 3840 索引进
 /// 长 2182 的缓冲，渲染线程当场 panic，而此时 `render_start` 已经返回过 OK。
-pub fn output_frames_for(device_frames: usize, device_rate: u32) -> usize {
+pub fn output_frames_for(device_frames: DeviceFrames, device_rate: u32) -> usize {
     if device_rate == 0 || device_rate == OUTPUT_SAMPLE_RATE {
-        return device_frames;
+        return device_frames.0;
     }
 
-    device_frames * OUTPUT_SAMPLE_RATE as usize / device_rate as usize
+    device_frames.0 * OUTPUT_SAMPLE_RATE as usize / device_rate as usize
 }
 
 /// 正在出声的采样在累积轴（48k 域）上的位置。
@@ -169,11 +188,11 @@ pub fn output_frames_for(device_frames: usize, device_rate: u32) -> usize {
 /// 直接变成机间错位。padding 大于读游标（刚起播、硬重置刚过）时饱和到 0，
 /// 调用方经 `sender_ticks_at` 的本轮门自然得到 `None`。
 pub fn playing_position_frames(
-    read_cursor: u64,
-    padding_device_frames: usize,
+    read_cursor: CumulativeFrames,
+    padding_device_frames: DeviceFrames,
     device_rate: u32,
-) -> u64 {
-    read_cursor.saturating_sub(output_frames_for(padding_device_frames, device_rate) as u64)
+) -> CumulativeFrames {
+    read_cursor.saturating_rewind(output_frames_for(padding_device_frames, device_rate) as u64)
 }
 
 /// 重采样比换成 ppm（百万分之一）。
@@ -641,7 +660,7 @@ mod wasapi {
     use super::{
         build_resampler, device_latency_us, frames_to_ms, output_frames_at_device_position,
         playing_position_frames, prefill_silence_frames, ratio_to_ppm, resample_ratio,
-        target_frames, AlignmentCell, PrefillState, RenderStatsCell, ResamplerState,
+        target_frames, AlignmentCell, DeviceFrames, PrefillState, RenderStatsCell, ResamplerState,
         TargetDepthCell, MIN_TARGET_MS, RING_CAPACITY_FRAMES,
     };
     use crate::convert;
@@ -1068,11 +1087,10 @@ mod wasapi {
             // 一次持锁取全，不为诊断多抢一次那把锁——对面等它的是 WASAPI 实时线程。
             let Ok((available, playing_sender_ticks)) = ring.lock().map(|ring| {
                 let playing_at = playing_position_frames(
-                    ring.read_cursor_frames().raw(),
-                    padding as usize,
+                    ring.read_cursor_frames(),
+                    DeviceFrames::new(padding as usize),
                     session.mix.sample_rate,
                 );
-                let playing_at = crate::timeline::CumulativeFrames::new(playing_at);
                 (ring.available_frames(), ring.sender_ticks_at(playing_at))
             }) else {
                 break;
@@ -1083,7 +1101,7 @@ mod wasapi {
             if let Some(output_frames) = prefill_silence_frames(
                 &mut prefill,
                 available,
-                writable as usize,
+                DeviceFrames::new(writable as usize),
                 session.mix.sample_rate,
                 max_input,
             ) {
@@ -1824,6 +1842,15 @@ mod tests {
     use crate::ring::MAX_DRIFT;
     use rubato::Resampler;
 
+    /// 测试侧进两条轴的入口，省得每处铺开构造函数。
+    fn cum(raw: u64) -> CumulativeFrames {
+        CumulativeFrames::new(raw)
+    }
+
+    fn dev(raw: usize) -> DeviceFrames {
+        DeviceFrames::new(raw)
+    }
+
     #[test]
     fn target_frames_converts_ms_at_output_rate() {
         assert_eq!(target_frames(200), 9_600);
@@ -2000,14 +2027,23 @@ mod tests {
         // padding 是设备帧，读游标是 48k 帧。漏掉折算或减号写错，误差整体偏移
         // 一个端点缓冲长度（本机 22 毫秒），且各设备不同——直接变成机间错位。
         // 期望值全部手算，不引用 output_frames_for 重算一遍。
-        assert_eq!(playing_position_frames(10_000, 960, 48_000), 9_040);
+        assert_eq!(
+            playing_position_frames(cum(10_000), dev(960), 48_000),
+            cum(9_040)
+        );
         // 96k：960 设备帧只值 480 个 48k 帧——当年 prefill panic 的那一档。
-        assert_eq!(playing_position_frames(10_000, 960, 96_000), 9_520);
+        assert_eq!(
+            playing_position_frames(cum(10_000), dev(960), 96_000),
+            cum(9_520)
+        );
         // 44.1k：960 × 48000 / 44100 截断为 1044。
-        assert_eq!(playing_position_frames(10_000, 960, 44_100), 8_956);
+        assert_eq!(
+            playing_position_frames(cum(10_000), dev(960), 44_100),
+            cum(8_956)
+        );
         // 刚起播、硬重置刚过：padding 大于读游标，饱和到 0 而不是回绕，
         // 下游 sender_ticks_at 的本轮门会把 0 判成 None。
-        assert_eq!(playing_position_frames(100, 960, 48_000), 0);
+        assert_eq!(playing_position_frames(cum(100), dev(960), 48_000), cum(0));
     }
 
     #[test]
@@ -2106,7 +2142,7 @@ mod tests {
             (96_000, 1_920),
             (192_000, 3_840),
         ] {
-            let frames = output_frames_for(buffer_frames, rate);
+            let frames = output_frames_for(dev(buffer_frames), rate);
             assert_eq!(
                 frames, 960,
                 "{rate}Hz 的 20ms 缓冲应折算成 960 个 48k 帧，实际 {frames}"
@@ -2118,11 +2154,11 @@ mod tests {
     fn output_rate_conversion_never_inflates_high_rate_devices() {
         // 上一条的失效形态：>48k 时设备帧数多于同时长的 48k 帧数，
         // 照设备帧数去索引按 48k 分配的缓冲就是越界 panic。
-        assert!(output_frames_for(1_920, 96_000) < 1_920);
-        assert!(output_frames_for(3_840, 192_000) < 3_840);
-        assert_eq!(output_frames_for(960, 48_000), 960);
+        assert!(output_frames_for(dev(1_920), 96_000) < 1_920);
+        assert!(output_frames_for(dev(3_840), 192_000) < 3_840);
+        assert_eq!(output_frames_for(dev(960), 48_000), 960);
         // 低速设备反向：同时长的 48k 帧数更多，故折算是放大。
-        assert!(output_frames_for(882, 44_100) > 882);
+        assert!(output_frames_for(dev(882), 44_100) > 882);
     }
 
     #[test]
@@ -2133,7 +2169,7 @@ mod tests {
         let mut state = PrefillState::new(target_frames(200));
         let max_input = 1_091;
 
-        let frames = prefill_silence_frames(&mut state, 0, 1_920, 96_000, max_input)
+        let frames = prefill_silence_frames(&mut state, 0, dev(1_920), 96_000, max_input)
             .expect("未达目标深度时应处于预填充");
 
         assert_eq!(frames, 960, "1920 个 96k 设备帧等于 960 个 48k 帧");
@@ -2146,7 +2182,8 @@ mod tests {
         // 这是最后一道防线：越界发生在实时线程上，panic 会带走整个宿主进程。
         let mut state = PrefillState::new(target_frames(200));
 
-        let frames = prefill_silence_frames(&mut state, 0, 4_800, 48_000, 100).expect("预填充");
+        let frames =
+            prefill_silence_frames(&mut state, 0, dev(4_800), 48_000, 100).expect("预填充");
 
         assert_eq!(frames, 100, "超过上界时必须夹到上界");
     }
@@ -2155,7 +2192,7 @@ mod tests {
     fn reaching_target_depth_ends_the_prefill_round() {
         let mut state = PrefillState::new(target_frames(200));
 
-        assert!(prefill_silence_frames(&mut state, 9_600, 1_920, 96_000, 1_091).is_none());
+        assert!(prefill_silence_frames(&mut state, 9_600, dev(1_920), 96_000, 1_091).is_none());
     }
 
     #[test]
