@@ -170,10 +170,12 @@ class ClockSync:
             # 会算成两次探测的间隔——一个大得离谱又看起来合法的数。
             self.miss()
             return False
-        if not isinstance(env_ts_ms, (int, float)) or env_ts_ms <= 0:
+        if (isinstance(env_ts_ms, bool)
+                or not isinstance(env_ts_ms, (int, float)) or env_ts_ms <= 0):
             # 信封 ts 是墙钟桥的原料（协议规定必在）。缺了或非法时整个样本按
             # 「这次没成」计——四时刻即使齐全也不能收：桥必须配被接受样本
             # 同一条应答，收样本不收桥会让两者不同源；拿 0 凑数则造出错桥。
+            # bool 先拒：True 是 int 的子类且 True > 0，放行会造出 10⁴−t3 的错桥。
             self.miss()
             return False
         if not self.estimator.add(t1, t2, t3, t4):
@@ -943,6 +945,14 @@ def self_test():
     peer3.on_reply(1, {"t1": 1, "t3": 2}, 0, 3)
     ok(peer3.unsupported and not peer3.estimator.samples,
        "缺 t2 即对端只实现三时刻：判不支持并清窗，不退化成三时刻估计")
+    boolts = ClockSync()
+    boolts.on_reply(1_000_000, {"t1": 1_000_000, "t2": 1_056_500, "t3": 1_057_000},
+                    800, 1_003_500)          # 先立一个好样本与好桥
+    ok(not boolts.on_reply(2_000_000, {"t1": 2_000_000, "t2": 2_056_500, "t3": 2_057_000},
+                           True, 2_003_500)
+       and boolts.misses == 1 and len(boolts.estimator.samples) == 1
+       and boolts.bridge_w == 6_943_000,
+       "信封 ts 为 bool 按没成计：True 是 int 子类且 True>0，放行会造出 10⁴−t3 的错桥")
 
     # ---- 失联清窗（连续 3 次未成），稳态节奏回到快速阶段 ----
     steady = ClockSync()
