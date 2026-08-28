@@ -4,7 +4,7 @@
 //! 播放这一侧丢最旧同样正确，但理由不同——积压意味着本机放得比上游发得慢，
 //! 保留最新才能追上，保留最旧只会让延迟永久累积。
 
-use crate::timeline::Timeline;
+use crate::timeline::{GapKind, Timeline};
 
 /// 交错立体声。由 crate 根的 [`crate::OUTPUT_CHANNELS`] 导出而非另写一个 2——
 /// 两份声明各自为真时，声道数一旦变更，本模块仍按 2 解释交错布局，每帧都会错位，
@@ -98,20 +98,25 @@ impl PlaybackRing {
     ///
     /// 三步的顺序不能改：先按空档补静音，再写真实样本，最后记锚点。先记锚点再补静音，
     /// 锚点的帧数就少算了补进去的那一段，此后每一次外推都偏那么多。
-    pub fn push_at(&mut self, interleaved: &[i16], sender_ticks: i64) {
+    ///
+    /// 返回本帧相对预期时刻的诊断分类。分类判定在 timeline（纯函数），计数的自增
+    /// 由持 stats cell 的调用方做——这里透传，断了它计数就永远是 0，
+    /// 而那与「从没发生过」不可区分。
+    pub fn push_at(&mut self, interleaved: &[i16], sender_ticks: i64) -> GapKind {
         let gap = self.timeline.gap_before(sender_ticks);
-        if gap >= self.capacity_frames {
+        if gap.silence_frames >= self.capacity_frames {
             // 空档已超过整个缓冲能表达的长度：补进去的静音会把仍要播的样本全部挤掉，
             // 故补与清空等价，而清空还省掉一整轮无用写入。本帧就是新流的第一帧。
             self.reset();
         } else {
-            self.write_silence(gap);
+            self.write_silence(gap.silence_frames);
         }
 
         let position = self.written;
         self.write_interleaved(interleaved);
         self.timeline
             .note_write(position, sender_ticks, interleaved.len() / CHANNELS);
+        gap.kind
     }
 
     /// 末尾不足一帧的残样本丢弃——错位成右声道会让整条流的声道翻转。
@@ -433,6 +438,28 @@ mod tests {
         ring.push_at(&tone(FRAME), FRAME_TICKS + 2 * TICKS_PER_MS);
 
         assert_eq!(ring.written_frames(), 2 * FRAME as u64);
+    }
+
+    #[test]
+    fn push_at_surfaces_the_gap_classification() {
+        // 计数的自增在 render 侧持 stats cell 的地方做，ring 只把 timeline 判出的
+        // 分类透传出去。透传断了（比如恒返回 Normal），计数就永远是 0，
+        // 而那与「从没发生过」不可区分。
+        let mut ring = PlaybackRing::new(48_000);
+        assert_eq!(ring.push_at(&tone(FRAME), 0), GapKind::Normal);
+
+        // 比预期晚 3 毫秒：落在噪声带与真空档之间，被吞掉不补，但分类要出来。
+        let second = FRAME_TICKS + 3 * TICKS_PER_MS;
+        assert_eq!(ring.push_at(&tone(FRAME), second), GapKind::SwallowedGap);
+        assert_eq!(
+            ring.written_frames(),
+            2 * FRAME as u64,
+            "亚下限空档不补静音"
+        );
+
+        // 相对新锚点末端倒走 3 毫秒：重叠。
+        let third = second + FRAME_TICKS - 3 * TICKS_PER_MS;
+        assert_eq!(ring.push_at(&tone(FRAME), third), GapKind::Overlap);
     }
 
     #[test]

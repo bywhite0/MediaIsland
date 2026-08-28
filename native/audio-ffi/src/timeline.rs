@@ -36,21 +36,29 @@ pub fn ticks_to_frames(ticks: i128) -> i128 {
     ticks * i128::from(OUTPUT_SAMPLE_RATE) / i128::from(TICKS_PER_SECOND)
 }
 
-/// 算作真空档的下限。低于它的差值来自帧头的毫秒量化，不是丢帧。
+/// 帧头毫秒量化的噪声带上界。
 ///
 /// 发送端的 capturedAtMs 由两个毫秒级截断合成（墙钟读数取整，以及帧龄的整除），
-/// 每一个各贡献不足 1 毫秒，故相邻两帧的差值带约 2 毫秒的量化噪声；而丢一帧是
-/// 一个采集周期的空档，实测约 10 毫秒。取 5 毫秒落在两者之间：噪声上界的 2.5 倍，
-/// 半个帧长。
+/// 每一个各贡献不足 1 毫秒，故相邻两帧的时刻差带约 2 毫秒的量化噪声——这就是
+/// 这个数的来历。它此前是 [`MIN_GAP_TICKS`] 注释里的一句散文，具名是因为诊断计数的
+/// 下界要引用它：噪声的正半边每秒出现几十次，计数下界若从 0 起算，计数器就是
+/// 每秒加几十的白噪声，什么也诊断不了。
+pub const GAP_NOISE_TICKS: i64 = 2 * TICKS_PER_MS;
+
+/// 算作真空档的下限。低于它的差值来自帧头的毫秒量化，不是丢帧。
+///
+/// 量化噪声的带宽见 [`GAP_NOISE_TICKS`]；而丢一帧是一个采集周期的空档，实测约
+/// 10 毫秒。取 5 毫秒落在两者之间：噪声带上界的 2.5 倍，半个帧长。
 ///
 /// 这条下限不是可省的优化，它补的是一处不对称。重叠一侧刻意返回 0（裁剪要改 PCM
 /// 内容，是另一件事），若正向一侧连量化噪声一起补上，零均值的噪声就变成单边偏置：
 /// 48kHz 下 1 毫秒即 48 帧静音，每秒补上百次，比它要修的时间轴压缩严重得多。
 ///
-/// 代价也要记账：落在噪声带（约 2 毫秒）与丢帧（约 10 毫秒）之间的一次性停顿——
-/// 比如发送端 3–4 毫秒的调度毛刺——会被整段吞掉，越过它向过去外推的位置就偏那么多，
-/// 单次最坏接近 5 毫秒（预算的一半），随这段数据流出缓冲窗口（约 300 毫秒）而消失。
-/// 它与量化噪声在观测上不可分，故不可免；排查机间错位时这项要对账。
+/// 代价也要记账：落在噪声带（[`GAP_NOISE_TICKS`]）与丢帧（约 10 毫秒）之间的
+/// 一次性停顿——比如发送端 3–4 毫秒的调度毛刺——会被整段吞掉，越过它向过去外推的
+/// 位置就偏那么多，单次最坏接近 5 毫秒（预算的一半），随这段数据流出缓冲窗口
+/// （约 300 毫秒）而消失。它与量化噪声在观测上不可分，故不可免；排查机间错位时
+/// 这项要对账——对账的载体是 [`Timeline::gap_before`] 携带的分类计数。
 ///
 /// 采集周期短于约 7 毫秒的设备上这条线要重估——那时丢一帧的空档会落进噪声带里，
 /// 补与不补都不再可分。它是一处常量，重估只改这里。
@@ -83,6 +91,34 @@ pub fn gap_silence_frames(expected_ticks: i64, actual_ticks: i64) -> usize {
         .unwrap_or(usize::MAX)
 }
 
+/// [`Timeline::gap_before`] 的返回：该补的静音帧数，加本帧相对预期时刻的分类。
+///
+/// 分类判定留在这里（纯函数）而计数的自增在 render 侧持 stats cell 的地方做，
+/// 与「噪声是入参的性质，不是换算的性质」同一条分层原则。
+pub struct GapDecision {
+    /// 本帧之前该补的静音帧数。
+    pub silence_frames: usize,
+    /// 本帧相对预期时刻落在哪一档。
+    pub kind: GapKind,
+}
+
+/// 帧间隔的诊断分类。
+///
+/// [`MIN_GAP_TICKS`] 的注释写着「排查机间错位时这项要对账」，而被吞掉的亚下限
+/// 空档与被忽略的重叠此前都没有计数，无从对账——这个分类就是对账的凭据。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GapKind {
+    /// 噪声带内的抖动，或已按空档全量补足的真空档。两者都不欠账，不必计数。
+    Normal,
+    /// 亚下限空档：差值落在 [`GAP_NOISE_TICKS`] 与 [`MIN_GAP_TICKS`] 之间
+    /// （含下界，不含上界）。正是「3–4 毫秒调度毛刺被整段吞掉」那一档，
+    /// 也是机间错位对账时唯一查不到的量。
+    SwallowedGap,
+    /// 重叠：新帧比预期早了至少一个 [`GAP_NOISE_TICKS`]。发送端时间轴倒走，
+    /// 正常发送端不该有。
+    Overlap,
+}
+
 /// 单锚点时间轴。
 #[derive(Default)]
 pub struct Timeline {
@@ -107,20 +143,43 @@ struct Anchor {
 }
 
 impl Timeline {
-    /// 本帧之前该补多少静音帧。
+    /// 本帧之前该补多少静音帧，以及本帧相对预期时刻的分类。
     ///
-    /// 无锚点即流的第一帧，没有可比的前一帧，故为 0。
-    pub fn gap_before(&self, sender_ticks: i64) -> usize {
+    /// 无锚点即流的第一帧，没有可比的前一帧，故补 0 且无从分类（归入正常）。
+    pub fn gap_before(&self, sender_ticks: i64) -> GapDecision {
         let Some(anchor) = self.anchor.as_ref() else {
-            return 0;
+            return GapDecision {
+                silence_frames: 0,
+                kind: GapKind::Normal,
+            };
         };
         let expected = anchor.end_ticks;
+        let delta = i128::from(sender_ticks) - i128::from(expected);
 
-        if i128::from(sender_ticks) - i128::from(expected) < i128::from(MIN_GAP_TICKS) {
-            return 0;
+        if delta >= i128::from(MIN_GAP_TICKS) {
+            // 真空档按实测全量补足，不欠账。
+            return GapDecision {
+                silence_frames: gap_silence_frames(expected, sender_ticks),
+                kind: GapKind::Normal,
+            };
+        }
+        if delta >= i128::from(GAP_NOISE_TICKS) {
+            return GapDecision {
+                silence_frames: 0,
+                kind: GapKind::SwallowedGap,
+            };
+        }
+        if delta <= -i128::from(GAP_NOISE_TICKS) {
+            return GapDecision {
+                silence_frames: 0,
+                kind: GapKind::Overlap,
+            };
         }
 
-        gap_silence_frames(expected, sender_ticks)
+        GapDecision {
+            silence_frames: 0,
+            kind: GapKind::Normal,
+        }
     }
 
     /// 记一次写入。position 是本帧数据起点处的累积写入帧数（已含补进去的静音），
@@ -248,8 +307,10 @@ mod tests {
         let timeline = Timeline::default();
         assert!(!timeline.is_anchored());
         assert_eq!(timeline.sender_ticks_at(0), None);
-        // 也没有可比的前一帧，故不补静音。
-        assert_eq!(timeline.gap_before(1_000_000), 0);
+        // 也没有可比的前一帧，故不补静音、无从分类。
+        let decision = timeline.gap_before(1_000_000);
+        assert_eq!(decision.silence_frames, 0);
+        assert_eq!(decision.kind, GapKind::Normal);
     }
 
     #[test]
@@ -276,7 +337,7 @@ mod tests {
         let mut timeline = Timeline::default();
         timeline.note_write(0, 0, FRAME_FRAMES);
 
-        assert_eq!(timeline.gap_before(FRAME_TICKS), 0);
+        assert_eq!(timeline.gap_before(FRAME_TICKS).silence_frames, 0);
     }
 
     #[test]
@@ -318,7 +379,7 @@ mod tests {
 
         let noise = 2 * TICKS_PER_MS;
         assert!(gap_silence_frames(FRAME_TICKS, FRAME_TICKS + noise) > 0);
-        assert_eq!(timeline.gap_before(FRAME_TICKS + noise), 0);
+        assert_eq!(timeline.gap_before(FRAME_TICKS + noise).silence_frames, 0);
     }
 
     #[test]
@@ -328,12 +389,65 @@ mod tests {
         timeline.note_write(0, 0, FRAME_FRAMES);
 
         let at_floor = FRAME_TICKS + MIN_GAP_TICKS;
+        let filled = timeline.gap_before(at_floor);
         assert_eq!(
-            timeline.gap_before(at_floor),
+            filled.silence_frames,
             usize::try_from(ticks_to_frames(i128::from(MIN_GAP_TICKS))).unwrap()
         );
+        // 全量补足的真空档不欠账，不该进任何计数。
+        assert_eq!(filled.kind, GapKind::Normal);
         // 恰在下限上要补，差一个 tick 就不补——成对钉住这条边界的两侧。
-        assert_eq!(timeline.gap_before(at_floor - 1), 0);
+        assert_eq!(timeline.gap_before(at_floor - 1).silence_frames, 0);
+    }
+
+    #[test]
+    fn the_swallowed_band_is_pinned_on_both_edges() {
+        // 亚下限空档的判定区间是 [GAP_NOISE_TICKS, MIN_GAP_TICKS)。四个边界逐个钉：
+        // 下界左移一个 tick 就把量化噪声计进来（每秒加几十的白噪声，什么也诊断不了），
+        // 上界右移一个 tick 就把已全量补足的真空档重复计一次。
+        let mut timeline = Timeline::default();
+        timeline.note_write(0, 0, FRAME_FRAMES);
+
+        // 噪声带内（差一个 tick 不到下界）：不计。计数下界从 0 起算的实现在这里红。
+        assert_eq!(
+            timeline.gap_before(FRAME_TICKS + GAP_NOISE_TICKS - 1).kind,
+            GapKind::Normal
+        );
+        // 恰在下界上：计。
+        assert_eq!(
+            timeline.gap_before(FRAME_TICKS + GAP_NOISE_TICKS).kind,
+            GapKind::SwallowedGap
+        );
+        // 差一个 tick 不到真空档下限：仍是被吞的那一档，且确实没补。
+        let just_below_floor = timeline.gap_before(FRAME_TICKS + MIN_GAP_TICKS - 1);
+        assert_eq!(just_below_floor.kind, GapKind::SwallowedGap);
+        assert_eq!(just_below_floor.silence_frames, 0);
+        // 恰在真空档下限上：全量补足，归入正常。
+        assert_eq!(
+            timeline.gap_before(FRAME_TICKS + MIN_GAP_TICKS).kind,
+            GapKind::Normal
+        );
+    }
+
+    #[test]
+    fn overlap_is_classified_only_beyond_the_noise_band() {
+        // 重叠一侧同样不能数噪声：量化噪声零均值，负半边与正半边一样每秒几十次。
+        let mut timeline = Timeline::default();
+        timeline.note_write(0, 0, FRAME_FRAMES);
+
+        // 噪声带内的倒走：不计。
+        assert_eq!(
+            timeline
+                .gap_before(FRAME_TICKS - (GAP_NOISE_TICKS - 1))
+                .kind,
+            GapKind::Normal
+        );
+        // 恰倒走一个噪声带：重叠。不补也不裁（裁剪要改 PCM 内容，是另一件事）。
+        let overlap = timeline.gap_before(FRAME_TICKS - GAP_NOISE_TICKS);
+        assert_eq!(overlap.kind, GapKind::Overlap);
+        assert_eq!(overlap.silence_frames, 0);
+        // 严格连续（差值恰为零）：正常。
+        assert_eq!(timeline.gap_before(FRAME_TICKS).kind, GapKind::Normal);
     }
 
     #[test]
