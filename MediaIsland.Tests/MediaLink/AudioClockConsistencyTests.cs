@@ -147,11 +147,13 @@ public class AudioClockConsistencyTests
         // 方向相反），真值本身再漂移恰好一个 margin（1 毫秒）：
         // |43ms − 36ms| = 7ms == (6ms + 6ms) / 2 + 1ms。恰在界上必须通过——
         // 只测超界会让比较符从「大于」改成「大于等于」时无人发现。
+        //
+        // 漂移量硬编码 1 毫秒而不引用 ConsistencyMarginTicks：这对判据要钉住的
+        // 正是 margin 的取值本身，构造若跟着常量走，改坏常量时判据会自我豁免——
+        // 与 RTT 上限判据用 25 + 25 硬数字钉 50 毫秒同形。
         var estimator = new AudioClockOffsetEstimator();
         estimator.TryAdd(SampleTicks(TrueOffsetTicks, outboundTicks: 6 * Ms, inboundTicks: 0));
-        estimator.TryAdd(SampleTicks(
-            TrueOffsetTicks - AudioClockOffsetEstimator.ConsistencyMarginTicks,
-            outboundTicks: 0, inboundTicks: 6 * Ms));
+        estimator.TryAdd(SampleTicks(TrueOffsetTicks - Ms, outboundTicks: 0, inboundTicks: 6 * Ms));
 
         Assert.True(estimator.TryGetOffset(out _, out _));
     }
@@ -162,9 +164,7 @@ public class AudioClockConsistencyTests
         // 边界成对的拒绝侧：与上一条只差一个 tick 的真值漂移，必须被拒。
         var estimator = new AudioClockOffsetEstimator();
         estimator.TryAdd(SampleTicks(TrueOffsetTicks, outboundTicks: 6 * Ms, inboundTicks: 0));
-        estimator.TryAdd(SampleTicks(
-            TrueOffsetTicks - AudioClockOffsetEstimator.ConsistencyMarginTicks - 1,
-            outboundTicks: 0, inboundTicks: 6 * Ms));
+        estimator.TryAdd(SampleTicks(TrueOffsetTicks - Ms - 1, outboundTicks: 0, inboundTicks: 6 * Ms));
 
         Assert.False(estimator.TryGetOffset(out _, out _));
     }
