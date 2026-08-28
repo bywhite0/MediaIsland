@@ -1,3 +1,4 @@
+using MediaIsland.Services.MediaLink;
 using MediaIsland.Services.MediaLink.Protocol;
 using Xunit;
 
@@ -79,12 +80,37 @@ public class MediaLinkClientAudioClockTests
     {
         // 未声明能力就不发 audio.clock——向老服务端发未知类型换来的是 bad_request 或
         // 静默丢弃，两者都只是浪费，且日志里会多出一类查不出所以然的错误。
-        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(capabilitiesJson: "");
+        //
+        // 负向条件不靠墙钟：注入等待器数「循环歇了几轮」。歇一轮就证明循环在这一轮
+        // 选了「不探」分支；数满三轮即三轮都没探。脚本前两轮立即放行，第三轮起长驻
+        // 到断连取消——放行是为了让轮次真的发生，长驻是为了不让循环空转到测试结束。
+        var rounds = 0;
+        var intervals = new List<TimeSpan>();
+        await using var harness = await MediaLinkClientCapabilityHarness.ConnectAsync(
+            capabilitiesJson: "",
+            probeWait: (interval, ct) =>
+            {
+                lock (intervals)
+                {
+                    intervals.Add(interval);
+                }
 
-        // 负向条件给足窗口：快速阶段的探测周期是 200ms，能力在的话 500ms 内必有请求。
-        await Task.Delay(500);
+                return Interlocked.Increment(ref rounds) < 3
+                    ? Task.CompletedTask
+                    : Task.Delay(Timeout.Infinite, ct);
+            });
+
+        await harness.WaitUntilAsync(() => Volatile.Read(ref rounds) >= 3);
+        Assert.True(Volatile.Read(ref rounds) >= 3);
 
         Assert.DoesNotContain(harness.Socket.Sent, IsClockRequest);
+
+        // 等待器脚本判据：没能力时每轮歇的都是稳态间隔。循环把间隔改小（极端是 0）
+        // 意味着对老服务端空转刷 CPU，这条就是防那种回归的。
+        lock (intervals)
+        {
+            Assert.All(intervals, interval => Assert.Equal(AudioClockProbe.SteadyInterval, interval));
+        }
     }
 
     [Fact]

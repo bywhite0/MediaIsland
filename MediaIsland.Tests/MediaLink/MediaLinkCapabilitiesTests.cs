@@ -360,7 +360,10 @@ internal sealed class MediaLinkClientCapabilityHarness(ScriptedClientSocket sock
 
     /// <param name="capabilitiesJson">拼进 hello payload 的原始片段，需自带前导逗号；
     /// 空串即模拟不声明任何能力的老服务端。</param>
-    public static async Task<MediaLinkClientCapabilityHarness> ConnectAsync(string capabilitiesJson)
+    /// <param name="probeWait">对时探测循环的等待实现，缺省用生产的 Task.Delay。
+    /// 负向时序判据用它把「循环歇了几轮」变成可数的事实。</param>
+    public static async Task<MediaLinkClientCapabilityHarness> ConnectAsync(
+        string capabilitiesJson, Func<TimeSpan, CancellationToken, Task>? probeWait = null)
     {
         var socket = new ScriptedClientSocket();
         socket.QueueRaw(BuildHello(epoch: 1, capabilitiesJson));
@@ -373,7 +376,8 @@ internal sealed class MediaLinkClientCapabilityHarness(ScriptedClientSocket sock
             Token = "tok",
             InitialRetryDelay = TimeSpan.FromMilliseconds(50),
             MaxRetryDelay = TimeSpan.FromMilliseconds(200),
-            SocketFactory = () => socket
+            SocketFactory = () => socket,
+            AudioClockProbeWait = probeWait ?? Task.Delay
         });
 
         client.Start();

@@ -132,6 +132,13 @@ public sealed class MediaLinkClientOptions
     public TimeSpan HandshakeTimeout { get; init; } = TimeSpan.FromSeconds(10);
 
     public Func<IMediaLinkClientSocket> SocketFactory { get; init; } = () => new ClientWebSocketAdapter();
+
+    /// <summary>
+    /// 对时探测循环的等待实现，生产即 Task.Delay，仅测试注入。
+    /// 「老服务端永不被探测」是负向判据，靠真实墙钟窗口等出来的绿在慢机器上
+    /// 说明不了任何事；注入后判据数「循环歇了几轮、每轮要求歇多久」，不数秒表。
+    /// </summary>
+    internal Func<TimeSpan, CancellationToken, Task> AudioClockProbeWait { get; init; } = Task.Delay;
 }
 
 public sealed class MediaLinkMediaReceivedEventArgs(MediaLinkMediaDto media, long receivedAtTick) : EventArgs
@@ -465,7 +472,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
 
                 if (!SupportsAudioClock)
                 {
-                    await Task.Delay(AudioClockProbe.SteadyInterval, cancellationToken);
+                    await _options.AudioClockProbeWait(AudioClockProbe.SteadyInterval, cancellationToken);
                     continue;
                 }
 
@@ -488,7 +495,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
                 }
 
                 RaiseAudioClockStateChanged();
-                await Task.Delay(_audioClockProbe.NextInterval, cancellationToken);
+                await _options.AudioClockProbeWait(_audioClockProbe.NextInterval, cancellationToken);
             }
         }
         catch (OperationCanceledException)
