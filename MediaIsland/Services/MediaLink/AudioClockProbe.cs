@@ -114,6 +114,12 @@ internal sealed class AudioClockProbe
     internal bool WindowIsConsistent => _estimator.WindowIsConsistent;
 
     /// <summary>
+    /// 因窗口不一致而报不可用的累计次数，立论见
+    /// <see cref="AudioClockOffsetEstimator.InconsistentWindows"/>。
+    /// </summary>
+    internal long InconsistentWindows => _estimator.InconsistentWindows;
+
+    /// <summary>
     /// 线上时间轴的 offset：本机 QPC（自开机起算）减发送端墙钟的 100ns 表示（自 1970 起算）。
     /// 播放侧把「帧头时刻 + D + 本值」当作本机时间轴上的目标出声时刻，方向是本机减发送端。
     ///

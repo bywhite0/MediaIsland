@@ -479,7 +479,8 @@ public sealed class MediaLinkClient : IAsyncDisposable
                 await _audioClockProbe.ProbeOnceAsync(cancellationToken);
 
                 // 一致与不一致的转移各记一行。状态不进事件——订阅方吃的是「可不可用」，
-                // 这里是「为什么不可用」，只对翻日志的人有意义。
+                // 这里是「为什么不可用」，只对翻日志的人有意义。不一致臂带上累计计数：
+                // 它持续增长指向对端实现或换机残样问题，而不只是这次没估出来。
                 var consistent = _audioClockProbe.WindowIsConsistent;
                 if (consistent != _audioClockWindowConsistent)
                 {
@@ -490,7 +491,9 @@ public sealed class MediaLinkClient : IAsyncDisposable
                     }
                     else
                     {
-                        _logger?.LogDebug("对时窗口不一致，offset 报不可用，等坏样本流出窗口");
+                        _logger?.LogDebug(
+                            "对时窗口不一致，offset 报不可用，等坏样本流出窗口，累计 {InconsistentWindows} 次",
+                            _audioClockProbe.InconsistentWindows);
                     }
                 }
 
