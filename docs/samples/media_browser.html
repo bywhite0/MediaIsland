@@ -1331,7 +1331,7 @@ function alignLine() {
     if (align.fellBack) return `非对齐：${align.fellBack}`;
     // 流已按深度锚定顺排（hello 声明后到 / dMs 改动落在流中）：对齐要等
     // 下一次锚点重排（欠载/重开声音）才生效——如实说条件；真正的「等待
-    // 时钟」窗口不排帧，不在本分支呈现。
+    // 时钟」窗口不排帧。
     const off = onlineOffset() != null ? '有' : '无';
     return `对齐待重排（offset ${off}，下一次锚点重排生效）`;
   }
