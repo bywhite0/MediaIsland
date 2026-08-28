@@ -1068,10 +1068,11 @@ mod wasapi {
             // 一次持锁取全，不为诊断多抢一次那把锁——对面等它的是 WASAPI 实时线程。
             let Ok((available, playing_sender_ticks)) = ring.lock().map(|ring| {
                 let playing_at = playing_position_frames(
-                    ring.read_cursor_frames(),
+                    ring.read_cursor_frames().raw(),
                     padding as usize,
                     session.mix.sample_rate,
                 );
+                let playing_at = crate::timeline::CumulativeFrames::new(playing_at);
                 (ring.available_frames(), ring.sender_ticks_at(playing_at))
             }) else {
                 break;

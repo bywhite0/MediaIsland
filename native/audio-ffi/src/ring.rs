@@ -22,12 +22,12 @@ pub struct PlaybackRing {
     write: usize,
     /// 当前可读帧数。写满后不再增长，读游标随丢弃前移。
     filled: usize,
-    /// 累积写入帧数，含补进去的静音。
+    /// 累积写入位置，含补进去的静音。
     ///
-    /// 只增：不随环形覆盖回退，也不随 [`PlaybackRing::reset`] 归零——它是时间轴坐标，
-    /// 不是缓冲下标。归零会让它与仍在推进的设备位置错开一整段，而那种错开没有任何
-    /// 症状可循，只表现为出声时刻算错。
-    written: u64,
+    /// 只增：不随环形覆盖回退，也不随 [`PlaybackRing::reset`] 归零——它是累积帧轴上
+    /// 的坐标，不是缓冲下标。归零会让它与仍在推进的设备位置错开一整段，而那种错开
+    /// 没有任何症状可循，只表现为出声时刻算错。
+    written: CumulativeFrames,
     /// 写入位置到发送端时刻的映射。
     ///
     /// 与样本同处一把锁下而不是另立一处：锚点描述的正是这些样本，分开存时两者会在
@@ -44,7 +44,7 @@ impl PlaybackRing {
             capacity_frames,
             write: 0,
             filled: 0,
-            written: 0,
+            written: CumulativeFrames::new(0),
             timeline: Timeline::default(),
         }
     }
@@ -53,8 +53,8 @@ impl PlaybackRing {
         self.filled
     }
 
-    /// 累积写入帧数，即时间轴上的写入位置。
-    pub fn written_frames(&self) -> u64 {
+    /// 写入位置在累积帧轴上的坐标。
+    pub fn written_frames(&self) -> CumulativeFrames {
         self.written
     }
 
@@ -63,14 +63,16 @@ impl PlaybackRing {
     /// 这不等于设备已消耗的帧数。溢出丢最旧会跳过若干个写入位置，此后两者恒差那么多；
     /// 而重采样又让设备侧的一帧与这里的一帧长度不同。要问「即将出声的样本来自发送端
     /// 何时」，只有这个位置对得上锚点。
-    pub fn read_cursor_frames(&self) -> u64 {
-        self.written - self.filled as u64
+    ///
+    /// filled 恒不大于 written（每一帧 filled 的增长都伴随 written 的增长），
+    /// 饱和分支实际走不到，只是回退方法的既有形态。
+    pub fn read_cursor_frames(&self) -> CumulativeFrames {
+        self.written.saturating_rewind(self.filled as u64)
     }
 
     /// 累积第 cumulative_frames 帧对应的发送端时刻，无锚点时为 None。
-    pub fn sender_ticks_at(&self, cumulative_frames: u64) -> Option<i64> {
-        self.timeline
-            .sender_ticks_at(CumulativeFrames::new(cumulative_frames))
+    pub fn sender_ticks_at(&self, cumulative_frames: CumulativeFrames) -> Option<i64> {
+        self.timeline.sender_ticks_at(cumulative_frames)
     }
 
     /// 时间轴是否已有锚点。
@@ -115,11 +117,8 @@ impl PlaybackRing {
 
         let position = self.written;
         self.write_interleaved(interleaved);
-        self.timeline.note_write(
-            CumulativeFrames::new(position),
-            sender_ticks,
-            interleaved.len() / CHANNELS,
-        );
+        self.timeline
+            .note_write(position, sender_ticks, interleaved.len() / CHANNELS);
         gap.kind
     }
 
@@ -143,7 +142,7 @@ impl PlaybackRing {
             self.buffer[dst..dst + run * CHANNELS].fill(0);
             self.write = (self.write + run) % self.capacity_frames;
             self.filled = (self.filled + run).min(self.capacity_frames);
-            self.written += run as u64;
+            self.written = self.written.advance(run as u64);
             remaining -= run;
         }
     }
@@ -157,7 +156,7 @@ impl PlaybackRing {
             self.filled += 1;
         }
         // filled 已满时不增长：写游标前移即等价于丢弃最旧的一帧。
-        self.written += 1;
+        self.written = self.written.advance(1);
     }
 
     /// 取出 `out` 能装下的帧数。不足的部分填零并返回实际取到的帧数。
@@ -208,6 +207,11 @@ mod tests {
     use crate::timeline::{ticks_to_frames, TICKS_PER_MS};
 
     const CH: usize = 2;
+
+    /// 测试侧进累积轴的唯一入口，省得每处铺开构造函数。
+    fn at(raw: u64) -> CumulativeFrames {
+        CumulativeFrames::new(raw)
+    }
 
     fn stereo(frames: &[(i16, i16)]) -> Vec<i16> {
         frames.iter().flat_map(|&(l, r)| [l, r]).collect()
@@ -373,9 +377,9 @@ mod tests {
         let mut ring = PlaybackRing::new(8);
         ring.push(&stereo(&[(1, 1), (2, 2)]));
 
-        assert_eq!(ring.written_frames(), 2);
+        assert_eq!(ring.written_frames().raw(), 2);
         assert!(!ring.is_anchored());
-        assert_eq!(ring.sender_ticks_at(0), None);
+        assert_eq!(ring.sender_ticks_at(at(0)), None);
     }
 
     #[test]
@@ -421,7 +425,7 @@ mod tests {
         ring.push_at(&tone(FRAME), 3 * FRAME_TICKS);
 
         let span = ticks_to_frames(i128::from(4 * FRAME_TICKS));
-        assert_eq!(i128::from(ring.written_frames()), span);
+        assert_eq!(i128::from(ring.written_frames().raw()), span);
         assert_eq!(i128::try_from(ring.available_frames()).unwrap(), span);
 
         // 补进去的静音必须落在第二帧与第三帧之间。补在末尾同样让总数守恒，
@@ -441,7 +445,7 @@ mod tests {
         ring.push_at(&tone(FRAME), 0);
         ring.push_at(&tone(FRAME), FRAME_TICKS + 2 * TICKS_PER_MS);
 
-        assert_eq!(ring.written_frames(), 2 * FRAME as u64);
+        assert_eq!(ring.written_frames().raw(), 2 * FRAME as u64);
     }
 
     #[test]
@@ -456,7 +460,7 @@ mod tests {
         let second = FRAME_TICKS + 3 * TICKS_PER_MS;
         assert_eq!(ring.push_at(&tone(FRAME), second), GapKind::SwallowedGap);
         assert_eq!(
-            ring.written_frames(),
+            ring.written_frames().raw(),
             2 * FRAME as u64,
             "亚下限空档不补静音"
         );
@@ -476,8 +480,8 @@ mod tests {
         ring.push_at(&tone(FRAME), 2 * FRAME_TICKS);
 
         // 一个样本都还没取走，读游标仍停在第一帧起点，那里的时刻就是 0。
-        assert_eq!(ring.read_cursor_frames(), 0);
-        assert_eq!(ring.sender_ticks_at(0), Some(0));
+        assert_eq!(ring.read_cursor_frames().raw(), 0);
+        assert_eq!(ring.sender_ticks_at(at(0)), Some(0));
     }
 
     #[test]
@@ -487,8 +491,8 @@ mod tests {
         let mut ring = PlaybackRing::new(2);
         ring.push(&stereo(&[(1, 1), (2, 2), (3, 3)]));
 
-        assert_eq!(ring.written_frames(), 3);
-        assert_eq!(ring.read_cursor_frames(), 1);
+        assert_eq!(ring.written_frames().raw(), 3);
+        assert_eq!(ring.read_cursor_frames().raw(), 1);
     }
 
     #[test]
@@ -535,7 +539,12 @@ mod tests {
             None,
             "重置前的位置属于上一轮，不该有答案"
         );
-        assert_eq!(ring.sender_ticks_at(run_start - 1), None, "起点之前一帧也不该有");
+        let just_before_run = run_start.saturating_rewind(1);
+        assert_eq!(
+            ring.sender_ticks_at(just_before_run),
+            None,
+            "起点之前一帧也不该有"
+        );
     }
 
     #[test]
@@ -547,7 +556,7 @@ mod tests {
         ring.push_at(&tone(96), 500 * TICKS_PER_MS);
 
         // 读游标此刻正指在那段没记账的数据里——这不是构造出来的边界，是混用两个入口的常态。
-        assert_eq!(ring.read_cursor_frames(), 0);
+        assert_eq!(ring.read_cursor_frames().raw(), 0);
         assert_eq!(
             ring.sender_ticks_at(ring.read_cursor_frames()),
             None,
@@ -563,11 +572,11 @@ mod tests {
         ring.push(&stereo(&[(1, 1), (2, 2)]));
         ring.reset();
 
-        assert_eq!(ring.written_frames(), 2);
-        assert_eq!(ring.read_cursor_frames(), 2);
+        assert_eq!(ring.written_frames().raw(), 2);
+        assert_eq!(ring.read_cursor_frames().raw(), 2);
         assert!(!ring.is_anchored());
 
         ring.push_at(&stereo(&[(3, 3)]), 9 * TICKS_PER_MS);
-        assert_eq!(ring.sender_ticks_at(2), Some(9 * TICKS_PER_MS));
+        assert_eq!(ring.sender_ticks_at(at(2)), Some(9 * TICKS_PER_MS));
     }
 }
