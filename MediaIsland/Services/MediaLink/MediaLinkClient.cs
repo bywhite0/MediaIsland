@@ -477,9 +477,14 @@ public sealed class MediaLinkClient : IAsyncDisposable
                 if (consistent != _audioClockWindowConsistent)
                 {
                     _audioClockWindowConsistent = consistent;
-                    _logger?.LogDebug(consistent
-                        ? "对时窗口恢复一致"
-                        : "对时窗口不一致，offset 报不可用，等坏样本流出窗口");
+                    if (consistent)
+                    {
+                        _logger?.LogDebug("对时窗口恢复一致");
+                    }
+                    else
+                    {
+                        _logger?.LogDebug("对时窗口不一致，offset 报不可用，等坏样本流出窗口");
+                    }
                 }
 
                 RaiseAudioClockStateChanged();
