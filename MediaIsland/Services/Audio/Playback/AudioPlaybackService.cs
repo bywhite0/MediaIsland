@@ -256,9 +256,11 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     /// 对时结果每秒都可能变。把「offset 还没算出来」写成「对齐关着」，起播时就不会
     /// 建执行器，几秒后 offset 到了也无处施力。
     ///
-    /// 播放中调用时运行时三项即时生效；开关只记下等下一次起播——本会话生效的开关值
-    /// 在 <see cref="SessionAlignmentEnabled"/>，中途切换要不要停播重启由调用方
-    /// 比对它决定，本方法不自作主张重启。
+    /// 播放中调用时运行时三项即时生效；开关与会话起播值不一致且在播 → 就地停播重启。
+    /// enabled 并进 render_start 之后，重启是中途切换唯一可能的生效方式——代价是
+    /// 一次可闻的中断，但用户刚拨了一个播放语义的开关，中断在预期之内。
+    /// 同值绝不重启：对时结果每秒下发走的就是本方法，幂等判据钉死这一条，
+    /// 防止把探测节奏变成每秒重启。
     /// </summary>
     public void ConfigureAlignment(
         bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks)
@@ -276,10 +278,21 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
             _alignmentManualOffsetTicks = manualOffsetTicks;
 
             // 未起播时只存着：起播路径会在 Start 之前下发三项、经 Start 传开关。
-            if (_playing)
+            if (!_playing)
             {
-                ApplyAlignmentUnlocked();
+                return;
             }
+
+            if (enabled != _sessionAlignmentEnabled)
+            {
+                // 开关中途切换。StartUnlocked 会在新 Start 前补发刚存下的三项，
+                // 并按暂存请求深度起播——换的只是开关，不动用户的其余配置。
+                StopUnlocked();
+                StartUnlocked();
+                return;
+            }
+
+            ApplyAlignmentUnlocked();
         }
     }
 

@@ -177,6 +177,9 @@ public class MediaLinkAlignmentCoordinatorTests
         // 不得触发停播或重启。停一下再起在听感上是一次爆音加一段空白。
         var harness = new Harness();
         harness.Renderer.Stats = StartedStats();
+        // 先重算再起播：开关在起播前就位（生产主路径 hello 先于起播）。
+        // 本判据的领域是「退回不打断」；开关中途切换的重启另有专测，不在这里搅局。
+        harness.Coordinator.Recompute();
         harness.Playback.Configure(enabled: true, targetBufferMs: 200);
         harness.Coordinator.Recompute();
         var startsBefore = harness.Renderer.StartCount;
@@ -339,6 +342,8 @@ public class MediaLinkAlignmentCoordinatorTests
         harness.Settings.SetManualOffsetMs("dev-a", 120);
         harness.Settings.SetManualOffsetMs("dev-b", -80);
         harness.Renderer.Stats = StartedStats();
+        // 开关在起播前就位（hello 先于起播的生产主路径），全程不该出现中途切换。
+        harness.Coordinator.Recompute();
         harness.Playback.Configure(enabled: true, targetBufferMs: 200);
 
         harness.Coordinator.Recompute();

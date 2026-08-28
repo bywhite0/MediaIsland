@@ -158,26 +158,110 @@ public class AudioPlaybackServiceTests
     }
 
     [Fact]
-    public void ConfiguringAlignmentWhilePlaying_PushesItThroughImmediately()
+    public void ConfiguringAlignmentWhilePlaying_WithTheSameSwitch_PushesWithoutRestart()
     {
-        // offset 随对时结果每秒都可能变，故播放中必须能改；而它改的只是参数，
-        // 不该引起一次停播重启。
+        // offset 随对时结果每秒都可能变，播放中必须能改且只改参数——同值开关
+        // （对时下发走的就是这条路）绝不触发停播重启，否则探测节奏变成每秒重启。
         var inner = new RecordingSubmitter();
         var renderer = new FakeRenderer();
         using var service = new AudioPlaybackService(inner, renderer);
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 1, manualOffsetTicks: 0);
         service.Configure(enabled: true, targetBufferMs: 200);
         var startsBefore = renderer.StartCount;
 
         service.ConfigureAlignment(
             enabled: true, dTicks: 3_000_000, offsetTicks: 42, manualOffsetTicks: 0);
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 43, manualOffsetTicks: -5);
 
-        Assert.Equal((3_000_000L, 42L, 0L), renderer.LastAlignment);
+        Assert.Equal((3_000_000L, 43L, -5L), renderer.LastAlignment);
         Assert.Equal(startsBefore, renderer.StartCount);
+        Assert.Equal(0, renderer.StopCount);
         Assert.Equal("SetAlignment", renderer.Calls[^1]);
-        // 开关只记下等下一次起播：本会话起播时是 false，中途改真不追认——
-        // SessionAlignmentEnabled 报的是会话起播值，不是请求值。
-        Assert.False(service.SessionAlignmentEnabled);
+        Assert.True(service.SessionAlignmentEnabled);
     }
+
+    [Fact]
+    public void FlippingTheAlignmentSwitchOn_WhilePlaying_RestartsOnceCarryingIt()
+    {
+        // enabled 并进 render_start 之后，重启是中途切换唯一可能的生效方式。
+        // 防真空：先钉 stop 与新 start 各发生一次，再断顺序、开关与深度保持。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.False(service.SessionAlignmentEnabled);
+        var callsBefore = renderer.Calls.Count;
+
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 7, manualOffsetTicks: 0);
+
+        Assert.Equal(1, renderer.StopCount);
+        Assert.Equal(2, renderer.StartCount);
+        Assert.Equal(["Stop", "SetAlignment", "Start"], renderer.Calls.Skip(callsBefore));
+        Assert.True(renderer.LastStartAlignmentEnabled);
+        Assert.True(service.SessionAlignmentEnabled);
+        Assert.Equal(200, renderer.LastTargetMs);
+        Assert.True(service.IsPlaying);
+    }
+
+    [Fact]
+    public void FlippingTheAlignmentSwitchOff_WhilePlaying_RestartsCarryingFalse()
+    {
+        // 成对的反向：关掉也要一次重启把 false 带进新会话，
+        // 否则内环的执行器建着不拆，关了开关还在走时间轴。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 7, manualOffsetTicks: 0);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.True(service.SessionAlignmentEnabled);
+
+        service.ConfigureAlignment(
+            enabled: false, dTicks: 3_000_000, offsetTicks: 7, manualOffsetTicks: 0);
+
+        Assert.Equal(2, renderer.StartCount);
+        Assert.False(renderer.LastStartAlignmentEnabled);
+        Assert.False(service.SessionAlignmentEnabled);
+        Assert.True(service.IsPlaying);
+    }
+
+    [Fact]
+    public void FlippingTheAlignmentSwitch_WhileNotPlaying_DoesNotTouchTheRenderer()
+    {
+        // 未在播时开关不一致是常态（会话值是上一会话的残值），零动作：
+        // 值存下等下一次起播，不许有任何渲染器调用。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 7, manualOffsetTicks: 0);
+
+        Assert.Empty(renderer.Calls);
+        Assert.Equal(0, renderer.StartCount);
+        Assert.Equal(0, renderer.StopCount);
+    }
+
+    [Fact]
+    public void SwitchFlipRestart_OnStartFailure_TakesTheLastErrorPath()
+    {
+        // 中途切换的重启失败与起播失败同形态：停在关闭态、原因可读。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        renderer.ThrowOnStart = true;
+
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 7, manualOffsetTicks: 0);
+
+        Assert.False(service.IsPlaying);
+        Assert.Contains("设备被独占", service.LastError);
+    }
+
 
     [Fact]
     public void DeviceChangeRestart_StopsThenStartsWithTheStagedRequest()
