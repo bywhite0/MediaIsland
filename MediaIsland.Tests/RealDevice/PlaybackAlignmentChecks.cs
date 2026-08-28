@@ -320,44 +320,33 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         Assert.Equal(targetMs, closed.TargetMsCurrent);
         Assert.False(closed.ClockOffsetAvailable, "对齐从未开启，offset 不该被判可用");
 
-        // 外环无执行器时不走步。只在 48k 端点可构造：起播时对齐关着则不建重采样器，
-        // 播放中把对齐打开不会追建（那需要停播重启）——此刻误差三要素齐备而执行器
-        // 缺席，纯积分器若不被闸门拦住会一路 windup。非 48k 端点起播即有重采样器，
-        // 该形态不存在，跳过并留痕。
-        if (closed.DeviceSampleRate == 48_000 && closed.DeviceClockAvailable)
-        {
-            // 台账核对用的固定格式行，与跳过分支同形。
-            output.WriteLine(
-                $"无执行器段=已执行 端点采样率={closed.DeviceSampleRate} 设备时钟可用={closed.DeviceClockAvailable}");
-            playback.ConfigureAlignment(
-                enabled: true, dTicks: 500 * TicksPerMs, offsetTicks: 1, manualOffsetTicks: 0);
-            await Task.Delay(1_500);
+        // ABI 5 起对齐开关是起播参数，会话内不可变：播放中把开关打开只会存进播放
+        // 服务等下一次起播，本会话的 native 侧不该有任何对齐路径被激活。第 7 期在
+        // 这里构造的「误差三要素齐备而执行器缺席」的 windup 形态，如今在类型上写不
+        // 出来（无执行器则闸门也不开），原判据的立论对象消失，改钉新契约本身——
+        // 且不再限于 48k 端点：任何端点上「播放中开开关不激活本会话」都必须成立。
+        playback.ConfigureAlignment(
+            enabled: true, dTicks: 500 * TicksPerMs, offsetTicks: 1, manualOffsetTicks: 0);
+        await Task.Delay(1_500);
 
-            var armed = renderer.ReadStats();
-            // 地基：对齐开启后位置锚点确实开始产生（GetPosition 在被调），
-            // 且 offset 已判可用——否则下面的「不走步」是因为闸门根本没开，恒真。
-            Assert.True(armed.ClockOffsetAvailable, "offset 应已判可用");
-            Assert.True(
-                armed.DevicePositionFrames > 0 || armed.DevicePositionQpc != 0,
-                "对齐开启后位置锚点仍未产生：GetPosition 没被调起来");
+        var armed = renderer.ReadStats();
+        // 会话起播值仍是关：开关记下了（请求侧），但本会话不追认。
+        Assert.False(playback.SessionAlignmentEnabled, "会话起播值不该被播放中的开关改写");
+        Assert.False(
+            armed.ClockOffsetAvailable,
+            "本会话起播时对齐是关的，播放中开开关不该把 offset 判成可用");
+        // 位置锚点仍不产生：GetPosition 那一段在关闭会话里不存在。
+        Assert.Equal(0, armed.DevicePositionFrames);
+        Assert.Equal(0, armed.DevicePositionQpc);
 
-            // D 拨到 500ms 制造约 -280ms 的大误差：若外环误走步，速率上限 0.5ms/s
-            // 下 10 秒足够走出 5ms，整毫米级的移动瞒不过恒等断言。
-            await Task.Delay(10_000);
-            var later = renderer.ReadStats();
-            Assert.Equal(targetMs, later.TargetMsCurrent);
-            // 无执行器时误差写 0 而非留残值：对端失联后设置页不该显示一个像是
-            // 当前的误差。
-            Assert.Equal(0, later.PlayTimeErrorUs);
-        }
-        else
-        {
-            // 台账核对用的固定格式行，与已执行分支同形；端点事实跟在行内，
-            // 静默降级从此在输出里留痕。
-            output.WriteLine(
-                $"无执行器段=跳过 端点采样率={closed.DeviceSampleRate} 设备时钟可用={closed.DeviceClockAvailable}");
-            output.WriteLine("起播即有重采样器或无设备时钟，无执行器形态在本端点不可构造");
-        }
+        // D 已拨到 500ms：若开关泄漏进会话、外环误走步，速率上限 0.5ms/s 下
+        // 10 秒足够走出 5ms，整毫米级的移动瞒不过恒等断言。
+        await Task.Delay(10_000);
+        var later = renderer.ReadStats();
+        Assert.Equal(targetMs, later.TargetMsCurrent);
+        // 关闭会话里误差恒写 0 而非留残值：对端失联后设置页不该显示一个像是
+        // 当前的误差。
+        Assert.Equal(0, later.PlayTimeErrorUs);
 
         await sine.StopAsync(CancellationToken.None);
         playback.Configure(enabled: false, targetBufferMs: targetMs);
