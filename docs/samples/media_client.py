@@ -25,13 +25,28 @@ WANT_AUDIO = "--audio" in sys.argv[1:]
 # 手动偏移旁路（毫秒，可负、可带小数）：对齐的自动估计对不上耳朵时的最后手段，
 # 正值让本机更晚出声。硬件尾段（功放、蓝牙）在任何 API 里都读不到，这个旁路
 # 是对可观测性边界的承认，不是权宜。
+# 注意方向：本示例的手动偏移作用在目标时刻上（正值推后出声），与本仓产品实现
+# （作用在实测出声侧：正值声明实际出声更晚，补偿后听感提前）同名反向——
+# 移植时刻度要取反。
+#
+# 界与浏览器示例的滑块、产品设置一致（±500）：超界的值几乎必然是单位错填，
+# 且正向大偏移会把可行性顶出积压上限（见 aligned_depth_ms）。
+OFFSET_LIMIT_MS = 500.0
+
+def clamp_offset_ms(value):
+    """手动偏移夹紧到 ±OFFSET_LIMIT_MS 毫秒。"""
+    return max(-OFFSET_LIMIT_MS, min(OFFSET_LIMIT_MS, value))
+
 OFFSET_MS = 0.0
 for _a in sys.argv[1:]:
     if _a.startswith("--offset-ms="):
         try:
-            OFFSET_MS = float(_a.split("=", 1)[1])
+            _raw = float(_a.split("=", 1)[1])
         except ValueError:
             sys.exit("✗ --offset-ms 需要数字，例如 --offset-ms=25")
+        OFFSET_MS = clamp_offset_ms(_raw)
+        if OFFSET_MS != _raw:
+            print(f"⚠ --offset-ms={_raw:g} 超界，已夹紧到 {OFFSET_MS:+g}ms（界 ±{OFFSET_LIMIT_MS:g}）")
 
 TOKEN = _args[0] if _args else "YOUR_TOKEN"
 URL   = _args[1] if len(_args) > 1 else "ws://127.0.0.1:21757/v1/ws"
@@ -224,21 +239,27 @@ def target_play_ticks(captured_at_ms, d_ms, online_offset, manual_offset_ms=0):
     return int((captured_at_ms + d_ms + manual_offset_ms) * 10_000) + online_offset
 
 
-def aligned_depth_ms(d_ms, device_latency_ms):
+def aligned_depth_ms(d_ms, device_latency_ms, manual_offset_ms=0.0):
     """对齐模式下的缓冲深度估计（D − 设备延迟），并判本机装不装得下。
 
     返回 (深度, "") 或 (None, 原因)。TARGET_BUFFER_MS 在对齐模式下从目标深度
     降为下界：深度不再由本机配置，由发送端的预算决定。原因里给出该往哪边改——
     「没声明」查版本，「办不到」改数值，两者的排查方向不同，这里全属后者。
+
+    正向手动偏移把目标时刻整体推后，等效加深所需积压，故计入上界检查；不计入
+    就给「永久静音 + 持续丢帧」留了旁门——帧在等到目标时刻之前被丢最旧顶掉，
+    闸门永不开。负向偏移只提前出声、不加深积压，不参与。
     """
     depth = d_ms - device_latency_ms
     if depth < TARGET_BUFFER_MS:
         return None, (f"预算 dMs={d_ms}ms 减设备延迟 {device_latency_ms:.0f}ms 后不足"
                       f"最小缓冲 {TARGET_BUFFER_MS}ms——调大发送端 dMs，或换更快的本机设备")
-    if depth > MAX_BUFFER_MS:
+    if depth + max(manual_offset_ms, 0.0) > MAX_BUFFER_MS:
         # 深度超过积压上限时，帧在等到目标时刻之前就会被「丢最旧」顶掉，
         # 对齐会被静默顶穿——与其那样，不如在这里退回并说明。
-        return None, f"预算 dMs={d_ms}ms 超出本示例缓冲上限 {MAX_BUFFER_MS}ms——调小发送端 dMs"
+        extra = f" 加正向手动偏移 {manual_offset_ms:g}ms" if manual_offset_ms > 0 else ""
+        return None, (f"预算 dMs={d_ms}ms{extra} 超出本示例缓冲上限 {MAX_BUFFER_MS}ms"
+                      f"——调小发送端 dMs" + ("，或减小 --offset-ms" if manual_offset_ms > 0 else ""))
     return depth, ""
 
 
@@ -610,7 +631,7 @@ class MediaLinkClient:
         if self.d_ms is None:
             self.out.jitter.set_aligned(False, self.align_reason)
             return
-        depth, why = aligned_depth_ms(self.d_ms, self.out.device_latency_ms())
+        depth, why = aligned_depth_ms(self.d_ms, self.out.device_latency_ms(), OFFSET_MS)
         if depth is None:
             self.out.jitter.set_aligned(False, why)
         else:
@@ -962,6 +983,14 @@ def self_test():
     ok(bad is None and "调大" in why, "深度不足下界退回非对齐，且说出往哪边改")
     bad, why = aligned_depth_ms(MAX_BUFFER_MS + 100, 0)
     ok(bad is None and "调小" in why, "深度超缓冲上限同样退回，方向相反")
+    ok(clamp_offset_ms(9_999.0) == 500.0 and clamp_offset_ms(-9_999.0) == -500.0
+       and clamp_offset_ms(25.0) == 25.0,
+       "--offset-ms 夹紧到 ±500（与浏览器滑块、产品设置同界），带内不动")
+    bad, why = aligned_depth_ms(MAX_BUFFER_MS, 0, manual_offset_ms=1)
+    ok(bad is None and "offset-ms" in why,
+       "正向手动偏移计入上界：D 恰在上限时 +1ms 偏移即装不下，且原因点名偏移")
+    ok(aligned_depth_ms(MAX_BUFFER_MS, 0, manual_offset_ms=-500)[0] == MAX_BUFFER_MS,
+       "负向偏移不参与上界（只提前出声，不加深积压）")
 
     # ---- hello 归因：三种原因各自可判 ----
     c = MediaLinkClient("ws://x", "t")

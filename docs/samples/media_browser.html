@@ -384,6 +384,9 @@ $('audio').addEventListener('click', toggleAudio);
 
 // 手动偏移旁路：硬件尾段（功放、蓝牙）在任何 API 里都读不到，滑块是对可观测性
 // 边界的承认。本示例只做启动排程，改动在下一次锚定（欠载重排/重开声音）才生效。
+// 注意方向：本示例的手动偏移作用在目标时刻上（正值推后出声），与本仓产品实现
+// （作用在实测出声侧：正值声明实际出声更晚，补偿后听感提前）同名反向——
+// 移植时刻度要取反。
 $('offset').addEventListener('input', () => {
   $('offset-val').textContent = fmtMs(manualOffsetMs());
 });
@@ -1008,10 +1011,13 @@ function alignState() {
     align.fellBack = `预算 dMs=${align.dMs}ms 减设备延迟后不足最小缓冲 ${TARGET_BUFFER_MS}ms——调大发送端 dMs`;
     return 'off';
   }
-  if (budget > MAX_BUFFER_MS) {
+  // 正向手动偏移把目标时刻推后，等效加深所需积压，故计入上界（负向只提前出声，
+  // 不加深，不计）；不计入就给「永久静音 + 持续丢帧」留旁门。滑块本身被 ±500 界住，
+  // 本侧无自动判据——该性质与 Python 示例的 aligned_depth_ms 同构，由其自检钉住。
+  if (budget + Math.max(manualOffsetMs(), 0) > MAX_BUFFER_MS) {
     // 深度超过积压上限时，帧在等到目标时刻之前就会被「丢最新」边界顶掉，
     // 对齐会被静默顶穿——与其那样，不如退回并说明。
-    align.fellBack = `预算 dMs=${align.dMs}ms 超出本示例缓冲上限 ${MAX_BUFFER_MS}ms——调小发送端 dMs`;
+    align.fellBack = `预算 dMs=${align.dMs}ms 超出本示例缓冲上限 ${MAX_BUFFER_MS}ms——调小发送端 dMs，或回拨偏移滑块`;
     return 'off';
   }
   if (clock.unsupported) {
