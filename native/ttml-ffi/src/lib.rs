@@ -171,7 +171,8 @@ mod tests {
     #[test]
     fn parse_inner_returns_stable_amll_json_shape() {
         let bytes = parse_inner(SAMPLE_TTML.as_bytes()).expect("sample TTML should parse");
-        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("output should be JSON");
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("output should be JSON");
 
         let lines = json["lines"].as_array().expect("lines should be an array");
         assert_eq!(lines.len(), 1);
@@ -182,12 +183,8 @@ mod tests {
     #[test]
     fn ffi_returns_bounded_error_for_invalid_utf8() {
         let input = [0xff_u8];
-        let buffer = mediaisland_ttml_parse_to_amll_json(
-            input.as_ptr(),
-            input.len(),
-            ptr::null(),
-            0,
-        );
+        let buffer =
+            mediaisland_ttml_parse_to_amll_json(input.as_ptr(), input.len(), ptr::null(), 0);
 
         assert_ne!(buffer.status, 0);
         assert!(!buffer.ptr.is_null());

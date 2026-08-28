@@ -474,7 +474,8 @@ pub struct RenderStatsCell {
 
 impl RenderStatsCell {
     pub fn set_ring_frames(&self, frames: usize) {
-        self.ring_frames.store(frames as u64, AtomicOrdering::Relaxed);
+        self.ring_frames
+            .store(frames as u64, AtomicOrdering::Relaxed);
     }
 
     pub fn note_underrun(&self) {
@@ -612,9 +613,7 @@ impl RenderStatsCell {
             ring_frames: self.ring_frames.load(AtomicOrdering::Relaxed),
             underrun_count: self.underrun_count.load(AtomicOrdering::Relaxed),
             hard_reset_count: self.hard_reset_count.load(AtomicOrdering::Relaxed),
-            device_frames_rendered: self
-                .device_frames_rendered
-                .load(AtomicOrdering::Relaxed),
+            device_frames_rendered: self.device_frames_rendered.load(AtomicOrdering::Relaxed),
             device_sample_rate: self.device_sample_rate.load(AtomicOrdering::Relaxed),
             resample_ratio_ppm: self.resample_ratio_ppm.load(AtomicOrdering::Relaxed),
             device_position_frames: self.device_position_frames.load(AtomicOrdering::Relaxed),
@@ -1173,8 +1172,11 @@ mod wasapi {
             // 故两者都要先设好再问。
             let needed = match resampler.as_mut() {
                 Some(state) => {
-                    let ratio =
-                        resample_ratio(session.mix.sample_rate, frames_to_ms(available), target_ms as f64);
+                    let ratio = resample_ratio(
+                        session.mix.sample_rate,
+                        frames_to_ms(available),
+                        target_ms as f64,
+                    );
                     // 输出块每轮跟着 writable 变：SincFixedOut 的块是固定的，
                     // 不设就会要求写满整个缓冲，而 WASAPI 只让写 writable 帧。
                     if state.inner.set_chunk_size(writable as usize).is_err() {
@@ -1234,7 +1236,12 @@ mod wasapi {
 
             let device_frames = match resampler.as_mut() {
                 Some(state) => {
-                    match resample_into(state, &staging[..needed * channels], &mut planar, &mut device_planar) {
+                    match resample_into(
+                        state,
+                        &staging[..needed * channels],
+                        &mut planar,
+                        &mut device_planar,
+                    ) {
                         Ok(frames) => frames,
                         Err(_) => break,
                     }

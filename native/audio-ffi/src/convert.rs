@@ -11,7 +11,9 @@
 //! 2. **直出 i16** — smtc-suite 输出 f32 交给上层再转 i16，多一次全量遍历与分配。
 //!    本协议的传输格式就是 i16，故在此一次成型。
 
-use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use rubato::{
+    Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction,
+};
 
 use crate::AudioError;
 
@@ -78,7 +80,9 @@ pub fn normalize_to_f32(bytes: &[u8], format: SampleFormat) -> Vec<f32> {
             }
             SampleFormat::Pcm24 => {
                 // 三字节小端，最高位是符号位：左移到 i32 高位再算术右移完成符号扩展。
-                let raw = ((chunk[2] as i32) << 24 | (chunk[1] as i32) << 16 | (chunk[0] as i32) << 8) >> 8;
+                let raw =
+                    ((chunk[2] as i32) << 24 | (chunk[1] as i32) << 16 | (chunk[0] as i32) << 8)
+                        >> 8;
                 raw as f32 / 8_388_607.0 // i24::MAX
             }
             SampleFormat::Pcm32 => {
@@ -403,7 +407,9 @@ mod tests {
         let mut resampler = StereoResampler::new(44_100, 48_000, chunk).expect("需要重采样");
 
         // 送入 10 个块共 4410 帧（100ms @ 44.1kHz），应产出约 4800 帧（100ms @ 48kHz）。
-        let input: Vec<f32> = (0..chunk * 10 * 2).map(|i| (i as f32 * 0.001).sin()).collect();
+        let input: Vec<f32> = (0..chunk * 10 * 2)
+            .map(|i| (i as f32 * 0.001).sin())
+            .collect();
         let out = resampler.process_interleaved(&input);
 
         let out_frames = out.len() / 2;

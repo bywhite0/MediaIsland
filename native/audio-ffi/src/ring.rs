@@ -528,7 +528,10 @@ mod tests {
         ring.push_at(&tone(96), 500 * TICKS_PER_MS);
         let run_start = ring.read_cursor_frames();
 
-        assert!(ring.is_anchored(), "锚点是真的，故 is_anchored 挡不住这件事");
+        assert!(
+            ring.is_anchored(),
+            "锚点是真的，故 is_anchored 挡不住这件事"
+        );
         assert_eq!(
             ring.sender_ticks_at(run_start),
             Some(500 * TICKS_PER_MS),

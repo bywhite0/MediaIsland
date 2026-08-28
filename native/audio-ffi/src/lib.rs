@@ -879,9 +879,8 @@ mod tests {
     fn create_rejects_null_out_handle() {
         extern "C" fn noop(_: *const AudioFrame, _: *mut c_void) {}
 
-        let status = unsafe {
-            mediaisland_audio_capture_create(noop, ptr::null_mut(), ptr::null_mut())
-        };
+        let status =
+            unsafe { mediaisland_audio_capture_create(noop, ptr::null_mut(), ptr::null_mut()) };
 
         assert_eq!(status, STATUS_INVALID_ARG);
     }
@@ -1046,7 +1045,10 @@ mod tests {
         std::panic::set_hook(previous);
 
         assert!(result.is_err(), "地基不成立：body 应当真的 panic 了");
-        assert!(!flag.load(Ordering::SeqCst), "unwind 路径上 running 也必须归假");
+        assert!(
+            !flag.load(Ordering::SeqCst),
+            "unwind 路径上 running 也必须归假"
+        );
     }
 
     #[test]

@@ -96,7 +96,8 @@ impl WasapiLoopbackCapture {
                 // 会被跳过，标志卡真使采集永久无法重启且不报错。播放侧同形问题已修，
                 // 这里补上。写法与理由见 crate::run_guarded。
                 run_guarded(&running, || {
-                    let result = unsafe { capture_loop(callback, user_data, &running, thread_stop.0) };
+                    let result =
+                        unsafe { capture_loop(callback, user_data, &running, thread_stop.0) };
                     if let Err(err) = result {
                         // 采集线程内无法回传错误串（句柄归调用线程所有），只能落日志式忽略。
                         // 托管侧据「帧不再到达」感知失败，与 native 缺失的降级路径同构。
@@ -161,8 +162,9 @@ unsafe fn capture_loop_inner(
     running: &AtomicBool,
     stop_event: HANDLE,
 ) -> Result<(), AudioError> {
-    let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-        .map_err(|err| AudioError::device(format!("创建设备枚举器失败：{err}")))?;
+    let enumerator: IMMDeviceEnumerator =
+        CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+            .map_err(|err| AudioError::device(format!("创建设备枚举器失败：{err}")))?;
 
     // eRender + LOOPBACK：抓的是默认输出端点的全量混音，包含本机所有正在出声的应用。
     // 进程级 loopback 不做（见 design.md）：它要求 TargetProcessId，而 SMTC 给的是
