@@ -54,6 +54,18 @@ namespace MediaIsland.SettingsPages
         private string _mediaLinkUpstreamStatusText = "未启用";
         private string _mediaLinkConfigCodeHint = string.Empty;
         private string _mediaLinkUpstreamCodeHint = string.Empty;
+        private string _mediaLinkAlignmentStatusText = MediaLinkAlignmentStatusLine.Unavailable;
+
+        /// <summary>
+        /// 对齐状态行的刷新循环，页面可见时每秒一拍，离开即停（与退订同点，成对）。
+        /// 判定快照没有变更事件可订阅——协调方按探测节奏重算，这里轮询是数据源的形态
+        /// 决定的，不是偷懒。
+        /// </summary>
+        private readonly DispatcherTimer _alignmentStatusTimer = new()
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+
         private bool _isDetached;
         private string _currentMediaTitle = "未检测到正在播放的媒体";
         private string _currentMediaArtistAlbum = "播放媒体后会在此处显示标题、艺术家、专辑与进度。";
@@ -321,6 +333,34 @@ namespace MediaIsland.SettingsPages
         /// </summary>
         public bool HasPlaybackDevice => _playback?.CurrentPlaybackDeviceId is not null;
 
+        /// <summary>对齐状态行文案，组装在 <see cref="MediaLinkAlignmentStatusLine"/>。</summary>
+        public string MediaLinkAlignmentStatusText
+        {
+            get => _mediaLinkAlignmentStatusText;
+            private set => SetProperty(ref _mediaLinkAlignmentStatusText, value);
+        }
+
+        /// <summary>
+        /// 状态行与 HasPlaybackDevice 的一拍刷新。快照读取失败只降级为「暂无」——
+        /// 诊断行炸不得设置页。HasPlaybackDevice 挂同一拍：此前只在进场时通知一次，
+        /// 页面开着时设备到场离场，偏移控件的可用性不会跟着变。
+        /// </summary>
+        private void RefreshAlignmentStatusRow()
+        {
+            MediaLinkAlignmentSnapshot? snapshot;
+            try
+            {
+                snapshot = _upstream?.ReadAlignmentDecision();
+            }
+            catch (Exception)
+            {
+                snapshot = null;
+            }
+
+            MediaLinkAlignmentStatusText = MediaLinkAlignmentStatusLine.ComposeLine(snapshot);
+            OnPropertyChanged(nameof(HasPlaybackDevice));
+        }
+
 
         public GeneralSettingsPage(
             Plugin plugin,
@@ -351,16 +391,21 @@ namespace MediaIsland.SettingsPages
             // 页面可见时为设备 watcher 开门：HasPlaybackDevice 与 per-device 偏移读的是
             // watcher 缓存，没有这扇门，无会话时打开设置页会读到停更的旧值。
             // 进场泵一拍后缓存已有值，回发通知让两个绑定立即回读。
+            _alignmentStatusTimer.Tick += (_, _) => RefreshAlignmentStatusRow();
             AttachedToVisualTree += (_, _) =>
             {
                 _endpointWatcher?.SetUiVisible(true);
                 OnPropertyChanged(nameof(HasPlaybackDevice));
                 OnPropertyChanged(nameof(MediaLinkManualOffsetMs));
+                // 进场先刷一拍再起表，状态行不空等第一秒。
+                RefreshAlignmentStatusRow();
+                _alignmentStatusTimer.Start();
             };
             DetachedFromVisualTree += (_, _) =>
             {
                 _isDetached = true;
                 _endpointWatcher?.SetUiVisible(false);
+                _alignmentStatusTimer.Stop();
                 UnsubscribeMediaLinkGateway();
                 UnsubscribeUpstream();
                 Settings.PropertyChanged -= OnPluginSettingsChangedForMediaLink;

@@ -668,6 +668,16 @@
                                    Value="{Binding MediaLinkManualOffsetMs, Mode=TwoWay}" />
                 </controls:FASettingsExpander.Footer>
             </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE157;}"
+                                         Header="对齐状态"
+                                         Description="上面三项此刻的实际效果：判定归因、出声误差与缓冲目标深度。校准手动偏移时看着误差数字调即可。页面打开时每秒刷新。">
+                <controls:FASettingsExpander.Footer>
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding MediaLinkAlignmentStatusText}"
+                               TextWrapping="Wrap"
+                               MaxWidth="360" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <ci:IconText Glyph="&#xEAEF;" Text="隐私" Margin="0 16 0 8" />
             <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
                                          Header="匿名使用情况分析"
