@@ -27,7 +27,11 @@ public class MediaLinkAlignmentCoordinatorTests
         public event Action<AudioFrame>? FramePlayed { add { } remove { } }
         public int StartCount { get; private set; }
         public int StopCount { get; private set; }
-        public (bool Enabled, long DTicks, long OffsetTicks, long ManualOffsetTicks)? LastAlignment
+
+        /// <summary>最近一次 Start 携带的对齐开关。null 表示还没起播过。</summary>
+        public bool? LastStartAlignmentEnabled { get; private set; }
+
+        public (long DTicks, long OffsetTicks, long ManualOffsetTicks)? LastAlignment
         {
             get;
             private set;
@@ -35,10 +39,14 @@ public class MediaLinkAlignmentCoordinatorTests
 
         public AudioRenderStats Stats { get; set; }
 
-        public void SetAlignment(bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks) =>
-            LastAlignment = (enabled, dTicks, offsetTicks, manualOffsetTicks);
+        public void SetAlignment(long dTicks, long offsetTicks, long manualOffsetTicks) =>
+            LastAlignment = (dTicks, offsetTicks, manualOffsetTicks);
 
-        public void Start(int targetBufferMs) => StartCount++;
+        public void Start(int targetBufferMs, bool alignmentEnabled)
+        {
+            StartCount++;
+            LastStartAlignmentEnabled = alignmentEnabled;
+        }
 
         public void Stop() => StopCount++;
 
@@ -124,14 +132,14 @@ public class MediaLinkAlignmentCoordinatorTests
 
         // D 按毫秒乘一万换算成 100ns；offset 原样透传。这一条断的是「设备事实进了判定、
         // 结论到了渲染器」整条链，而不是判定函数本身——那在 MediaLinkAlignmentPolicyTests。
-        Assert.Equal((true, 300L * 10_000, 4242L, 0L), harness.Renderer.LastAlignment);
+        Assert.Equal((300L * 10_000, 4242L, 0L), harness.Renderer.LastAlignment);
     }
 
     [Fact]
     public void AnInfeasibleBudget_KeepsTheSwitchButZeroesTheTargets()
     {
-        // 预算 70 减设备延迟 10 与缓冲 20 后剩 40，装不下最小缓冲 50。开关照下发——
-        // 它决定起播那一刻建不建执行器；但 D 与 offset 必须归零让外环不动，
+        // 预算 70 减设备延迟 10 与缓冲 20 后剩 40，装不下最小缓冲 50。开关照存——
+        // 它决定下一次起播那一刻建不建执行器；但 D 与 offset 必须归零让外环不动，
         // 否则外环拿着一个已被判死的目标继续走步，正是「假装对齐」的形态。
         var harness = new Harness { Declaration = Declared(70) };
         harness.Renderer.Stats = StartedStats();
@@ -139,7 +147,7 @@ public class MediaLinkAlignmentCoordinatorTests
 
         harness.Coordinator.Recompute();
 
-        Assert.Equal((true, 0L, 0L, 0L), harness.Renderer.LastAlignment);
+        Assert.Equal((0L, 0L, 0L), harness.Renderer.LastAlignment);
     }
 
     [Fact]
@@ -253,7 +261,10 @@ public class MediaLinkAlignmentCoordinatorTests
 
         harness.Playback.Configure(enabled: true, targetBufferMs: 200);
 
-        Assert.Equal((true, 300L * 10_000, 4242L, 0L), harness.Renderer.LastAlignment);
+        Assert.Equal((300L * 10_000, 4242L, 0L), harness.Renderer.LastAlignment);
+        // 开关经起播参数到达：Recompute 已把 enabled=true 存进播放服务，
+        // 起播那一刻它随 Start 直达渲染器。
+        Assert.True(harness.Renderer.LastStartAlignmentEnabled);
     }
 
     [Fact]
@@ -283,15 +294,22 @@ public class MediaLinkAlignmentCoordinatorTests
     public void SwitchedOff_PushesTheSwitchAndStaysQuiet()
     {
         // 开关关着时四态归因没有听众；但 enabled=false 仍要到达渲染器——
-        // 它是起播那一刻「不建执行器」的依据。
+        // 它是起播那一刻「不建执行器」的依据，如今经 Start 的参数传递：
+        // 本会话起播时协调器还没下发过，默认即关；运行时三项照走 SetAlignment。
         var harness = new Harness { Enabled = false };
         harness.Renderer.Stats = StartedStats();
         harness.Playback.Configure(enabled: true, targetBufferMs: 200);
 
         harness.Coordinator.Recompute();
 
-        Assert.False(harness.Renderer.LastAlignment!.Value.Enabled);
+        Assert.False(harness.Renderer.LastStartAlignmentEnabled);
+        Assert.NotNull(harness.Renderer.LastAlignment);
         Assert.Empty(harness.Logger.Entries);
+
+        // 下一次起播携带的仍是协调器存下的 false——开关到达渲染器的时点就是起播。
+        harness.Playback.Configure(enabled: false, targetBufferMs: 200);
+        harness.Playback.Configure(enabled: true, targetBufferMs: 200);
+        Assert.False(harness.Renderer.LastStartAlignmentEnabled);
     }
 
     [Fact]
@@ -354,6 +372,6 @@ public class MediaLinkAlignmentCoordinatorTests
 
         harness.Coordinator.Recompute();
 
-        Assert.Equal((true, 0L, 0L, 1_200_000L), harness.Renderer.LastAlignment);
+        Assert.Equal((0L, 0L, 1_200_000L), harness.Renderer.LastAlignment);
     }
 }

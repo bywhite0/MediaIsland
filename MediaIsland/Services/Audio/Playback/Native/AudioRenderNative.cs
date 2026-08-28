@@ -68,6 +68,19 @@ internal struct NativeRenderStats
     /// 那条提示指向等待，而它永远不会好转。
     /// </summary>
     public ulong DeviceClockAvailable;
+
+    /// <summary>
+    /// 亚下限空档累计次数：帧间隔落在噪声带上界（约 2 毫秒）与真空档下限（5 毫秒）
+    /// 之间、被整段吞掉不补的那一档。native 侧 MIN_GAP_TICKS 的注释承诺
+    /// 「排查机间错位时这项要对账」，这就是对账的账本。起播时清零，停播不清。
+    /// </summary>
+    public ulong SwallowedGapCount;
+
+    /// <summary>
+    /// 重叠累计次数：新帧比预期早了超过噪声带。发送端时间轴倒走，正常发送端不该有——
+    /// 非零指向发送端时间戳生成的缺陷。起播时清零，停播不清。
+    /// </summary>
+    public ulong OverlapCount;
 }
 
 /// <summary>
@@ -82,7 +95,7 @@ internal struct NativeRenderStats
 /// </summary>
 internal static partial class AudioRenderNative
 {
-    public const uint ExpectedAbiVersion = 4;
+    public const uint ExpectedAbiVersion = 5;
 
     public const int StatusOk = 0;
     public const int StatusInvalidArg = 1;
@@ -260,7 +273,10 @@ internal static partial class AudioRenderNative
 
         [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_start")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-        public static partial int RenderStart(nint handle, uint targetBufferMs);
+        public static partial int RenderStart(
+            nint handle,
+            uint targetBufferMs,
+            [MarshalAs(UnmanagedType.U1)] bool alignmentEnabled);
 
         [LibraryImport(LibraryName, EntryPoint = "mediaisland_audio_render_push")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -285,7 +301,6 @@ internal static partial class AudioRenderNative
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         public static partial int RenderSetAlignment(
             nint handle,
-            [MarshalAs(UnmanagedType.U1)] bool enabled,
             long dTicks,
             long offsetTicks,
             long manualOffsetTicks);

@@ -61,7 +61,10 @@ public class AudioPlaybackServiceTests
         /// <summary>按发生顺序记下的调用名。顺序本身是契约，故不能只记次数。</summary>
         public List<string> Calls { get; } = [];
 
-        public (bool Enabled, long DTicks, long OffsetTicks, long ManualOffsetTicks)? LastAlignment
+        /// <summary>最近一次 Start 携带的对齐开关。null 表示还没起播过。</summary>
+        public bool? LastStartAlignmentEnabled { get; private set; }
+
+        public (long DTicks, long OffsetTicks, long ManualOffsetTicks)? LastAlignment
         {
             get;
             private set;
@@ -69,7 +72,7 @@ public class AudioPlaybackServiceTests
 
         public event Action<AudioFrame>? FramePlayed;
 
-        public void Start(int targetBufferMs)
+        public void Start(int targetBufferMs, bool alignmentEnabled)
         {
             if (ThrowOnStart)
             {
@@ -78,13 +81,13 @@ public class AudioPlaybackServiceTests
 
             StartCount++;
             LastTargetMs = targetBufferMs;
+            LastStartAlignmentEnabled = alignmentEnabled;
             Calls.Add("Start");
         }
 
-        public void SetAlignment(
-            bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks)
+        public void SetAlignment(long dTicks, long offsetTicks, long manualOffsetTicks)
         {
-            LastAlignment = (enabled, dTicks, offsetTicks, manualOffsetTicks);
+            LastAlignment = (dTicks, offsetTicks, manualOffsetTicks);
             Calls.Add("SetAlignment");
         }
 
@@ -115,11 +118,12 @@ public class AudioPlaybackServiceTests
     }
 
     [Fact]
-    public void Starting_SetsAlignmentBeforeStart()
+    public void Starting_CarriesTheAlignmentSwitchAndPushesRuntimeParameters()
     {
-        // 顺序本身是契约，不是巧合：48kHz 端点的内环在起播那一刻按 enabled 决定建不建
-        // 重采样器。起播时若对齐是关的，该端点此后就没有执行器，而那时声音照出、判据照绿，
-        // 只是永远对不齐——这种失败没有任何症状指向顺序。
+        // 第 7 期的顺序判据（SetAlignment 先于 Start）随时序契约一起消失：enabled 如今
+        // 是 Start 的参数，「起播前设好」由类型系统保证，时序错误写不出来。这里钉的是
+        // 新契约的两半——Start 携带 ConfigureAlignment 存下的开关值（恒传 false 的实现
+        // 在此红），运行时三项照走 SetAlignment 且在起播时已到达。
         var inner = new RecordingSubmitter();
         var renderer = new FakeRenderer();
         using var service = new AudioPlaybackService(inner, renderer);
@@ -128,8 +132,25 @@ public class AudioPlaybackServiceTests
             enabled: true, dTicks: 3_000_000, offsetTicks: 7, manualOffsetTicks: -5);
         service.Configure(enabled: true, targetBufferMs: 200);
 
-        Assert.Equal(new[] { "SetAlignment", "Start" }, renderer.Calls);
-        Assert.Equal((true, 3_000_000L, 7L, -5L), renderer.LastAlignment);
+        Assert.True(renderer.LastStartAlignmentEnabled);
+        Assert.Equal((3_000_000L, 7L, -5L), renderer.LastAlignment);
+        // 会话起播值同时被记录：中途切换的重启判断要比对它。
+        Assert.True(service.SessionAlignmentEnabled);
+    }
+
+    [Fact]
+    public void Starting_WithoutAlignmentConfigured_CarriesFalse()
+    {
+        // 反向成对：没人开过对齐时 Start 必须携带 false——恒传 true 的实现在此红，
+        // 而那种实现会让每个 48k 端点都白付重采样器的代价（48k 不再 bit-exact）。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        Assert.False(renderer.LastStartAlignmentEnabled);
+        Assert.False(service.SessionAlignmentEnabled);
     }
 
     [Fact]
@@ -146,9 +167,12 @@ public class AudioPlaybackServiceTests
         service.ConfigureAlignment(
             enabled: true, dTicks: 3_000_000, offsetTicks: 42, manualOffsetTicks: 0);
 
-        Assert.Equal((true, 3_000_000L, 42L, 0L), renderer.LastAlignment);
+        Assert.Equal((3_000_000L, 42L, 0L), renderer.LastAlignment);
         Assert.Equal(startsBefore, renderer.StartCount);
         Assert.Equal("SetAlignment", renderer.Calls[^1]);
+        // 开关只记下等下一次起播：本会话起播时是 false，中途改真不追认——
+        // SessionAlignmentEnabled 报的是会话起播值，不是请求值。
+        Assert.False(service.SessionAlignmentEnabled);
     }
 
     [Fact]

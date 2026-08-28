@@ -29,14 +29,13 @@ internal sealed class WasapiRenderer : IAudioRenderer
     private bool _disposed;
 
     /// <summary>
-    /// 暂存的对齐参数。曾经零句柄时直接丢弃：句柄在首次 <see cref="Start"/> 内才创建，
-    /// 于是进程首个播放会话起播前下发的对齐参数无声消失，而 48kHz 端点建不建重采样器
-    /// 恰在 native 起播那一刻按 enabled 定型——该会话从此没有执行器，且没有任何告警。
-    /// 存下来由 Start 在创建句柄之后、调 native 起播之前补发，接口契约
-    /// 「Start 前至少调用一次即生效」才对首个会话也成立。全部在 <see cref="_gate"/> 下读写。
+    /// 暂存的运行时对齐参数。曾经零句柄时直接丢弃：句柄在首次 <see cref="Start"/> 内才创建，
+    /// 于是进程首个播放会话起播前下发的对齐参数无声消失。存下来由 Start 在创建句柄之后、
+    /// 调 native 起播之前补发，接口契约「未启动时暂存、下一次起播补发」才对首个会话
+    /// 也成立。对齐开关不在这里——它是 Start 的参数，随 native 起播调用直达。
+    /// 全部在 <see cref="_gate"/> 下读写。
     /// </summary>
     private bool _alignmentStored;
-    private bool _alignmentEnabled;
     private long _alignmentDTicks;
     private long _alignmentOffsetTicks;
     private long _alignmentManualOffsetTicks;
@@ -53,7 +52,7 @@ internal sealed class WasapiRenderer : IAudioRenderer
 
     public string? FailureReason => AudioRenderNative.FailureReason;
 
-    public void SetAlignment(bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks)
+    public void SetAlignment(long dTicks, long offsetTicks, long manualOffsetTicks)
     {
         // 与 Push / ReadStats 同一把锁：Dispose 可以在锁外读到非零句柄与调用 native 之间
         // 销毁句柄，RenderSetAlignment 就打在已释放的 Box 上。本方法最快也只随探测节奏
@@ -67,7 +66,6 @@ internal sealed class WasapiRenderer : IAudioRenderer
             }
 
             _alignmentStored = true;
-            _alignmentEnabled = enabled;
             _alignmentDTicks = dTicks;
             _alignmentOffsetTicks = offsetTicks;
             _alignmentManualOffsetTicks = manualOffsetTicks;
@@ -81,14 +79,13 @@ internal sealed class WasapiRenderer : IAudioRenderer
     }
 
     /// <summary>
-    /// 把暂存的对齐参数下发给 native。要求持有 <see cref="_gate"/> 且句柄非零。
+    /// 把暂存的运行时对齐参数下发给 native。要求持有 <see cref="_gate"/> 且句柄非零。
     /// 失败不抛也不停播：对齐是增强项，拿不到它应当退回非对齐而不是断声。
     /// </summary>
     private void PushAlignmentToNativeUnderGate()
     {
         var status = AudioRenderNative.NativeMethods.RenderSetAlignment(
             _handle,
-            _alignmentEnabled,
             _alignmentDTicks,
             _alignmentOffsetTicks,
             _alignmentManualOffsetTicks);
@@ -127,7 +124,7 @@ internal sealed class WasapiRenderer : IAudioRenderer
         return ((int)min, (int)max);
     }
 
-    public void Start(int targetBufferMs)
+    public void Start(int targetBufferMs, bool alignmentEnabled)
     {
         lock (_gate)
         {
@@ -148,14 +145,16 @@ internal sealed class WasapiRenderer : IAudioRenderer
 
             EnsureHandleCreated();
 
-            // 暂存参数的补发点。必须在 RenderStart 之前：48kHz 端点建不建重采样器
-            // 在渲染线程起步那一刻按 enabled 定型，起播之后再发只能改数值，追不回执行器。
+            // 暂存的运行时三项在 RenderStart 之前补发：外环起步的第一轮就该读到
+            // 起播前已知的 offset，而不是等下一次探测节奏。开关不在其中——
+            // 它是 RenderStart 的参数，native 在拉起渲染线程之前写进对齐载体。
             if (_alignmentStored)
             {
                 PushAlignmentToNativeUnderGate();
             }
 
-            var status = AudioRenderNative.NativeMethods.RenderStart(_handle, (uint)targetBufferMs);
+            var status = AudioRenderNative.NativeMethods.RenderStart(
+                _handle, (uint)targetBufferMs, alignmentEnabled);
             if (status != AudioRenderNative.StatusOk)
             {
                 var detail = AudioRenderNative.ReadLastError(_handle)
@@ -164,7 +163,10 @@ internal sealed class WasapiRenderer : IAudioRenderer
             }
 
             _running = true;
-            _logger?.LogInformation("[音频:播放] 已启动 WASAPI 播放，目标缓冲 {TargetMs}ms。", targetBufferMs);
+            _logger?.LogInformation(
+                "[音频:播放] 已启动 WASAPI 播放，目标缓冲 {TargetMs}ms，对齐 {Alignment}。",
+                targetBufferMs,
+                alignmentEnabled ? "开" : "关");
         }
     }
 
@@ -280,7 +282,9 @@ internal sealed class WasapiRenderer : IAudioRenderer
                 (int)native.TargetMsCurrent,
                 native.ClockOffsetAvailable != 0,
                 (long)native.DeviceBufferFrames,
-                native.DeviceClockAvailable != 0);
+                native.DeviceClockAvailable != 0,
+                (long)native.SwallowedGapCount,
+                (long)native.OverlapCount);
         }
     }
 

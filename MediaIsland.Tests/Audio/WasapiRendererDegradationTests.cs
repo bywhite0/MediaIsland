@@ -54,7 +54,8 @@ public class WasapiRendererDegradationTests : IDisposable
         AudioRenderNative.ResetForTesting(available: false, failureReason: "ABI 版本不匹配");
         using var renderer = new WasapiRenderer();
 
-        var ex = Assert.Throws<InvalidOperationException>(() => renderer.Start(200));
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => renderer.Start(200, alignmentEnabled: false));
 
         Assert.Contains("ABI", ex.Message);
     }
@@ -95,7 +96,7 @@ public class WasapiRendererDegradationTests : IDisposable
         var renderer = new WasapiRenderer();
         renderer.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => renderer.Start(200));
+        Assert.Throws<ObjectDisposedException>(() => renderer.Start(200, alignmentEnabled: false));
     }
 
     [Fact]

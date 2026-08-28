@@ -49,13 +49,23 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     /// <summary>
     /// 用户的对齐设置与三个对齐参数，全部在 <c>_gate</c> 下读写。
     ///
-    /// 单独存一份而不是每次起播时去问别人：起播前必须把它们下发给渲染器
-    /// （48kHz 端点的内环在那一刻定型），而起播可能由深度变更触发，那时上游未必在场。
+    /// 单独存一份而不是每次起播时去问别人：起播时开关要作为 <c>Start</c> 的参数交给
+    /// 渲染器（48kHz 端点的内环在那一刻定型）、运行时三项要在起播前下发，
+    /// 而起播可能由深度变更触发，那时上游未必在场。
     /// </summary>
     private bool _alignmentEnabled;
     private long _alignmentDTicks;
     private long _alignmentOffsetTicks;
     private long _alignmentManualOffsetTicks;
+
+    /// <summary>
+    /// 本次播放会话起播那一刻的对齐开关值。在 <c>_gate</c> 下写，起播成功时记录。
+    ///
+    /// 与 <see cref="_alignmentEnabled"/> 分开是必须的：后者随用户设置即时变，
+    /// 而渲染器里生效的是起播那一刻的值（会话内不可变）。两者不一致即
+    /// 「用户改了开关但本会话还没跟上」，中途切换要不要停播重启就比对它。
+    /// </summary>
+    private bool _sessionAlignmentEnabled;
     private long _rejectedFrames;
     private volatile bool _playing;
     private bool _disposed;
@@ -185,11 +195,12 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
 
             try
             {
-                // 必须在 Start 之前：48kHz 端点的内环在起播那一刻按 enabled 决定建不建
-                // 重采样器，起播时若对齐是关的，该端点此后没有执行器，而那时声音照出、
-                // 判据照绿，只是永远对不齐。
+                // 运行时三项在 Start 之前下发，外环起步的第一轮就读到起播前已知的
+                // offset；开关本身是 Start 的参数——48kHz 端点的内环在起播那一刻
+                // 按它定型，时序错误在类型上写不出来。
                 ApplyAlignmentUnlocked();
-                _renderer.Start(targetBufferMs);
+                _renderer.Start(targetBufferMs, _alignmentEnabled);
+                _sessionAlignmentEnabled = _alignmentEnabled;
                 _playing = true;
                 LastError = null;
             }
@@ -206,12 +217,14 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     ///
     /// <paramref name="enabled"/> 只表示用户开没开对齐，不兼作 offset 的可用性——
     /// offset 不可用由 <paramref name="offsetTicks"/> 为 0 表示。两者分开是因为它们的
-    /// 生命周期不同：开关在起播那一刻决定要不要建内环的执行器，而 offset 随对时结果
-    /// 每秒都可能变。把「offset 还没算出来」写成「对齐关着」，起播时就不会建执行器，
-    /// 几秒后 offset 到了也无处施力。
+    /// 生命周期不同：开关在起播那一刻决定要不要建内环的执行器（作为
+    /// <see cref="IAudioRenderer.Start"/> 的参数传递，会话内不可变），而 offset 随
+    /// 对时结果每秒都可能变。把「offset 还没算出来」写成「对齐关着」，起播时就不会
+    /// 建执行器，几秒后 offset 到了也无处施力。
     ///
-    /// 播放中调用即时生效，用于更新 offset 与手动偏移。把 enabled 由假改真不会给 48kHz
-    /// 端点追补内环——那需要一次停播重启，由调用方决定值不值得。
+    /// 播放中调用时运行时三项即时生效；开关只记下等下一次起播——本会话生效的开关值
+    /// 在 <see cref="SessionAlignmentEnabled"/>，中途切换要不要停播重启由调用方
+    /// 比对它决定，本方法不自作主张重启。
     /// </summary>
     public void ConfigureAlignment(
         bool enabled, long dTicks, long offsetTicks, long manualOffsetTicks)
@@ -228,7 +241,7 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
             _alignmentOffsetTicks = offsetTicks;
             _alignmentManualOffsetTicks = manualOffsetTicks;
 
-            // 未起播时只存着：起播路径会在 Start 之前下发。
+            // 未起播时只存着：起播路径会在 Start 之前下发三项、经 Start 传开关。
             if (_playing)
             {
                 ApplyAlignmentUnlocked();
@@ -236,8 +249,24 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
         }
     }
 
+    /// <summary>
+    /// 本次播放会话起播那一刻的对齐开关值。不在播时读到的是上一会话的残值，
+    /// 先看 <see cref="IsPlaying"/>。与 <c>ConfigureAlignment</c> 存下的请求值不一致
+    /// 即「用户改了开关但本会话还没跟上」——中途切换的重启判断比对的就是它。
+    /// </summary>
+    public bool SessionAlignmentEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _sessionAlignmentEnabled;
+            }
+        }
+    }
+
     private void ApplyAlignmentUnlocked() => _renderer.SetAlignment(
-        _alignmentEnabled, _alignmentDTicks, _alignmentOffsetTicks, _alignmentManualOffsetTicks);
+        _alignmentDTicks, _alignmentOffsetTicks, _alignmentManualOffsetTicks);
 
     /// <summary>
     /// 读对齐判定要的本机事实。缓冲容量按设备采样率换算——DeviceBufferFrames 是设备帧。

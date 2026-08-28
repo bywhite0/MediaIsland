@@ -10,9 +10,9 @@ namespace MediaIsland.Services.Audio.Playback;
 /// 「连续欠载只硬重置一次」在外部则完全不可观测：一次硬重置与几次连续欠载在采回的
 /// PCM 上长得一样，两个计数分开才判得出「一次」。
 ///
-/// 十四个字段不是同一瞬间的快照，可能跨越一次渲染轮次——统计量在 native 侧是各自独立的
+/// 十六个字段不是同一瞬间的快照，可能跨越一次渲染轮次——统计量在 native 侧是各自独立的
 /// 原子量，刻意不去抢渲染线程等的那把互斥量。判据应看斜率与累计计数的单调性，
-/// 不要依赖十四元组的瞬时一致性。
+/// 不要依赖十六元组的瞬时一致性。
 /// </summary>
 /// <param name="RingFrames">环形缓冲当前占用，48000Hz 域的帧数。</param>
 /// <param name="UnderrunCount">欠载累计次数。</param>
@@ -34,7 +34,9 @@ public readonly record struct AudioRenderStats(
     int TargetMsCurrent = 0,
     bool ClockOffsetAvailable = false,
     long DeviceBufferFrames = 0,
-    bool DeviceClockAvailable = false)
+    bool DeviceClockAvailable = false,
+    long SwallowedGapCount = 0,
+    long OverlapCount = 0)
 {
     /// <summary>本句柄起播过。为假时其余字段全为零。</summary>
     public bool HasStarted => DeviceSampleRate > 0;
