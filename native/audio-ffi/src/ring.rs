@@ -4,7 +4,7 @@
 //! 播放这一侧丢最旧同样正确，但理由不同——积压意味着本机放得比上游发得慢，
 //! 保留最新才能追上，保留最旧只会让延迟永久累积。
 
-use crate::timeline::{GapKind, Timeline};
+use crate::timeline::{CumulativeFrames, GapKind, Timeline};
 
 /// 交错立体声。由 crate 根的 [`crate::OUTPUT_CHANNELS`] 导出而非另写一个 2——
 /// 两份声明各自为真时，声道数一旦变更，本模块仍按 2 解释交错布局，每帧都会错位，
@@ -69,7 +69,8 @@ impl PlaybackRing {
 
     /// 累积第 cumulative_frames 帧对应的发送端时刻，无锚点时为 None。
     pub fn sender_ticks_at(&self, cumulative_frames: u64) -> Option<i64> {
-        self.timeline.sender_ticks_at(cumulative_frames)
+        self.timeline
+            .sender_ticks_at(CumulativeFrames::new(cumulative_frames))
     }
 
     /// 时间轴是否已有锚点。
@@ -114,8 +115,11 @@ impl PlaybackRing {
 
         let position = self.written;
         self.write_interleaved(interleaved);
-        self.timeline
-            .note_write(position, sender_ticks, interleaved.len() / CHANNELS);
+        self.timeline.note_write(
+            CumulativeFrames::new(position),
+            sender_ticks,
+            interleaved.len() / CHANNELS,
+        );
         gap.kind
     }
 

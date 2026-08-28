@@ -119,6 +119,45 @@ pub enum GapKind {
     Overlap,
 }
 
+/// 累积帧轴上的一个位置：播放会话自起点累计写入的第 N 帧，48k 域，含补进去的静音。
+/// 只增——不随环形覆盖回退，也不随重置归零，它是时间轴坐标，不是缓冲下标。
+///
+/// 与设备帧轴（render 侧的 DeviceFrames，WASAPI 端点按自身混音率数的帧）是两条
+/// 互不通约的轴：溢出丢最旧让读游标与设备消耗数恒差一段，重采样又让两侧一帧的
+/// 时长不同。第 7 期两次跨轴混用都以毫秒级错位收场，而错出来的数看起来是正常的。
+/// 故本类型不提供跨轴算术，也不实现 Deref、From 这类会重新打开混用面的转换；
+/// 裸整数经 new 与 raw 只在边界与测试里出入，接线处一律传递已类型化的值。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CumulativeFrames(u64);
+
+impl CumulativeFrames {
+    /// 从裸整数进入累积轴。只该出现在边界与测试里。
+    pub fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// 离开累积轴回裸整数。只该出现在边界（诊断快照一类）与测试里。
+    pub fn raw(self) -> u64 {
+        self.0
+    }
+
+    /// 沿轴前进 frames 帧。位置加帧数还是位置，不换轴。
+    pub fn advance(self, frames: u64) -> Self {
+        Self(self.0 + frames)
+    }
+
+    /// 沿轴回退 frames 帧，饱和到轴原点。位置减帧数还是位置，不换轴。
+    pub fn saturating_rewind(self, frames: u64) -> Self {
+        Self(self.0.saturating_sub(frames))
+    }
+
+    /// 相对同轴另一位置的有符号帧差。两个 u64 之差装不进 i64，故给 i128——
+    /// 恰好也是 frames_to_ticks 的入参宽度。
+    pub fn offset_from(self, origin: Self) -> i128 {
+        i128::from(self.0) - i128::from(origin.0)
+    }
+}
+
 /// 单锚点时间轴。
 #[derive(Default)]
 pub struct Timeline {
@@ -134,10 +173,10 @@ pub struct Timeline {
 /// 本轮写进来的那段数据。没有起点就无法拒绝本轮之外的位置，见
 /// [`Timeline::sender_ticks_at`]。
 struct Anchor {
-    /// 本轮带时刻写入的起点，累积帧数。
-    run_start: u64,
-    /// 最近一帧数据末端的累积帧数。
-    end_frames: u64,
+    /// 本轮带时刻写入的起点，累积帧轴上的位置。
+    run_start: CumulativeFrames,
+    /// 最近一帧数据末端在累积帧轴上的位置。
+    end_frames: CumulativeFrames,
     /// 该末端对应的发送端时刻。
     end_ticks: i64,
 }
@@ -182,13 +221,13 @@ impl Timeline {
         }
     }
 
-    /// 记一次写入。position 是本帧数据起点处的累积写入帧数（已含补进去的静音），
+    /// 记一次写入。position 是本帧数据起点在累积帧轴上的位置（已含补进去的静音），
     /// sender_ticks 是本帧自称的时刻，frames 是本帧的数据帧数。
     ///
     /// 每次 push 都必须调用。「每次」是必须的，不是优化：只在不连续时更新锚点，
     /// 外推距离就从缓冲深度（约 300 毫秒，误差 0.06 毫秒）变成整段播放时长——
     /// 60 秒即 12 毫秒，直接击穿 10 毫秒的对齐预算。
-    pub fn note_write(&mut self, position: u64, sender_ticks: i64, frames: usize) {
+    pub fn note_write(&mut self, position: CumulativeFrames, sender_ticks: i64, frames: usize) {
         let frames = frames as u64;
         let end_ticks = i128::from(sender_ticks) + frames_to_ticks(i128::from(frames));
         let Ok(end_ticks) = i64::try_from(end_ticks) else {
@@ -204,7 +243,7 @@ impl Timeline {
                 Some(anchor) => anchor.run_start,
                 None => position,
             },
-            end_frames: position + frames,
+            end_frames: position.advance(frames),
             end_ticks,
         });
     }
@@ -223,13 +262,13 @@ impl Timeline {
     /// 位置全属上一轮；二是带时刻与不带时刻的写入混用——不带时刻的那段样本仍在缓冲里
     /// 可读，而它没有任何时刻记账。对这两种位置外推，得到的是一个看起来正常的错时刻，
     /// 而调用方无从分辨（`is_anchored` 此时为真，锚点是新的）。宁可没有答案。
-    pub fn sender_ticks_at(&self, cumulative_frames: u64) -> Option<i64> {
+    pub fn sender_ticks_at(&self, cumulative_frames: CumulativeFrames) -> Option<i64> {
         let anchor = self.anchor.as_ref()?;
         if cumulative_frames < anchor.run_start {
             return None;
         }
 
-        let delta = i128::from(cumulative_frames) - i128::from(anchor.end_frames);
+        let delta = cumulative_frames.offset_from(anchor.end_frames);
         i64::try_from(i128::from(anchor.end_ticks) + frames_to_ticks(delta)).ok()
     }
 
@@ -254,6 +293,11 @@ mod tests {
 
     fn frames_u64(frames: usize) -> u64 {
         u64::try_from(frames).unwrap()
+    }
+
+    /// 测试侧进累积轴的唯一入口，省得每处铺开构造函数。
+    fn at(raw: u64) -> CumulativeFrames {
+        CumulativeFrames::new(raw)
     }
 
     #[test]
@@ -306,7 +350,7 @@ mod tests {
     fn unanchored_timeline_has_no_answer() {
         let timeline = Timeline::default();
         assert!(!timeline.is_anchored());
-        assert_eq!(timeline.sender_ticks_at(0), None);
+        assert_eq!(timeline.sender_ticks_at(at(0)), None);
         // 也没有可比的前一帧，故不补静音、无从分类。
         let decision = timeline.gap_before(1_000_000);
         assert_eq!(decision.silence_frames, 0);
@@ -316,17 +360,17 @@ mod tests {
     #[test]
     fn extrapolation_runs_into_the_past() {
         let mut timeline = Timeline::default();
-        timeline.note_write(0, 5_000_000, FRAME_FRAMES);
+        timeline.note_write(at(0), 5_000_000, FRAME_FRAMES);
 
         // 锚点在本帧末端，故本帧起点处读回它自称的时刻，末端处晚一个帧长。
-        assert_eq!(timeline.sender_ticks_at(0), Some(5_000_000));
+        assert_eq!(timeline.sender_ticks_at(at(0)), Some(5_000_000));
         assert_eq!(
-            timeline.sender_ticks_at(frames_u64(FRAME_FRAMES)),
+            timeline.sender_ticks_at(at(frames_u64(FRAME_FRAMES))),
             Some(5_000_000 + FRAME_TICKS)
         );
         // 再往锚点之前退一帧，得到的时刻必须比本帧起点更早。
         assert_eq!(
-            timeline.sender_ticks_at(0).unwrap() - FRAME_TICKS,
+            timeline.sender_ticks_at(at(0)).unwrap() - FRAME_TICKS,
             5_000_000 - FRAME_TICKS
         );
     }
@@ -335,7 +379,7 @@ mod tests {
     fn anchor_sits_at_the_end_of_the_written_data() {
         // 锚点若存成本帧起点，紧邻的下一帧就会被判成一整帧的空档。
         let mut timeline = Timeline::default();
-        timeline.note_write(0, 0, FRAME_FRAMES);
+        timeline.note_write(at(0), 0, FRAME_FRAMES);
 
         assert_eq!(timeline.gap_before(FRAME_TICKS).silence_frames, 0);
     }
@@ -343,11 +387,11 @@ mod tests {
     #[test]
     fn reset_drops_the_anchor() {
         let mut timeline = Timeline::default();
-        timeline.note_write(0, 7_000_000, FRAME_FRAMES);
+        timeline.note_write(at(0), 7_000_000, FRAME_FRAMES);
         timeline.reset();
 
         assert!(!timeline.is_anchored());
-        assert_eq!(timeline.sender_ticks_at(0), None);
+        assert_eq!(timeline.sender_ticks_at(at(0)), None);
     }
 
     #[test]
@@ -375,7 +419,7 @@ mod tests {
         // 帧头的毫秒量化让相邻两帧的差值带约 2 毫秒噪声。纯算术会把它当空档补上，
         // 而空档判定必须不补：正向补、负向不裁会把零均值噪声变成单边偏置。
         let mut timeline = Timeline::default();
-        timeline.note_write(0, 0, FRAME_FRAMES);
+        timeline.note_write(at(0), 0, FRAME_FRAMES);
 
         let noise = 2 * TICKS_PER_MS;
         assert!(gap_silence_frames(FRAME_TICKS, FRAME_TICKS + noise) > 0);
@@ -386,7 +430,7 @@ mod tests {
     fn a_gap_at_the_floor_is_filled_in_full_not_docked() {
         // 判定用下限，补的量仍是实测全量：下限是「是不是空档」的门，不是要减掉的偏置。
         let mut timeline = Timeline::default();
-        timeline.note_write(0, 0, FRAME_FRAMES);
+        timeline.note_write(at(0), 0, FRAME_FRAMES);
 
         let at_floor = FRAME_TICKS + MIN_GAP_TICKS;
         let filled = timeline.gap_before(at_floor);
@@ -406,7 +450,7 @@ mod tests {
         // 下界左移一个 tick 就把量化噪声计进来（每秒加几十的白噪声，什么也诊断不了），
         // 上界右移一个 tick 就把已全量补足的真空档重复计一次。
         let mut timeline = Timeline::default();
-        timeline.note_write(0, 0, FRAME_FRAMES);
+        timeline.note_write(at(0), 0, FRAME_FRAMES);
 
         // 噪声带内（差一个 tick 不到下界）：不计。计数下界从 0 起算的实现在这里红。
         assert_eq!(
@@ -433,7 +477,7 @@ mod tests {
     fn overlap_is_classified_only_beyond_the_noise_band() {
         // 重叠一侧同样不能数噪声：量化噪声零均值，负半边与正半边一样每秒几十次。
         let mut timeline = Timeline::default();
-        timeline.note_write(0, 0, FRAME_FRAMES);
+        timeline.note_write(at(0), 0, FRAME_FRAMES);
 
         // 噪声带内的倒走：不计。
         assert_eq!(
@@ -464,7 +508,7 @@ mod tests {
 
         for round in 0..rounds {
             timeline.note_write(
-                round * frames_u64(FRAME_FRAMES),
+                at(round * frames_u64(FRAME_FRAMES)),
                 i64::try_from(round).unwrap() * drifted_frame_ticks,
                 FRAME_FRAMES,
             );
@@ -474,7 +518,7 @@ mod tests {
         let read_cursor = rounds * frames_u64(FRAME_FRAMES) - buffered_frames;
         let round_at_cursor = i64::try_from(read_cursor / frames_u64(FRAME_FRAMES)).unwrap();
         let want = round_at_cursor * drifted_frame_ticks;
-        let got = timeline.sender_ticks_at(read_cursor).unwrap();
+        let got = timeline.sender_ticks_at(at(read_cursor)).unwrap();
 
         // 缓冲深度上的 200ppm 即 0.06 毫秒；整段播放时长上的 200ppm 是 12 毫秒。
         assert!(
@@ -489,12 +533,12 @@ mod tests {
         // 锚点贴着 i64 上界时向未来外推。回绕会给出一个看起来正常的错时刻，
         // 那比没有答案坏得多。
         let mut timeline = Timeline::default();
-        timeline.note_write(0, i64::MAX - 1, 0);
-        assert_eq!(timeline.sender_ticks_at(u64::MAX), None);
+        timeline.note_write(at(0), i64::MAX - 1, 0);
+        assert_eq!(timeline.sender_ticks_at(at(u64::MAX)), None);
 
         // 末端时刻本身就溢出时锚点为空，而不是留一个回绕后的锚点。
         let mut overflowing = Timeline::default();
-        overflowing.note_write(0, i64::MAX, FRAME_FRAMES);
+        overflowing.note_write(at(0), i64::MAX, FRAME_FRAMES);
         assert!(!overflowing.is_anchored());
     }
 }
