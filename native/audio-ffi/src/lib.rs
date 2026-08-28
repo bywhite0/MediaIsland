@@ -54,7 +54,7 @@ pub(crate) fn run_guarded(running: &AtomicBool, body: impl FnOnce()) {
     body();
 }
 
-pub const ABI_VERSION: u32 = 4;
+pub const ABI_VERSION: u32 = 5;
 
 /// 传输格式恒为 48000Hz / 2 声道 / i16，与 `server.hello` 的 `audio` 声明一致。
 pub const OUTPUT_SAMPLE_RATE: u32 = 48_000;
@@ -166,14 +166,14 @@ pub type PlayedFrameCallback = extern "C" fn(*const PlayedFrame, *mut c_void);
 ///
 /// 字段一律取 8 字节宽是刻意的：混用 u32 与 u64 会让 C 布局出现 padding，而跨 FFI 的
 /// 布局错位是静默的——读到的是别的字段的值，表现为「数值不对」，与「逻辑算错了」
-/// 无从区分。14 乘 8 等于 112 字节，无 padding，两端布局无歧义。可用性标志本来一个 u32
+/// 无从区分。16 乘 8 等于 128 字节，无 padding，两端布局无歧义。可用性标志本来一个 u32
 /// 就够，取 u64 是为了不引入尾部填充——填充的大小两端各自按对齐规则推，
 /// 那是又一处不必存在的约定。
 ///
 /// [`RenderStats::play_time_error_us`] 是唯一的有符号字段。不用「加偏置存成无符号」
 /// 那种编码：偏置是一个必须两侧同时记得的约定，而 i64 与 long 在两侧都是原生类型。
 ///
-/// 十四个字段不保证是同一瞬间的快照（见 render::RenderStatsCell）。
+/// 十六个字段不保证是同一瞬间的快照（见 render::RenderStatsCell）。
 ///
 /// 改动即 ABI 变更，须同步提升 [`ABI_VERSION`]。
 #[repr(C)]
@@ -234,6 +234,17 @@ pub struct RenderStats {
     /// 少了这个字段，一台取不到时钟的机器会一直报「尚未对上时钟」——那条提示指向等待，
     /// 而它永远不会好转。
     pub device_clock_available: u64,
+    /// 亚下限空档累计次数：帧间隔落在噪声带上界（[`timeline::GAP_NOISE_TICKS`]）
+    /// 与真空档下限（[`timeline::MIN_GAP_TICKS`]）之间、被整段吞掉不补的那一档。
+    /// `MIN_GAP_TICKS` 的注释承诺「排查机间错位时这项要对账」，这就是对账的账本。
+    ///
+    /// reset 语义照抄 `underrun_count`：起播时清零，停播不清。
+    pub swallowed_gap_count: u64,
+    /// 重叠累计次数：新帧比预期早了至少一个噪声带（[`timeline::GAP_NOISE_TICKS`]）。
+    /// 发送端时间轴倒走，正常发送端不该有——非零指向发送端时间戳生成的缺陷。
+    ///
+    /// reset 语义照抄 `underrun_count`：起播时清零，停播不清。
+    pub overlap_count: u64,
 }
 
 /// 采集句柄。跨 FFI 传递的是它的裸指针。
@@ -813,7 +824,10 @@ mod tests {
         // RenderStats 补六个字段。三项一次升完——中途出现「已升 4 但字段还没全」的半态时，
         // 托管侧的版本校验会把采集与播放同时判死并报「版本不匹配」，
         // 那条报错会盖住真正的布局错位。
-        assert_eq!(mediaisland_audio_abi_version(), 4);
+        // 4 到 5 是对齐开关按生命周期归位加诊断计数：render_start 增 alignment_enabled
+        // （起播参数，时序契约随之删除）、render_set_alignment 去 enabled、
+        // RenderStats 补亚下限空档与重叠两个计数（16 字段、128 字节）。
+        assert_eq!(mediaisland_audio_abi_version(), 5);
     }
 
     #[test]

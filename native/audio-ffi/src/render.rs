@@ -424,8 +424,8 @@ impl TargetDepthCell {
 /// 更要紧的是它们绝不去抢 ring 那把互斥量——对面等那把锁的是 WASAPI 实时线程，
 /// 而观测手段不该改变被观测对象的时序。
 ///
-/// 代价：十四个字段不是同一瞬间的快照，可能跨越一次渲染轮次。判据应看斜率与累计计数的
-/// 单调性，不要依赖十四元组的瞬时一致性。这一点对新增的位置锚点尤其要紧：
+/// 代价：十六个字段不是同一瞬间的快照，可能跨越一次渲染轮次。判据应看斜率与累计计数的
+/// 单调性，不要依赖十六元组的瞬时一致性。这一点对新增的位置锚点尤其要紧：
 /// `device_position_frames` 与 `device_position_qpc` 是同一次 `GetPosition` 的一对返回值，
 /// 但两个原子分开写，读者可能取到跨轮的一对。判据应比它们的斜率，不比某一瞬的差值。
 #[derive(Default)]
@@ -444,6 +444,8 @@ pub struct RenderStatsCell {
     clock_offset_available: AtomicU64,
     device_buffer_frames: AtomicU64,
     device_clock_available: AtomicU64,
+    swallowed_gap_count: AtomicU64,
+    overlap_count: AtomicU64,
 }
 
 impl RenderStatsCell {
@@ -457,6 +459,18 @@ impl RenderStatsCell {
 
     pub fn note_hard_reset(&self) {
         self.hard_reset_count.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+
+    /// 记一次亚下限空档：帧间隔落在噪声带与真空档下限之间、被吞掉不补的那一档。
+    /// 分类由 timeline 判（纯函数），这里只累计——与「噪声是入参的性质」同一条分层。
+    pub fn note_swallowed_gap(&self) {
+        self.swallowed_gap_count
+            .fetch_add(1, AtomicOrdering::Relaxed);
+    }
+
+    /// 记一次重叠：发送端时间轴倒走超过噪声带。正常发送端不该有。
+    pub fn note_overlap(&self) {
+        self.overlap_count.fetch_add(1, AtomicOrdering::Relaxed);
     }
 
     pub fn add_rendered(&self, device_frames: usize) {
@@ -497,6 +511,8 @@ impl RenderStatsCell {
         self.device_buffer_frames.store(0, AtomicOrdering::Relaxed);
         self.device_clock_available
             .store(0, AtomicOrdering::Relaxed);
+        self.swallowed_gap_count.store(0, AtomicOrdering::Relaxed);
+        self.overlap_count.store(0, AtomicOrdering::Relaxed);
     }
 
     /// 设备位置锚点：`IAudioClock::GetPosition` 的位置（已归一为 48000Hz 域的帧数）
@@ -585,6 +601,8 @@ impl RenderStatsCell {
             clock_offset_available: self.clock_offset_available.load(AtomicOrdering::Relaxed),
             device_buffer_frames: self.device_buffer_frames.load(AtomicOrdering::Relaxed),
             device_clock_available: self.device_clock_available.load(AtomicOrdering::Relaxed),
+            swallowed_gap_count: self.swallowed_gap_count.load(AtomicOrdering::Relaxed),
+            overlap_count: self.overlap_count.load(AtomicOrdering::Relaxed),
         }
     }
 }
@@ -628,7 +646,7 @@ mod wasapi {
     };
     use crate::ring::PlaybackRing;
     use crate::run_guarded;
-    use crate::timeline::{TICKS_PER_MS, TICKS_PER_SECOND};
+    use crate::timeline::{GapKind, TICKS_PER_MS, TICKS_PER_SECOND};
     use crate::wasapi_common::{parse_mix_format, wait_for_any, StopEvent, WaitObject};
     use crate::{
         AudioError, PlayedFrame, PlayedFrameCallback, OUTPUT_CHANNELS, STATUS_ALREADY_RUNNING,
@@ -834,12 +852,24 @@ mod wasapi {
             let timed = super::should_use_timeline(sender_ticks, self.alignment.is_enabled());
             // 渲染线程持锁的时间是一次 memcpy。拿不到锁只能是持锁者 panic 了，
             // 此时丢这一包而非把 panic 传进网络线程。
-            if let Ok(mut ring) = self.ring.lock() {
-                if timed {
-                    ring.push_at(interleaved, sender_ticks);
-                } else {
-                    ring.push(interleaved);
-                }
+            let Ok(mut ring) = self.ring.lock() else {
+                return;
+            };
+            let kind = if timed {
+                ring.push_at(interleaved, sender_ticks)
+            } else {
+                ring.push(interleaved);
+                GapKind::Normal
+            };
+            drop(ring);
+
+            // 计数在锁外自增：stats 是各自独立的原子，不为诊断多持一拍 ring 锁——
+            // 对面等那把锁的是 WASAPI 实时线程。关闭路径恒为 Normal，一次比较即返回，
+            // 热路径逐字如旧。
+            match kind {
+                GapKind::Normal => {}
+                GapKind::SwallowedGap => self.stats.note_swallowed_gap(),
+                GapKind::Overlap => self.stats.note_overlap(),
             }
         }
 
@@ -1431,6 +1461,58 @@ mod wasapi {
             .map_err(|err| AudioError::device(format!("提交播放缓冲失败：{err}")))?;
         Ok(())
     }
+    /// push 接线的判据：ring 透传的分类真的走到了 stats cell 的计数上。
+    ///
+    /// 不开设备：`new` 只建对象，`push` 只碰 ring 锁与原子计数，与 WASAPI 无涉，
+    /// 故不必 ignore。分类判定本身的边界在 timeline 的判据里，这里只钉接线——
+    /// 接线断了或两个计数接反了，timeline 全绿而计数恒 0 或互串。
+    #[cfg(test)]
+    mod push_wiring {
+        use super::*;
+
+        extern "C" fn noop(_: *const PlayedFrame, _: *mut c_void) {}
+
+        /// 一包 960 帧即 20 毫秒。
+        const PACKET_FRAMES: usize = 960;
+        const PACKET_TICKS: i64 = 20 * TICKS_PER_MS;
+
+        #[test]
+        fn gap_classifications_reach_the_stats_counters() {
+            let renderer = WasapiRenderer::new(noop, 0);
+            renderer.alignment.set(true, 0, 0, 0);
+            let tone = [7i16; PACKET_FRAMES * 2];
+            // 基准取非零：0 是「本帧没有时刻」的哨兵，第一包也不能落在它上。
+            let base = 1_000_000_000i64;
+
+            renderer.push(&tone, base);
+            // 比预期晚 3 毫秒：亚下限空档。
+            renderer.push(&tone, base + PACKET_TICKS + 3 * TICKS_PER_MS);
+            // 相对新锚点末端倒走 3 毫秒：重叠。
+            let overlapped = base + 2 * PACKET_TICKS + 3 * TICKS_PER_MS - 3 * TICKS_PER_MS;
+            renderer.push(&tone, overlapped);
+
+            let stats = renderer.stats();
+            assert_eq!(stats.swallowed_gap_count, 1);
+            assert_eq!(stats.overlap_count, 1);
+        }
+
+        #[test]
+        fn a_disabled_switch_keeps_the_counters_dark() {
+            // 对齐关着时热路径逐字走原路径，分类根本不产生——计数若在这里动了，
+            // 说明接线绕过了 should_use_timeline 那道门。
+            let renderer = WasapiRenderer::new(noop, 0);
+            let tone = [7i16; PACKET_FRAMES * 2];
+
+            renderer.push(&tone, 1_000_000_000);
+            // 同一时刻再来一包：开着对齐这是重叠形态。
+            renderer.push(&tone, 1_000_000_000);
+
+            let stats = renderer.stats();
+            assert_eq!(stats.swallowed_gap_count, 0);
+            assert_eq!(stats.overlap_count, 0);
+        }
+    }
+
     /// 三条 WASAPI 事实的真机实测。
     ///
     /// 默认 ignore 而不是靠环境变量早退：早退的测试会计进 passed，
@@ -2123,6 +2205,10 @@ mod tests {
         cell.set_clock_offset_available(true);
         cell.set_device_buffer_frames(1_056);
         cell.set_device_clock_available(true);
+        cell.note_swallowed_gap();
+        cell.note_swallowed_gap();
+        cell.note_swallowed_gap();
+        cell.note_overlap();
 
         let s = cell.snapshot();
         assert_eq!(s.device_sample_rate, 48_000);
@@ -2140,6 +2226,9 @@ mod tests {
         assert_eq!(s.device_frames_rendered, 960);
         assert_eq!(s.underrun_count, 2, "欠载是累加的");
         assert_eq!(s.hard_reset_count, 1);
+        // 与欠载不同次数：两个计数写串了（互相接反）时这里必红。
+        assert_eq!(s.swallowed_gap_count, 3, "亚下限空档是累加的");
+        assert_eq!(s.overlap_count, 1);
     }
 
     #[test]
@@ -2160,6 +2249,8 @@ mod tests {
         cell.set_clock_offset_available(true);
         cell.set_device_buffer_frames(1056);
         cell.set_device_clock_available(true);
+        cell.note_swallowed_gap();
+        cell.note_overlap();
 
         cell.reset();
 
@@ -2178,6 +2269,10 @@ mod tests {
         assert_eq!(s.clock_offset_available, 0);
         assert_eq!(s.device_buffer_frames, 0);
         assert_eq!(s.device_clock_available, 0);
+        // 计数语义照抄 underrun_count：起播时清零（reset 在 start 路径被调），
+        // 停播不清。这里钉「起播清零」那一半。
+        assert_eq!(s.swallowed_gap_count, 0);
+        assert_eq!(s.overlap_count, 0);
     }
 
     #[test]
@@ -2185,10 +2280,10 @@ mod tests {
         // 布局判据。托管侧有一条对称的 Marshal.SizeOf 断言，两条都成立才说明两端一致。
         // 错位是静默的：读到的是别的字段的值，表现为「数值不对」，
         // 与「逻辑算错了」无从区分。
-        // 十四个 8 字节字段，无 padding。混进一个 u32 只会产生尾部填充，
+        // 十六个 8 字节字段，无 padding。混进一个 u32 只会产生尾部填充，
         // 而尾部填充的大小两端各自按对齐规则推——那是又一处不必存在的约定，
         // 故可用性标志也取 u64。
-        assert_eq!(std::mem::size_of::<crate::RenderStats>(), 112);
+        assert_eq!(std::mem::size_of::<crate::RenderStats>(), 128);
         assert_eq!(std::mem::align_of::<crate::RenderStats>(), 8);
 
         // 大小与对齐不够，必须逐字段钉偏移，且两端各钉自己的。
@@ -2213,5 +2308,7 @@ mod tests {
         assert_eq!(offset_of!(S, clock_offset_available), 88);
         assert_eq!(offset_of!(S, device_buffer_frames), 96);
         assert_eq!(offset_of!(S, device_clock_available), 104);
+        assert_eq!(offset_of!(S, swallowed_gap_count), 112);
+        assert_eq!(offset_of!(S, overlap_count), 120);
     }
 }
