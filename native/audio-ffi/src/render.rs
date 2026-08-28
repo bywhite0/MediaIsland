@@ -147,37 +147,46 @@ pub fn prefill_silence_frames(
     Some(output_frames_for(writable_device_frames, device_rate).min(max_input_frames))
 }
 
-/// 设备帧轴上的帧数：WASAPI 端点按自身混音率数出来的帧，本轮 padding、本轮可写数、
-/// 端点缓冲容量都在这条轴上。
-///
-/// 与累积帧轴（timeline 侧的 CumulativeFrames，48k 域）是两条互不通约的轴：设备率
-/// 不等于 48000 时两侧一帧的时长不同，直接混用曾把误差整体偏移一个端点缓冲长度
-/// （本机 22 毫秒），且各设备不同。故本类型不提供跨轴算术，也不实现 Deref、From
-/// 一类会重新打开混用面的转换；换轴的唯一通道是 output_frames_for，
-/// 裸整数只在 WASAPI 交数的那一处进入。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DeviceFrames(usize);
+/// 设备帧轴的围栏子模块：类型、构造入口与唯一换算通道住在这里，
+/// .0 字段访问全部收在模块内。
+mod device_frames {
+    use crate::OUTPUT_SAMPLE_RATE;
 
-impl DeviceFrames {
-    /// 从裸整数进入设备帧轴。只该出现在 WASAPI 边界与测试里。
-    pub fn new(raw: usize) -> Self {
-        Self(raw)
+    /// 设备帧轴上的帧数：WASAPI 端点按自身混音率数出来的帧，本轮 padding、本轮可写数、
+    /// 端点缓冲容量都在这条轴上。
+    ///
+    /// 与累积帧轴（timeline 侧的 CumulativeFrames，48k 域）是两条互不通约的轴：设备率
+    /// 不等于 48000 时两侧一帧的时长不同，直接混用曾把误差整体偏移一个端点缓冲长度
+    /// （本机 22 毫秒），且各设备不同。故本类型不提供跨轴算术，也不实现 Deref、From
+    /// 一类会重新打开混用面的转换；换轴的唯一通道是 output_frames_for，
+    /// 裸整数只在 WASAPI 交数的那一处进入。收进私有子模块使同文件的 .0 也不可达，
+    /// 模块外任何一处字段访问都是编译错误。
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct DeviceFrames(usize);
+
+    impl DeviceFrames {
+        /// 从裸整数进入设备帧轴。只该出现在 WASAPI 边界与测试里。
+        pub fn new(raw: usize) -> Self {
+            Self(raw)
+        }
+    }
+
+    /// 设备帧数折算成同时长的传输帧数（48k 域）。两轴之间唯一的换算通道。
+    ///
+    /// 两个域必须分清。送给 `played_cb` 的缓冲按 48k 输入帧分配，而 WASAPI 说的
+    /// 「本轮可写几帧」是设备帧。设备率 >48000 时设备帧数多于同时长的 48k 帧数，
+    /// 拿设备帧数去索引按 48k 分配的缓冲就是越界——96kHz / 20ms 下是 3840 索引进
+    /// 长 2182 的缓冲，渲染线程当场 panic，而此时 `render_start` 已经返回过 OK。
+    pub fn output_frames_for(device_frames: DeviceFrames, device_rate: u32) -> usize {
+        if device_rate == 0 || device_rate == OUTPUT_SAMPLE_RATE {
+            return device_frames.0;
+        }
+
+        device_frames.0 * OUTPUT_SAMPLE_RATE as usize / device_rate as usize
     }
 }
 
-/// 设备帧数折算成同时长的传输帧数（48k 域）。两轴之间唯一的换算通道。
-///
-/// 两个域必须分清。送给 `played_cb` 的缓冲按 48k 输入帧分配，而 WASAPI 说的
-/// 「本轮可写几帧」是设备帧。设备率 >48000 时设备帧数多于同时长的 48k 帧数，
-/// 拿设备帧数去索引按 48k 分配的缓冲就是越界——96kHz / 20ms 下是 3840 索引进
-/// 长 2182 的缓冲，渲染线程当场 panic，而此时 `render_start` 已经返回过 OK。
-pub fn output_frames_for(device_frames: DeviceFrames, device_rate: u32) -> usize {
-    if device_rate == 0 || device_rate == OUTPUT_SAMPLE_RATE {
-        return device_frames.0;
-    }
-
-    device_frames.0 * OUTPUT_SAMPLE_RATE as usize / device_rate as usize
-}
+pub use device_frames::{output_frames_for, DeviceFrames};
 
 /// 正在出声的采样在累积轴（48k 域）上的位置。
 ///
