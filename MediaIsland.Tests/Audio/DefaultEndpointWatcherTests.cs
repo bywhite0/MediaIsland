@@ -299,6 +299,34 @@ public class DefaultEndpointWatcherTests
     }
 
     [Fact]
+    public void EntryBeat_DoesNotConsumeThePendingRealignment()
+    {
+        // 进场拍不动恢复拍追踪：门关期间换了设备，进场拍若把「待恢复」态消费掉，
+        // 开门首拍就会按 stale 基线多余重启一次——triage #9 病灶经 UI 进场路径复活。
+        var provider = new ScriptedIdProvider("dev-a", "dev-b", "dev-b", "dev-c");
+        var gateOpen = true;
+        // ReSharper disable once AccessToModifiedClosure
+        using var watcher = new DefaultEndpointWatcher(provider.Next, () => gateOpen);
+        var changes = 0;
+        watcher.DefaultEndpointChanged += (_, _) => changes++;
+
+        watcher.Poll();
+        gateOpen = false;
+        watcher.Poll();
+        watcher.SetUiVisible(true);
+        watcher.Poll();
+
+        Assert.Equal(0, changes);
+        Assert.Equal("dev-b", watcher.CachedId);
+
+        // 对齐后检测未被禁用：再换 dev-c 事件恰一次——基线已对齐的行为证明。
+        watcher.Poll();
+
+        Assert.Equal(1, changes);
+        Assert.Equal("dev-c", watcher.CachedId);
+    }
+
+    [Fact]
     public void AThrowingProvider_ReadsAsNoDevice()
     {
         // 生产 provider 把 COM 失败折成 null，这条钉的是兜底层：任意异常同义于
