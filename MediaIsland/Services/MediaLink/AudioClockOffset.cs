@@ -58,9 +58,55 @@ internal sealed class AudioClockOffsetEstimator
     /// </summary>
     internal static readonly TimeSpan MaxAcceptableRoundTrip = TimeSpan.FromMilliseconds(50);
 
+    /// <summary>
+    /// 一致性检查的余量。两个观测同一真值的样本，其估计差的硬界是 (rtt_i + rtt_j) / 2，
+    /// 再往外只剩两台机器单调时钟的相互漂移：10ppm 乘以 8 秒窗口约 0.08 毫秒。
+    /// 圆整取 1 毫秒留足余量——它只须远小于要抓的偏差（错单位对端相邻两个探测就差
+    /// 约 200 毫秒），不必贴着 0.08 毫秒抠。
+    /// </summary>
+    internal const long ConsistencyMarginTicks = TimeSpan.TicksPerMillisecond;
+
     private readonly AudioClockSample[] _window = new AudioClockSample[WindowSize];
     private int _count;
     private int _next;
+
+    /// <summary>
+    /// 因窗口不一致而报不可用的次数。只增，<see cref="Reset"/> 不清——与探测壳的
+    /// Misses 等诊断计数同形，跨连接累计。它持续增长指向对端实现或换机残样问题，
+    /// 而不只是「这次没估出来」。
+    /// </summary>
+    internal long InconsistentWindows { get; private set; }
+
+    /// <summary>
+    /// 窗口里任意两个样本是否互相印证。每个被接受样本的估计误差有硬界
+    /// |offset_i − 真值| ≤ rtt_i / 2（排队延迟单向污染的上界），故观测同一真值的
+    /// 任意两样本必满足 |offset_i − offset_j| ≤ (rtt_i + rtt_j) / 2 + 漂移余量。
+    /// 违反说明窗内至少有一个样本不是对同一真值的观测——典型如错单位的对端
+    /// （毫秒当 tick 报，offset 以每秒约一秒漂移）或断连清空失效后混入的换机残样
+    /// （offset 跳变以开机时长计）——此时无从分辨谁坏，整窗不可信。
+    ///
+    /// 窗口至多 8 样本 28 对，纯算术。单样本无对可查，真空通过。
+    /// </summary>
+    internal bool WindowIsConsistent
+    {
+        get
+        {
+            for (var i = 0; i < _count; i++)
+            {
+                for (var j = i + 1; j < _count; j++)
+                {
+                    var bound = (_window[i].RoundTripTicks + _window[j].RoundTripTicks) / 2
+                                + ConsistencyMarginTicks;
+                    if (Math.Abs(_window[i].OffsetTicks - _window[j].OffsetTicks) > bound)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+    }
 
     /// <summary>
     /// 收下一个样本，返回是否被收下。调用方据此记诊断——被拒的样本数是一个
@@ -84,7 +130,8 @@ internal sealed class AudioClockOffsetEstimator
     }
 
     /// <summary>
-    /// 取当前最可信的 offset。窗口为空、或最小 RTT 超上限时返回 false。
+    /// 取当前最可信的 offset。窗口为空、窗口不一致（见 <see cref="WindowIsConsistent"/>）、
+    /// 或最小 RTT 超上限时返回 false。
     ///
     /// 同时给出被选中样本的 RTT：「offset 是多少」与「这个 offset 可信到什么程度」
     /// 是两个量，只报前者会让排查无从下手，也让误差预算无从核对。
@@ -95,6 +142,22 @@ internal sealed class AudioClockOffsetEstimator
         chosenRoundTripTicks = 0;
         if (_count == 0)
         {
+            return false;
+        }
+
+        // 选样之前先验窗：选样只看最小 RTT，而错单位对端给出的正是「RTT 正常、
+        // offset 离谱」的样本，单看任何一个都无从察觉，只有互相对质才露馅。
+        //
+        // 违反不清窗。清窗会让恒坏对端周期性退到单样本窗——单样本无对可查、
+        // 真空通过，坏 offset 就周期性泄漏。证据留在窗里，检查持续失败，
+        // 不可用持续成立，这正是想要的；坏样本自然随窗口滚动流出。
+        //
+        // 单样本窗真空通过是接受了的残量：错值最多活到第二个样本到达
+        // （快速阶段 200 毫秒），外环速率上限 0.5 毫秒每秒把这段时间的损害
+        // 封在 0.1 毫秒量级，不另设防。
+        if (!WindowIsConsistent)
+        {
+            InconsistentWindows++;
             return false;
         }
 
