@@ -7,8 +7,8 @@ namespace MediaIsland.Tests.Infrastructure;
 ///
 /// 为什么这几条不是多余的：门控若判反了，整套真机测试会静默不跑，
 /// 而「skipped 数」在没人核对的情况下与「本来就该跳过」无从区分。
-/// 这是本仓唯一一处「测试基础设施自身」的测试，理由是它一旦失效，
-/// 失效的表现形式恰好是「一切正常」。
+/// 「测试基础设施自身」的测试仅此与 NativeAudioFactAttributeTests 两处，
+/// 理由是它们一旦失效，失效的表现形式恰好是「一切正常」。
 /// </summary>
 public class ExternalConditionGateTests
 {

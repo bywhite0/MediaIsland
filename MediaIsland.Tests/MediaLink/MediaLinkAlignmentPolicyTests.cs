@@ -1,6 +1,7 @@
 using MediaIsland.Services.Audio.Playback.Native;
 using MediaIsland.Services.MediaLink;
 using MediaIsland.Services.MediaLink.Protocol;
+using MediaIsland.Tests.Infrastructure;
 using Xunit;
 
 namespace MediaIsland.Tests.MediaLink;
@@ -10,8 +11,12 @@ public class MediaLinkAlignmentPolicyTests
     /// <summary>
     /// native 侧 MIN_TARGET_MS，经 FFI 导出取得。不在托管侧抄一份 50：
     /// 同一个数分散成两份各自为真的声明时，改一处而漏另一处不会让任何判据变红。
+    ///
+    /// 属性而非 static readonly 字段：字段在类型初始化器里 P/Invoke，缺库环境
+    /// 整类死于 TypeInitializationException，NativeAudioFact 的跳过根本轮不到生效；
+    /// 属性把取值推迟进判据体，那时门控已经放行或跳过。
     /// </summary>
-    private static readonly int MinTargetMs = (int)WasapiRenderer.TargetMsBounds().MinMs;
+    private static int MinTargetMs => (int)WasapiRenderer.TargetMsBounds().MinMs;
 
     private static MediaLinkAlignmentDecision Decide(
         bool capability = true,
@@ -22,7 +27,7 @@ public class MediaLinkAlignmentPolicyTests
         MediaLinkAlignmentPolicy.Decide(
             capability, budgetMs, deviceLatencyMs, deviceBufferMs, MinTargetMs, offsetAvailable);
 
-    [Fact]
+    [NativeAudioFact]
     public void EverythingInPlace_Aligns()
     {
         var decision = Decide();
@@ -31,7 +36,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Equal(MediaLinkAlignmentState.Aligned, decision.State);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void MissingCapability_IsNotAligned()
     {
         var decision = Decide(capability: false);
@@ -40,7 +45,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Equal(MediaLinkAlignmentState.NoCapability, decision.State);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void MissingBudget_IsTreatedAsUnsupported_NotAsTheDefault()
     {
         // 缺失时回落到默认 300 会让两端各自默认成同一个数：看起来一致，实则两份
@@ -55,7 +60,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.True(Decide(budgetMs: MediaLinkProtocol.AudioClockDefaultBudgetMs).IsAligned);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void ABudgetThatCannotHoldTheMinimumBuffer_FallsBack()
     {
         // 预算 = 下限 + 5、设备延迟 10：余量比最小缓冲差 5 毫秒，装不下。
@@ -66,7 +71,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.True(Decide(budgetMs: MinTargetMs + 10, deviceLatencyMs: 10).IsAligned);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void ASlowDeviceEatsTheHeadroom()
     {
         // 同一个预算，设备延迟大到吃掉余量就对不齐——蓝牙耳机可达 100 至 200 毫秒。
@@ -76,7 +81,7 @@ public class MediaLinkAlignmentPolicyTests
             Decide(budgetMs: 300, deviceLatencyMs: 260).State);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void TheEndpointBufferCapacityCountsTowardTheFloor()
     {
         // 渲染循环每轮把可写帧全写满，一个采样最坏要等整整一个缓冲容量才被取走。
@@ -90,7 +95,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.True(Decide(budgetMs: MinTargetMs + 30, deviceLatencyMs: 10, deviceBufferMs: 20).IsAligned);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void TheBufferReasonNamesTheCapacitySoTheUserKnowsWhatToChange()
     {
         // 四个数各是一个可动的旋钮：预算（服务端配置）、设备延迟（换设备）、
@@ -100,7 +105,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Contains("25.0", reason);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void ANonPositiveBudgetIsInfeasibleRatherThanUndeclared()
     {
         // 0 与负数是「声明了一个办不到的值」，不是「没声明」。两者的排查方向不同：
@@ -109,7 +114,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, Decide(budgetMs: -1).State);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void AnAbsurdlyLargeBudgetIsInfeasibleRatherThanAligned()
     {
         // 极大的预算与太小的预算同类，都是「声明了一个办不到的值」。10^15 毫秒是三万年，
@@ -125,7 +130,7 @@ public class MediaLinkAlignmentPolicyTests
             Decide(budgetMs: MediaLinkAlignmentPolicy.MaxBudgetMs + 1).State);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void TheUpperBoundSitsBelowWhereTheTickConversionOverflows()
     {
         // 算出声时刻要把预算换成 100 纳秒计次，即乘 TicksPerMillisecond。预算超过
@@ -141,7 +146,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, Decide(budgetMs: long.MaxValue).State);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void AMissingClockOffset_IsReportedAsSuchAndOnlyLast()
     {
         var decision = Decide(offsetAvailable: false);
@@ -149,7 +154,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Equal(MediaLinkAlignmentState.NoClockOffset, decision.State);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void APermanentObstacleOutranksTheTransientOne()
     {
         // 时钟没对上是唯一会自己好转的一条，故它排在最后。排在前面的话，一台预算
@@ -165,7 +170,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Equal(MediaLinkAlignmentState.NoBudgetDeclared, noBudget.State);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void EveryReasonIsDistinct()
     {
         // 四条出路的差别只在归因上——四条都让声音照常出。合成一条「对齐不可用」，
@@ -192,7 +197,7 @@ public class MediaLinkAlignmentPolicyTests
         Assert.Contains(MinTargetMs.ToString(), tooSmall);
     }
 
-    [Fact]
+    [NativeAudioFact]
     public void ADeclaredBudgetIsRereadOnEveryDecision()
     {
         // server.hello 可以在连接存活期间重发并改 D，故判定不得缓存上一次的结论：
