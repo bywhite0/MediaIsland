@@ -1006,14 +1006,20 @@ function targetCtxTime(capturedAtMs) {
 function alignState() {
   if (align.dMs == null || !audio.ctx) return 'off';
   const budget = align.dMs - deviceLatencySec() * 1000;
-  if (budget < TARGET_BUFFER_MS) {
+  // 负向手动偏移把目标时刻提前，等效削减可用预算，故计入下界（正向只推后
+  // 出声、不削预算，不计下界）；削穿下界时每帧到达即已过期，锚定路径按
+  // 「整帧过期」持续丢弃——同样是「永久静音 + 持续丢帧」。滑块本身被 ±500
+  // 界住，本侧无自动判据——该性质与 Python 示例的 aligned_depth_ms 同构，
+  // 由其自检钉住。
+  if (budget + Math.min(manualOffsetMs(), 0) < TARGET_BUFFER_MS) {
     // TARGET_BUFFER_MS 在对齐模式下从目标深度降为下界：深度由预算决定。
-    align.fellBack = `预算 dMs=${align.dMs}ms 减设备延迟后不足最小缓冲 ${TARGET_BUFFER_MS}ms——调大发送端 dMs`;
+    align.fellBack = `预算 dMs=${align.dMs}ms 减设备延迟后不足最小缓冲 ${TARGET_BUFFER_MS}ms——调大发送端 dMs`
+      + (manualOffsetMs() < 0 ? '，或回拨偏移滑块' : '');
     return 'off';
   }
-  // 正向手动偏移把目标时刻推后，等效加深所需积压，故计入上界（负向只提前出声，
-  // 不加深，不计）；不计入就给「永久静音 + 持续丢帧」留旁门。滑块本身被 ±500 界住，
-  // 本侧无自动判据——该性质与 Python 示例的 aligned_depth_ms 同构，由其自检钉住。
+  // 正向手动偏移把目标时刻推后，等效加深所需积压，故计入上界（负向不加深、
+  // 不计上界——它计入上面的下界）；不计入就给「永久静音 + 持续丢帧」留旁门。
+  // 判据归属同上：由 Python 侧自检钉住。
   if (budget + Math.max(manualOffsetMs(), 0) > MAX_BUFFER_MS) {
     // 深度超过积压上限时，帧在等到目标时刻之前就会被「丢最新」边界顶掉，
     // 对齐会被静默顶穿——与其那样，不如退回并说明。

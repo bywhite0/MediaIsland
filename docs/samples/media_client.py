@@ -250,12 +250,18 @@ def aligned_depth_ms(d_ms, device_latency_ms, manual_offset_ms=0.0):
 
     正向手动偏移把目标时刻整体推后，等效加深所需积压，故计入上界检查；不计入
     就给「永久静音 + 持续丢帧」留了旁门——帧在等到目标时刻之前被丢最旧顶掉，
-    闸门永不开。负向偏移只提前出声、不加深积压，不参与。
+    闸门永不开。负向偏移不加深积压、不计上界，对称地计入下界：它把目标时刻
+    提前，等效削减可用预算，削到不足最小缓冲时每帧到达即已过期，闸门经
+    「过期丢弃」同样永不开。
     """
     depth = d_ms - device_latency_ms
-    if depth < TARGET_BUFFER_MS:
-        return None, (f"预算 dMs={d_ms}ms 减设备延迟 {device_latency_ms:.0f}ms 后不足"
-                      f"最小缓冲 {TARGET_BUFFER_MS}ms——调大发送端 dMs，或换更快的本机设备")
+    if depth + min(manual_offset_ms, 0.0) < TARGET_BUFFER_MS:
+        # 负向偏移把目标时刻提前，削穿下界时帧在途中就被判过期、按 lead 全量
+        # 丢弃——与其永久静音，不如在这里退回并说明。
+        cut = f" 加负向手动偏移 {manual_offset_ms:g}ms" if manual_offset_ms < 0 else ""
+        return None, (f"预算 dMs={d_ms}ms 减设备延迟 {device_latency_ms:.0f}ms{cut} 后不足"
+                      f"最小缓冲 {TARGET_BUFFER_MS}ms——调大发送端 dMs，或换更快的本机设备"
+                      + ("，或回拨 --offset-ms" if manual_offset_ms < 0 else ""))
     if depth + max(manual_offset_ms, 0.0) > MAX_BUFFER_MS:
         # 深度超过积压上限时，帧在等到目标时刻之前就会被「丢最旧」顶掉，
         # 对齐会被静默顶穿——与其那样，不如在这里退回并说明。
@@ -999,8 +1005,14 @@ def self_test():
     bad, why = aligned_depth_ms(MAX_BUFFER_MS, 0, manual_offset_ms=1)
     ok(bad is None and "offset-ms" in why,
        "正向手动偏移计入上界：D 恰在上限时 +1ms 偏移即装不下，且原因点名偏移")
-    ok(aligned_depth_ms(MAX_BUFFER_MS, 0, manual_offset_ms=-500)[0] == MAX_BUFFER_MS,
-       "负向偏移不参与上界（只提前出声，不加深积压）")
+    ok(aligned_depth_ms(MAX_BUFFER_MS, 0, manual_offset_ms=-100)[0] == MAX_BUFFER_MS,
+       "负向偏移不参与上界（不加深积压；取 −100 避开下界，上界性质独立可判）")
+    bad, why = aligned_depth_ms(TARGET_BUFFER_MS + 20, 20, manual_offset_ms=-1)
+    ok(bad is None and "offset-ms" in why,
+       "负向手动偏移计入下界：预算恰在下界时 −1ms 偏移即削穿，且原因点名偏移")
+    ok(aligned_depth_ms(TARGET_BUFFER_MS + 120, 20, manual_offset_ms=-100)[0]
+       == TARGET_BUFFER_MS + 100,
+       "负向偏移削后恰到下界仍可行（下界含等号），深度本身不被偏移改写")
 
     # ---- hello 归因：三种原因各自可判 ----
     c = MediaLinkClient("ws://x", "t")
