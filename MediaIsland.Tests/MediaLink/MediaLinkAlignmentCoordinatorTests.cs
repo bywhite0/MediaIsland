@@ -379,4 +379,171 @@ public class MediaLinkAlignmentCoordinatorTests
 
         Assert.Equal((0L, 0L, 1_200_000L), harness.Renderer.LastAlignment);
     }
+
+    /// <summary>贴边数据：目标深度钉在指定值、外环误差为指定微秒数，其余同已起播事实。</summary>
+    private static AudioRenderStats BrinkStats(int targetMs, long errorUs) =>
+        StartedStats() with { TargetMsCurrent = targetMs, PlayTimeErrorUs = errorUs };
+
+    /// <summary>饱和进入告警条数。恢复走 Information，不会混进来。</summary>
+    private static int SaturationWarnings(ListLogger logger) => logger.Entries.Count(
+        entry => entry.Level == LogLevel.Warning && entry.Message.Contains("外环饱和"));
+
+    private static int SaturationRecoveries(ListLogger logger) =>
+        logger.Entries.Count(entry => entry.Message.Contains("外环饱和解除"));
+
+    [Fact]
+    public void Saturation_IsLoggedOnEntryAndRecovery_NotPerRecompute()
+    {
+        // 转移语义四拍：进入一条、中间静默、恢复一条、再进入再记。重算按探测节奏
+        // 每秒一次，不去重的话一次真饱和就是每秒一条同样的警告，真信号被自己刷没。
+        var harness = new Harness();
+        harness.Renderer.Stats = BrinkStats(1_000, 12_000);
+
+        harness.Coordinator.Recompute();
+        harness.Coordinator.Recompute();
+        harness.Coordinator.Recompute();
+        Assert.Equal(1, SaturationWarnings(harness.Logger));
+
+        harness.Renderer.Stats = BrinkStats(400, 1_000);
+        harness.Coordinator.Recompute();
+        harness.Coordinator.Recompute();
+        Assert.Equal(1, SaturationRecoveries(harness.Logger));
+        Assert.Equal(1, SaturationWarnings(harness.Logger));
+
+        harness.Renderer.Stats = BrinkStats(1_000, 12_000);
+        harness.Coordinator.Recompute();
+        Assert.Equal(2, SaturationWarnings(harness.Logger));
+    }
+
+    [Fact]
+    public void AtTheBound_TheErrorBudgetBoundary_IsAPair()
+    {
+        // 单端预算 5ms 是严格大于的边：恰为 5000us 时外环只是恰好收敛到边界，
+        // 不是故障；越线一微秒才是「贴边且误差仍大」。取下界与负误差，
+        // 上界侧与正误差由进入判据那条盖住，绝对值被吞或比较方向取反都在此红。
+        var harness = new Harness();
+        harness.Renderer.Stats = BrinkStats(50, -5_000);
+        harness.Coordinator.Recompute();
+        Assert.Equal(0, SaturationWarnings(harness.Logger));
+
+        harness.Renderer.Stats = BrinkStats(50, -5_001);
+        harness.Coordinator.Recompute();
+        Assert.Equal(1, SaturationWarnings(harness.Logger));
+    }
+
+    [Fact]
+    public void OffTheBound_WithALargeError_IsNotSaturation()
+    {
+        // 外环还有行程时误差大是它正在修的常态，不是饱和——缺贴边这一腿的实现
+        // 会把每次瞬态都当硬重置前兆告警。
+        var harness = new Harness();
+        harness.Renderer.Stats = BrinkStats(400, 12_000);
+
+        harness.Coordinator.Recompute();
+
+        Assert.Equal(0, SaturationWarnings(harness.Logger));
+    }
+
+    [Fact]
+    public void NotAligned_WithTheSameBrinkFacts_IsNotJudged()
+    {
+        // 与进入判据只差对齐态一个条件：同样贴上界、同样 12ms 误差，仅对时不可用
+        // （NoClockOffset）。未对齐时 stats 是上一段对齐留下的残值，拿残值判饱和
+        // 是拿旧世界的读数吓唬现世界。
+        var harness = new Harness { WireOffset = (false, 0L) };
+        harness.Renderer.Stats = BrinkStats(1_000, 12_000);
+
+        harness.Coordinator.Recompute();
+
+        Assert.Equal(0, SaturationWarnings(harness.Logger));
+    }
+
+    [Fact]
+    public void SwitchedOff_WithBrinkFacts_JudgesNothingButStillSnapshots()
+    {
+        // 开关关时零参与：饱和不判、告警不发，日志必须整体为空。快照照更新——
+        // 状态行还要回答「为什么没在对齐」，Enabled 位随组带出，显示方据此改口。
+        var harness = new Harness { Enabled = false };
+        harness.Renderer.Stats = BrinkStats(1_000, 12_000);
+
+        harness.Coordinator.Recompute();
+
+        Assert.Empty(harness.Logger.Entries);
+        var snapshot = harness.Coordinator.LastDecision;
+        Assert.NotNull(snapshot);
+        Assert.False(snapshot!.Value.Enabled);
+    }
+
+    [Fact]
+    public void TheDecisionSnapshot_FollowsEachRecompute()
+    {
+        // 防真空：先后两次给出不同结论，快照必须跟随——恒首次值的实现在第二段红。
+        var harness = new Harness();
+        harness.Renderer.Stats = StartedStats() with
+        {
+            TargetMsCurrent = 180, PlayTimeErrorUs = -7_200
+        };
+
+        Assert.Null(harness.Coordinator.LastDecision);
+
+        harness.Coordinator.Recompute();
+        var aligned = harness.Coordinator.LastDecision;
+        Assert.NotNull(aligned);
+        Assert.Equal(MediaLinkAlignmentState.Aligned, aligned!.Value.State);
+        Assert.Equal("正在对齐播放", aligned.Value.Reason);
+        // 页面要显示的数字随组带出，与判定同一次读取——页面不重算归因也不补读 stats。
+        Assert.Equal(180, aligned.Value.TargetMsCurrent);
+        Assert.Equal(-7_200L, aligned.Value.PlayTimeErrorUs);
+        Assert.Equal((50, 1_000), (aligned.Value.MinTargetMs, aligned.Value.MaxTargetMs));
+        Assert.True(aligned.Value.Enabled);
+        Assert.True(aligned.Value.HasStarted);
+
+        harness.Declaration = Declared(70);
+        harness.Coordinator.Recompute();
+        var fallen = harness.Coordinator.LastDecision;
+        Assert.Equal(MediaLinkAlignmentState.BudgetTooSmall, fallen!.Value.State);
+        Assert.Contains("不足", fallen.Value.Reason);
+    }
+
+    [Fact]
+    public async Task TheSnapshot_StaysPairwiseConsistent_UnderConcurrentReads()
+    {
+        // 简单交错：写线程在两个结论之间摆动，读线程裸读快照。State 与 Reason
+        // 同锁同写，读到的对子必须自洽——快照写点漏出锁或属性绕开锁时这里撕开。
+        var harness = new Harness();
+        harness.Renderer.Stats = StartedStats();
+        var stop = false;
+        var violations = 0;
+        var reader = Task.Run(() =>
+        {
+            while (!Volatile.Read(ref stop))
+            {
+                if (harness.Coordinator.LastDecision is not { } snapshot)
+                {
+                    continue;
+                }
+
+                var consistent = snapshot.State switch
+                {
+                    MediaLinkAlignmentState.Aligned => snapshot.Reason == "正在对齐播放",
+                    MediaLinkAlignmentState.BudgetTooSmall => snapshot.Reason.Contains("不足"),
+                    _ => false
+                };
+                if (!consistent)
+                {
+                    Interlocked.Increment(ref violations);
+                }
+            }
+        });
+
+        for (var i = 0; i < 2_000; i++)
+        {
+            harness.Declaration = Declared(i % 2 == 0 ? 300 : 70);
+            harness.Coordinator.Recompute();
+        }
+
+        Volatile.Write(ref stop, true);
+        await reader;
+        Assert.Equal(0, violations);
+    }
 }

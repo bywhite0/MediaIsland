@@ -336,6 +336,13 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
             stats.PlayTimeErrorUs);
     }
 
+    /// <summary>
+    /// 目标深度可取的区间，透传渲染实现的常量。饱和判定与设置页状态行要的是两端；
+    /// 事实组里只带下界——上界在可行性判定里没有位置，不值得为它扩事实。
+    /// 常量不随播放状态变，读它不进锁。
+    /// </summary>
+    public (int MinTargetMs, int MaxTargetMs) TargetDepthBounds() => _renderer.TargetDepthBounds();
+
     public void Submit(AudioFrame frame)
     {
         // 分支判定不进锁：本方法在网络收循环上，50 帧每秒。_playing 是 volatile，

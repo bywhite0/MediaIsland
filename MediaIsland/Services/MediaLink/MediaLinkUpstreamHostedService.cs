@@ -77,6 +77,13 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
 
     public bool IsConnected => _client?.IsConnected == true;
 
+    /// <summary>
+    /// 对齐判定快照的读口，设置页状态行从这里取。协调方与客户端同生共死
+    /// （未启用、停机时为 null），null 由显示方呈现「暂无」——不缓存上一段
+    /// 连接的结论冒充现状。
+    /// </summary>
+    internal MediaLinkAlignmentSnapshot? ReadAlignmentDecision() => _alignment?.LastDecision;
+
     /// <summary>已成功转发给下游的上游音频帧数。用于诊断转发链路通没通。</summary>
     public long ForwardedFrames => _audioRelay?.ForwardedFrames ?? 0;
 

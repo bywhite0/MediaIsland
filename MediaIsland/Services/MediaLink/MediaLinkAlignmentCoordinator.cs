@@ -5,6 +5,32 @@ using Microsoft.Extensions.Logging;
 namespace MediaIsland.Services.MediaLink;
 
 /// <summary>
+/// 最近一次对齐判定的快照，诊断面的单一真相源：设置页状态行只显示它，不自己重算
+/// 归因——归因逻辑长两份，改一处忘另一处时页面与日志就各说各话。值语义整体复制，
+/// 读方拿到的是锁内那一刻的成组结论，不会读到半新半旧。
+/// </summary>
+/// <param name="Enabled">判定那一刻的用户开关。关着时四态结论只是推演，显示方据此改口。</param>
+/// <param name="HasStarted">
+/// 判定那一刻已出过声。出声前 Aligned 是未经设备事实核验的乐观结论，
+/// 显示方与日志同一纪律：不宣布。
+/// </param>
+/// <param name="State">四态归因。</param>
+/// <param name="Reason">四态的用户可读文案，与日志落的是同一份。</param>
+/// <param name="PlayTimeErrorUs">外环误差，微秒，有符号。未起播或未对齐时无意义。</param>
+/// <param name="TargetMsCurrent">抖动缓冲目标深度当前值，毫秒。未起播时为零。</param>
+/// <param name="MinTargetMs">目标深度区间下端，渲染实现的常量。</param>
+/// <param name="MaxTargetMs">目标深度区间上端，渲染实现的常量。</param>
+internal readonly record struct MediaLinkAlignmentSnapshot(
+    bool Enabled,
+    bool HasStarted,
+    MediaLinkAlignmentState State,
+    string Reason,
+    long PlayTimeErrorUs,
+    int TargetMsCurrent,
+    int MinTargetMs,
+    int MaxTargetMs);
+
+/// <summary>
 /// 有状态的对齐协调方：把「服务端声明的预算」「本机设备事实」「对时结果」「用户开关
 /// 与当前设备的手动偏移」几路输入捏成一次判定，并把结论下发给播放侧。它是
 /// <see cref="MediaLinkAlignmentPolicy"/>
@@ -34,6 +60,22 @@ internal sealed class MediaLinkAlignmentCoordinator
     /// </summary>
     private (MediaLinkAlignmentState State, bool BudgetExceedsCap)? _lastLogged;
 
+    /// <summary>
+    /// 上次是否已宣布饱和。饱和出口与四态归因同形，只记转移：进入一条、恢复一条、
+    /// 中间静默。开关关着时清掉，关了再开要重新宣布当时的状态。
+    /// </summary>
+    private bool _lastSaturated;
+
+    private MediaLinkAlignmentSnapshot? _lastDecision;
+
+    /// <summary>
+    /// 饱和的单端误差预算，微秒。目标深度贴住区间端点说明外环行程已用尽，此时误差
+    /// 仍超这个数才算饱和——贴边但误差已收进预算只是恰好收敛到边界，不是故障。
+    /// 5ms 即单端稳态误差预算：两端差 10ms 目标的一半，真机门控与 native 外环
+    /// 注释用的同一个分配额。
+    /// </summary>
+    private const long SaturationErrorBudgetUs = 5_000;
+
     internal MediaLinkAlignmentCoordinator(
         AudioPlaybackService playback,
         Func<MediaLinkServerDeclaration> declaration,
@@ -48,6 +90,22 @@ internal sealed class MediaLinkAlignmentCoordinator
         _alignmentEnabled = alignmentEnabled ?? throw new ArgumentNullException(nameof(alignmentEnabled));
         _manualOffsetMs = manualOffsetMs ?? throw new ArgumentNullException(nameof(manualOffsetMs));
         _logger = logger;
+    }
+
+    /// <summary>
+    /// 最近一次判定的快照。锁内整体复制出去，读方与 Recompute 抢的是同一把
+    /// <see cref="_gate"/>，拿到的必是某一次重算的成组结论。还没重算过时为 null，
+    /// 显示方以「暂无」呈现。
+    /// </summary>
+    internal MediaLinkAlignmentSnapshot? LastDecision
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _lastDecision;
+            }
+        }
     }
 
     /// <summary>
@@ -108,7 +166,19 @@ internal sealed class MediaLinkAlignmentCoordinator
             aligned ? offsetTicks : 0,
             manualOffsetTicks);
 
+        var bounds = _playback.TargetDepthBounds();
+        _lastDecision = new MediaLinkAlignmentSnapshot(
+            enabled,
+            facts.HasStarted,
+            decision.State,
+            decision.Reason,
+            facts.PlayTimeErrorUs,
+            facts.TargetMsCurrent,
+            bounds.MinTargetMs,
+            bounds.MaxTargetMs);
+
         LogTransition(enabled, facts.HasStarted, decision);
+        LogSaturation(enabled, decision, facts, bounds);
     }
 
     /// <summary>
@@ -140,6 +210,55 @@ internal sealed class MediaLinkAlignmentCoordinator
         {
             // 退回记警告，与「退回非对齐模式并记警告」的协议行为约定一致。
             _logger?.LogWarning("[音频:对齐] {Reason}", decision.Reason);
+        }
+    }
+
+    /// <summary>
+    /// 饱和出口。外环把目标深度拧到区间端点、误差却仍超单端预算，说明偏差超出它的
+    /// 行程——那是硬重置的前兆。规则原文挂在 native 侧 is_saturated 的文档上
+    /// （native 无日志设施），这里是它唯一的生产落点。三个条件缺一不可：未对齐时
+    /// stats 是残值；贴边而误差在预算内是恰好收敛到边界；不贴边说明外环还有行程。
+    /// 与四态归因同形，只记转移；误差在预算线附近往返时不设迟滞，抖动最多让
+    /// 进入与恢复成对出现，可接受。
+    /// </summary>
+    private void LogSaturation(
+        bool enabled,
+        MediaLinkAlignmentDecision decision,
+        AudioAlignmentFacts facts,
+        (int MinTargetMs, int MaxTargetMs) bounds)
+    {
+        if (!enabled)
+        {
+            // 开关关着时不判也不说话，与四态归因同一条纪律；水位一并清掉，
+            // 关了再开要重新宣布当时的状态。
+            _lastSaturated = false;
+            return;
+        }
+
+        var atBound = facts.TargetMsCurrent <= bounds.MinTargetMs
+            || facts.TargetMsCurrent >= bounds.MaxTargetMs;
+        var saturated = decision.IsAligned
+            && atBound
+            && Math.Abs(facts.PlayTimeErrorUs) > SaturationErrorBudgetUs;
+        if (saturated == _lastSaturated)
+        {
+            return;
+        }
+
+        _lastSaturated = saturated;
+        if (saturated)
+        {
+            _logger?.LogWarning(
+                "[音频:对齐] 外环饱和：目标深度 {TargetMs}ms 已贴住区间 {MinMs}-{MaxMs}ms 端点，"
+                + "误差仍有 {ErrorUs}us，偏差超出外环能力，可能预示硬重置。",
+                facts.TargetMsCurrent,
+                bounds.MinTargetMs,
+                bounds.MaxTargetMs,
+                facts.PlayTimeErrorUs);
+        }
+        else
+        {
+            _logger?.LogInformation("[音频:对齐] 外环饱和解除。");
         }
     }
 }
