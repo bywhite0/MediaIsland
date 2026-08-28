@@ -23,6 +23,7 @@ namespace MediaIsland.Tests.RealDevice;
 /// 而两者的排查方向相反。
 /// </summary>
 [Collection(nameof(RealDeviceCollection))]
+[Trait("RealDevice", "Fast")]
 public class PlaybackLatencyChecks(ITestOutputHelper output)
 {
     private const int TargetBufferMs = 200;

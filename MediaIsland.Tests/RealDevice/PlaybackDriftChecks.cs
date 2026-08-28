@@ -22,6 +22,7 @@ namespace MediaIsland.Tests.RealDevice;
 /// 那一项归入 AGENTS.md 的换端点重跑。测试会把这一点打印出来，避免读者误判。
 /// </summary>
 [Collection(nameof(RealDeviceCollection))]
+[Trait("RealDevice", "Slow")]
 public class PlaybackDriftChecks(ITestOutputHelper output)
 {
     private const int TargetBufferMs = 200;

@@ -30,6 +30,7 @@ namespace MediaIsland.Tests.RealDevice;
 /// 下限另有断言钉住。
 /// </summary>
 [Collection(nameof(RealDeviceCollection))]
+[Trait("RealDevice", "Slow")]
 public class PlaybackAlignmentChecks(ITestOutputHelper output)
 {
     private const double ToneHz = 440;

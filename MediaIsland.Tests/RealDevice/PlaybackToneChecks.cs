@@ -20,6 +20,7 @@ namespace MediaIsland.Tests.RealDevice;
 /// 而它们看的本就是同一段采回信号的不同侧面。每个断言标注它对应哪条。
 /// </summary>
 [Collection(nameof(RealDeviceCollection))]
+[Trait("RealDevice", "Fast")]
 public class PlaybackToneChecks(ITestOutputHelper output)
 {
     private const double ToneHz = 1_000;

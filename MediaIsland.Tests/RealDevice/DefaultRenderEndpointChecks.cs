@@ -11,6 +11,7 @@ namespace MediaIsland.Tests.RealDevice;
 /// 相邻的方法上，返回值还可能照样是 S_OK——那种错从单元测试层面完全不可见。
 /// </summary>
 [Collection(nameof(RealDeviceCollection))]
+[Trait("RealDevice", "Fast")]
 public class DefaultRenderEndpointChecks
 {
     [RealAudioFact]

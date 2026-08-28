@@ -22,6 +22,7 @@ namespace MediaIsland.Tests.RealDevice;
 /// 那是运行时行为，不是本仓逻辑。
 /// </summary>
 [Collection(nameof(RealDeviceCollection))]
+[Trait("RealDevice", "Fast")]
 public class PlaybackLifecycleChecks(ITestOutputHelper output)
 {
     [RealAudioFact]
