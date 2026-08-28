@@ -213,6 +213,8 @@ internal sealed class AudioClockProbe
     }
 
     /// <summary>
+    /// 生产路径未用（客户端自写循环以逐轮发事件），保留为探测时序的可测面。
+    ///
     /// 按 <see cref="NextInterval"/> 持续探测，直到取消或确认对端不支持。
     ///
     /// 等待由外部传入而非直接 Task.Delay：判据要覆盖「快速阶段结束后降速」这类

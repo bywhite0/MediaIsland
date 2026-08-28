@@ -18,9 +18,11 @@ internal static class AudioAlignmentThresholds
     public const int PeakAmplitudeLowerBound = 1000;
 
     /// <summary>
-    /// 含非零样本的帧占收到总帧数之比的下界。静音端点上该占比恒为 0；
-    /// 正常放音的真机实测接近 1。取 0.5：对正常放音留一倍裕度，容忍半个采样窗
-    /// 的换曲间隙或淡入；静音端点则无论窗口多长都拿不到任何正值。
+    /// 含非零样本的帧占收到总帧数之比的下界。立足两条前提：收集窗是 3 秒量级，
+    /// 供声按 AGENTS.md 的约定是循环正弦——恒稳音下不存在成段的天然静默。
+    /// 静音端点上该占比恒为 0；正常放音的真机实测接近 1。取 0.5：对正常放音留
+    /// 一倍裕度，容忍半个采样窗的换曲间隙或淡入；静音端点则无论窗口多长都拿不到
+    /// 任何正值。
     /// </summary>
     public const double NonZeroFrameRatioLowerBound = 0.5;
 }

@@ -173,7 +173,7 @@ pub type PlayedFrameCallback = extern "C" fn(*const PlayedFrame, *mut c_void);
 /// [`RenderStats::play_time_error_us`] 是唯一的有符号字段。不用「加偏置存成无符号」
 /// 那种编码：偏置是一个必须两侧同时记得的约定，而 i64 与 long 在两侧都是原生类型。
 ///
-/// 十二个字段不保证是同一瞬间的快照（见 render::RenderStatsCell）。
+/// 十四个字段不保证是同一瞬间的快照（见 render::RenderStatsCell）。
 ///
 /// 改动即 ABI 变更，须同步提升 [`ABI_VERSION`]。
 #[repr(C)]
