@@ -436,13 +436,14 @@ class JitterBuffer:
             if not self.gate_open and not self._gate(play_ticks):
                 return bytes(need)
 
-            if self.aligned and play_ticks is not None and self.target_of \
+            if self.engaged and play_ticks is not None and self.target_of \
                     and self.head_captured_ms is not None:
                 tgt = self.target_of(self.head_captured_ms)
                 if tgt is not None:
                     # 正值即声音落后于目标。开闸后误差随两端晶振漂移与欠载填零
                     # 单调走远，这里刻意不修：持续微调是产品实现（重采样内环）
                     # 的事，示例只演示启动排程能对到多准、之后会散多快。
+                    # 只在 engaged 时记：深度开闸的流没按目标排，不存在排程误差。
                     self.err_ms = (play_ticks - tgt) / 1e4
 
             take = min(need, len(self.buf))
@@ -722,8 +723,10 @@ class MediaLinkClient:
         故呈现要后移同样多才对得上听觉。取目标深度而非实测占用：后者在目标值附近
         持续波动，跟着它走会让位置来回抖。
 
-        对齐生效（开过闸）时改用声明的 D：「采样时刻 + D 出声」是排程不变量，
-        缓冲深度与设备延迟都已折算在目标时刻里，不再另加。
+        对齐生效（engaged：本流已按目标时刻排过锚点）时改用声明的 D：「采样时刻
+        + D 出声」是排程不变量，缓冲深度与设备延迟都已折算在目标时刻里，不再另加。
+        判据不用 gate_open——深度先开闸、hello 声明后到的窗口里 gate_open 为真而
+        流并没按目标排；engaged 与状态行同源，两个可观测面不分叉。
 
         判据是「帧还在来」而不是「请求过音频」：服务端原生音频库缺失时
         audio.play_start 照样回 ok 却永远不推帧，那时没有本机延迟可补。
@@ -731,7 +734,7 @@ class MediaLinkClient:
         if not self.out or time.monotonic() - self.audio_at > 0.5:
             return 0
         j = self.out.jitter
-        if j.aligned and j.gate_open and self.d_ms is not None:
+        if j.engaged and self.d_ms is not None:
             return self.d_ms
         return TARGET_BUFFER_MS
 
@@ -807,15 +810,21 @@ class MediaLinkClient:
         if not self.out:
             return ""
         j = self.out.jitter
-        if j.aligned and j.err_ms is not None and j.first_err_ms is not None:
-            return (f" · 对齐 D={self.d_ms}ms 误差 首块 {j.first_err_ms:+.1f}ms /"
-                    f" 当前 {j.err_ms:+.1f}ms（漂移刻意不修）")
+        if j.engaged and self.d_ms is not None:
+            if j.err_ms is not None and j.first_err_ms is not None:
+                return (f" · 对齐 D={self.d_ms}ms 误差 首块 {j.first_err_ms:+.1f}ms /"
+                        f" 当前 {j.err_ms:+.1f}ms（漂移刻意不修）")
+            return f" · 对齐 D={self.d_ms}ms 生效（误差待测）"
         if j.aligned:
             if j.fell_back:
                 # 退回是文案态而非放弃：恢复条件（对时恢复 + 下一次缓冲重置）
                 # 已写在 fell_back 里，与实际状态机一致。
                 return f" · 非对齐（{j.fell_back}）"
             off = "有" if self.clock.online_offset() is not None else "无"
+            if j.gate_open:
+                # 流已按深度开闸（hello 声明落在开闸之后）：对齐要等下一次缓冲
+                # 重置重排才生效——不是「等待排程」，如实说条件。
+                return f" · 对齐待重排（offset {off}，下一次缓冲重置生效）"
             return f" · 对齐等待排程（offset {off}）"
         if j.align_reason or self.align_reason:
             return f" · 非对齐（{j.align_reason or self.align_reason}）"
@@ -1072,8 +1081,15 @@ def self_test():
     ok(c.output_latency_ms() == TARGET_BUFFER_MS,
        "对齐待开闸：还没按目标排程，仍用目标深度")
     jb0.gate_open = True
+    ok(c.output_latency_ms() == TARGET_BUFFER_MS,
+       "深度先开闸、hello 声明后到的窗口：流没按目标排过（engaged 未立），"
+       "补偿仍是目标深度——与状态行同源，两个可观测面不分叉")
+    ok("对齐 D=" not in c._align_status() and "重排" in c._align_status(),
+       "同一窗口状态行不声称对齐生效，如实说生效条件（下一次缓冲重置重排）")
+    jb0.engaged = True
     ok(c.output_latency_ms() == 300,
-       "对齐生效（开过闸）：整条链路的延迟即声明的 D，深度与设备延迟已折算在内")
+       "对齐生效（按目标时刻排过锚点）：整条链路的延迟即声明的 D，"
+       "深度与设备延迟已折算在内")
     c.out = None
     ok(c.output_latency_ms() == 0, "没在出声：无本机延迟可补")
 

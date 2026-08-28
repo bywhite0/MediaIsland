@@ -1244,7 +1244,9 @@ function streaming() {
 // 听觉后面。
 function outputLatencyMs() {
   if (!streaming()) return 0;
-  if (align.engaged) return align.dMs;
+  // engaged 之外还要 dMs 仍然有效：hello 重发撤销 dMs 落在已锚定的流上时，
+  // 最新声明已不支持对齐，补偿退回深度语义——与状态行同指非对齐，不分叉。
+  if (align.engaged && align.dMs != null) return align.dMs;
   const device = audio.ctx?.outputLatency || audio.ctx?.baseLatency || 0;
   return TARGET_BUFFER_MS + device * 1000;
 }
@@ -1309,9 +1311,10 @@ function renderAudioLine() {
 
 // 对齐段的状态文案：时刻误差与 offset 可用性。误差随时间累积是刻意的——
 // 本示例只排首块、不做持续微调，这个数怎么走就是产品实现为什么必须有内环
-// （重采样调速）的实测演示。四类文案各自可归因，混成一句会把排查方向指错。
+// （重采样调速）的实测演示。各态文案与实际条件一致、各自可归因，混成一句
+// 会把排查方向指错。engaged 的消费与 outputLatencyMs 同一判定，两面不分叉。
 function alignLine() {
-  if (align.engaged) {
+  if (align.engaged && align.dMs != null) {
     // 首选路径（getOutputTimestamp）天然在出声轴上，与设备延迟无关；只有
     // 兜底路径靠 deviceLatencySec() 补偿，三级回落到 0 时才少补一段未知的尾巴。
     const noDev = audio.pairFallback && deviceLatencySec() === 0
@@ -1321,9 +1324,12 @@ function alignLine() {
       + `（漂移刻意不修${noDev}）`;
   }
   if (align.dMs != null) {
-    return clockOffset() == null && !align.fellBack
-      ? '对齐等待时钟（offset 不可用）…'
-      : `非对齐：${align.fellBack || 'offset 不可用（等待自愈，或查网络）'}`;
+    if (align.fellBack) return `非对齐：${align.fellBack}`;
+    // 流已按深度锚定顺排（hello 声明后到 / dMs 改动落在流中）：对齐要等
+    // 下一次锚点重排（欠载/重开声音）才生效——如实说条件；真正的「等待
+    // 时钟」窗口不排帧，由 streaming() 为假的那条分支呈现。
+    const off = onlineOffset() != null ? '有' : '无';
+    return `对齐待重排（offset ${off}，下一次锚点重排生效）`;
   }
   return `不支持对齐：${align.reason}`;
 }
