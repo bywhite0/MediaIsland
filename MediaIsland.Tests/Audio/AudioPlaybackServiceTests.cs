@@ -91,7 +91,11 @@ public class AudioPlaybackServiceTests
             Calls.Add("SetAlignment");
         }
 
-        public void Stop() => StopCount++;
+        public void Stop()
+        {
+            StopCount++;
+            Calls.Add("Stop");
+        }
 
         public void Push(byte[] pcm, long senderTicks) => Pushed.Add((pcm, senderTicks));
 
@@ -173,6 +177,86 @@ public class AudioPlaybackServiceTests
         // 开关只记下等下一次起播：本会话起播时是 false，中途改真不追认——
         // SessionAlignmentEnabled 报的是会话起播值，不是请求值。
         Assert.False(service.SessionAlignmentEnabled);
+    }
+
+    [Fact]
+    public void DeviceChangeRestart_StopsThenStartsWithTheStagedRequest()
+    {
+        // 设备变化后设备事实全体作废，响应是停播重启。防真空：先钉「确实各发生了一次
+        // stop 与一次新 start」，再断顺序与参数——只断顺序的话空实现也能通过。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 3_000_000, offsetTicks: 7, manualOffsetTicks: -5);
+        service.Configure(enabled: true, targetBufferMs: 250);
+        var callsBefore = renderer.Calls.Count;
+
+        service.RestartForDeviceChange();
+
+        Assert.Equal(1, renderer.StopCount);
+        Assert.Equal(2, renderer.StartCount);
+        // 重启的调用序：停旧会话 → 起播前补发运行时三项 → 新 Start。
+        Assert.Equal(
+            ["Stop", "SetAlignment", "Start"],
+            renderer.Calls.Skip(callsBefore));
+        // target 与 enabled 取暂存请求值，不是默认值：换设备不该顺手改掉用户的配置。
+        Assert.Equal(250, renderer.LastTargetMs);
+        Assert.True(renderer.LastStartAlignmentEnabled);
+        Assert.True(service.SessionAlignmentEnabled);
+        Assert.True(service.IsPlaying);
+    }
+
+    [Fact]
+    public void DeviceChangeRestart_WithoutAnActiveRequest_DoesNothing()
+    {
+        // 没人请求播放时设备变化与本服务无关：不许有任何渲染器调用，
+        // 否则关着播放也会被设备切换惊起。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+
+        service.RestartForDeviceChange();
+
+        Assert.Empty(renderer.Calls);
+        Assert.Equal(0, renderer.StopCount);
+        Assert.False(service.IsPlaying);
+    }
+
+    [Fact]
+    public void DeviceChangeRestart_AfterAnEarlierFailure_RetriesTheStart()
+    {
+        // 错误处理约定：重启失败后播放停在关闭态，watcher 继续跑，设备再变仍会重试。
+        // 重试的依据是请求值还开着——比「在播」的话一次失败就永久聋。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer { ThrowOnStart = true };
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.False(service.IsPlaying);
+
+        renderer.ThrowOnStart = false;
+        service.RestartForDeviceChange();
+
+        Assert.True(service.IsPlaying);
+        Assert.Null(service.LastError);
+    }
+
+    [Fact]
+    public void DeviceChangeRestart_OnFailure_TakesTheExistingLastErrorPath()
+    {
+        // 重启失败与起播失败必须是同一个错误形态：停在关闭态、原因可读、直连回落。
+        var inner = new RecordingSubmitter();
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(inner, renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        renderer.ThrowOnStart = true;
+
+        service.RestartForDeviceChange();
+
+        Assert.False(service.IsPlaying);
+        Assert.Contains("设备被独占", service.LastError);
+        service.Submit(Frame(1, -1));
+        Assert.Single(inner.Frames);
     }
 
     [Fact]

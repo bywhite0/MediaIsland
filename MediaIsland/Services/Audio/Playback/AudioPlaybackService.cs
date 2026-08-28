@@ -186,29 +186,63 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
                 return;
             }
 
-            if (!_renderer.IsAvailable)
+            StartUnlocked();
+        }
+    }
+
+    /// <summary>
+    /// 默认渲染端点变化后的重启通道。设备事实全体作废（偏移的键、延迟、缓冲都是
+    /// per-device 的），比深度变更更甚，走同一条「停播重启」先例；重启按暂存请求值
+    /// 起播，偏移与事实由重启后的协调方重算按新设备重取。
+    ///
+    /// 条件比的是请求值而非 <see cref="IsPlaying"/>：上一次重启失败后播放停在关闭态
+    /// 而请求还开着，设备再变必须还能重试（错误处理约定如此）——比在播的话一次失败
+    /// 就永久聋。未请求播放时零动作，watcher 的事件与本方法都不越权。
+    /// </summary>
+    public void RestartForDeviceChange()
+    {
+        lock (_gate)
+        {
+            if (_disposed || !_requestedEnabled)
             {
-                LastError = _renderer.FailureReason ?? "音频播放不可用";
-                _logger?.LogInformation("[音频:播放] 不可用，回落到不播放：{Reason}", LastError);
                 return;
             }
 
-            try
-            {
-                // 运行时三项在 Start 之前下发，外环起步的第一轮就读到起播前已知的
-                // offset；开关本身是 Start 的参数——48kHz 端点的内环在起播那一刻
-                // 按它定型，时序错误在类型上写不出来。
-                ApplyAlignmentUnlocked();
-                _renderer.Start(targetBufferMs, _alignmentEnabled);
-                _sessionAlignmentEnabled = _alignmentEnabled;
-                _playing = true;
-                LastError = null;
-            }
-            catch (Exception ex)
-            {
-                LastError = ex.Message;
-                _logger?.LogWarning(ex, "[音频:播放] 启动失败，回落到不播放。");
-            }
+            StopUnlocked();
+            StartUnlocked();
+        }
+    }
+
+    /// <summary>
+    /// 起播块，Configure、设备变化重启与开关中途切换共用。按暂存请求值
+    /// （<see cref="_requestedTargetMs"/>）与当前对齐设置起播，失败走
+    /// <see cref="LastError"/> 回落——三条入口的错误形态必须一致，否则重启失败
+    /// 的归因就与起播失败长得不一样。
+    /// </summary>
+    private void StartUnlocked()
+    {
+        if (!_renderer.IsAvailable)
+        {
+            LastError = _renderer.FailureReason ?? "音频播放不可用";
+            _logger?.LogInformation("[音频:播放] 不可用，回落到不播放：{Reason}", LastError);
+            return;
+        }
+
+        try
+        {
+            // 运行时三项在 Start 之前下发，外环起步的第一轮就读到起播前已知的
+            // offset；开关本身是 Start 的参数——48kHz 端点的内环在起播那一刻
+            // 按它定型，时序错误在类型上写不出来。
+            ApplyAlignmentUnlocked();
+            _renderer.Start(_requestedTargetMs, _alignmentEnabled);
+            _sessionAlignmentEnabled = _alignmentEnabled;
+            _playing = true;
+            LastError = null;
+        }
+        catch (Exception ex)
+        {
+            LastError = ex.Message;
+            _logger?.LogWarning(ex, "[音频:播放] 启动失败，回落到不播放。");
         }
     }
 
