@@ -324,9 +324,10 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         // 闸住性质的端到端回栓：运行时三项播放中随时可下发（offset 传非零——对时
         // 结果到了就会走这条路），但会话起播时对齐是关的，native 的可用性判定被
         // 启用位闸住：offset 不判可用、锚点不产生、误差不算、外环不动。这同时是
-        // 「同值零重启」的 false 侧——enabled 同为关绝不触发重启。重启在这里的
-        // 可观测量不是帧水位（关闭会话重启前后三元组同为零，分不开），而是会话
-        // 起播值：重启会经 StartUnlocked 记录会话值，它保持 false 即无重启发生。
+        // 「同值零重启」的 false 侧——enabled 同为关绝不触发重启。判别取会话
+        // 起播值：它保持 false 即无携带 true 的重启。对「重启后记回同为 false」
+        // 的重启它是盲的（StartUnlocked 记回的还是 false），而帧水位在关闭会话
+        // 里同样分不开两态（三元组前后同为零），此处不再另设判别。
         playback.ConfigureAlignment(
             enabled: false, dTicks: 500 * TicksPerMs, offsetTicks: 1, manualOffsetTicks: 0);
         await Task.Delay(1_500);
