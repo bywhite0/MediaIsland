@@ -155,6 +155,12 @@ class ClockSync:
             # 会算成两次探测的间隔——一个大得离谱又看起来合法的数。
             self.miss()
             return False
+        if not isinstance(env_ts_ms, (int, float)) or env_ts_ms <= 0:
+            # 信封 ts 是墙钟桥的原料（协议规定必在）。缺了或非法时整个样本按
+            # 「这次没成」计——四时刻即使齐全也不能收：桥必须配被接受样本
+            # 同一条应答，收样本不收桥会让两者不同源；拿 0 凑数则造出错桥。
+            self.miss()
+            return False
         if not self.estimator.add(t1, t2, t3, t4):
             self.miss()
             return False
@@ -663,11 +669,17 @@ class MediaLinkClient:
         故呈现要后移同样多才对得上听觉。取目标深度而非实测占用：后者在目标值附近
         持续波动，跟着它走会让位置来回抖。
 
+        对齐生效（开过闸）时改用声明的 D：「采样时刻 + D 出声」是排程不变量，
+        缓冲深度与设备延迟都已折算在目标时刻里，不再另加。
+
         判据是「帧还在来」而不是「请求过音频」：服务端原生音频库缺失时
         audio.play_start 照样回 ok 却永远不推帧，那时没有本机延迟可补。
         """
         if not self.out or time.monotonic() - self.audio_at > 0.5:
             return 0
+        j = self.out.jitter
+        if j.aligned and j.gate_open and self.d_ms is not None:
+            return self.d_ms
         return TARGET_BUFFER_MS
 
     def position_now(self):
@@ -773,7 +785,7 @@ class MediaLinkClient:
                 if msg.get("type") == "audio.clock":
                     if self._clock_wait and not self._clock_wait.done():
                         self._clock_wait.set_result(
-                            (msg.get("payload") or {}, msg.get("ts", 0), t4))
+                            (msg.get("payload") or {}, msg.get("ts"), t4))
                     continue
                 # seq 去重（服务端重启时 epoch 变化需重置水位）
                 if msg.get("name") == "server.hello":
@@ -869,11 +881,11 @@ def self_test():
 
     # ---- 窗口只保留最近 8 个 ----
     co = ClockOffset()
-    co.add(0, 25, 25, 50)               # rtt 50——全场最小，但即将被挤出窗
+    co.add(0, 802, 802, 50)             # rtt 50 全场最小，offset 777 可区分——即将被挤出窗
     for i in range(AUDIO_CLOCK_WINDOW):
         co.add(0, 550 + i, 550 + i, 1100 + 2 * i)   # rtt 1100+2i，offset 0
     ok(len(co.samples) == AUDIO_CLOCK_WINDOW, "窗口深度为 8")
-    ok(co.offset() == 0, "被挤出窗口的最小 rtt 样本不得再参与选择")
+    ok(co.offset() == 0, "被挤出窗口的最小 rtt 样本不得再参与选择（淘汰坏掉时它会给出 777）")
 
     # ---- tick 换算 ----
     ok(abs(now_ticks() - time.monotonic_ns() // 100) < 10_000,
@@ -895,33 +907,51 @@ def self_test():
     ok(target_play_ticks(900, 300, sync.online_offset(), 10) == 5_102_000,
        "手动偏移逐毫秒后移目标")
 
-    # ---- 回显不符与三时刻对端 ----
+    # ---- 回显不符、缺 ts 与三时刻对端 ----
     ok(not sync.on_reply(2_000_000, {"t1": 1234, "t2": 5, "t3": 6}, 800, 2_003_000),
        "回显 t1 不符的应答应被弃（迟到或重复）")
     ok(sync.misses == 1 and len(sync.estimator.samples) == 1,
        "回显不符计一次未成，样本不进窗")
+    ok(not sync.on_reply(3_000_000, {"t1": 3_000_000, "t2": 3_056_500, "t3": 3_057_000},
+                         None, 3_003_500),
+       "信封缺 ts 的应答按没成计（不得用 0 造桥）")
+    ok(sync.misses == 2 and len(sync.estimator.samples) == 1
+       and sync.bridge_w == 6_943_000,
+       "缺 ts 时四时刻再合法也不进窗、不动桥——桥必须配被接受样本同条应答")
     peer3 = ClockSync()
     peer3.on_reply(1, {"t1": 1, "t3": 2}, 0, 3)
     ok(peer3.unsupported and not peer3.estimator.samples,
        "缺 t2 即对端只实现三时刻：判不支持并清窗，不退化成三时刻估计")
 
-    # ---- 失联清窗（连续 3 次未成），节奏回到快速阶段 ----
-    ok(sync.next_interval() == CLOCK_FAST_S, "窗未满时保持快速节奏")
-    sync.miss()
-    ok(sync.estimator.samples, "两次未成还不清窗（单次丢包是无线链路的常态）")
-    sync.miss()
-    ok(not sync.estimator.samples and sync.accepted == 0,
+    # ---- 失联清窗（连续 3 次未成），稳态节奏回到快速阶段 ----
+    steady = ClockSync()
+    for i in range(AUDIO_CLOCK_WINDOW):
+        t1 = 1_000_000 + i * 10_000
+        steady.on_reply(t1, {"t1": t1, "t2": t1 + 56_500, "t3": t1 + 57_000},
+                        800, t1 + 3_500)
+    ok(steady.accepted == AUDIO_CLOCK_WINDOW
+       and steady.next_interval() == CLOCK_STEADY_S, "喂满 8 样本后进稳态节奏")
+    steady.miss()
+    steady.miss()
+    ok(steady.estimator.samples, "两次未成还不清窗（单次丢包是无线链路的常态）")
+    steady.miss()
+    ok(not steady.estimator.samples and steady.accepted == 0,
        "连续 3 次未成即失联清窗")
-    ok(sync.online_offset() is None, "清窗后 offset 不可用（桥独存也合成不了）")
-    ok(sync.next_interval() == CLOCK_FAST_S, "清窗后回快速阶段重新填窗")
-    ok(sync.bridge_w is not None, "失联只清窗不清桥（下个被接受样本会覆写它）")
+    ok(steady.online_offset() is None, "清窗后 offset 不可用（桥独存也合成不了）")
+    ok(steady.next_interval() == CLOCK_FAST_S, "清窗后从稳态回快速阶段重新填窗")
+    ok(steady.bridge_w is not None, "失联只清窗不清桥（下个被接受样本会覆写它）")
 
-    # ---- 断连清空：窗、桥、「不支持」判定一起清 ----
-    peer3.bridge_w = 42
-    peer3.misses = 2
-    peer3.reset()
-    ok(peer3.bridge_w is None and not peer3.unsupported and peer3.misses == 0
-       and peer3.accepted == 0 and not peer3.estimator.samples,
+    # ---- 断连清空：窗、桥、「不支持」判定一起清（清之前先备齐全部状态）----
+    full = ClockSync()
+    full.on_reply(1_000_000, {"t1": 1_000_000, "t2": 1_056_500, "t3": 1_057_000},
+                  800, 1_003_500)
+    full.unsupported = True
+    full.misses = 2
+    ok(full.estimator.samples and full.bridge_w is not None and full.accepted == 1,
+       "断连测例的前置：样本、桥、accepted 都非空")
+    full.reset()
+    ok(full.bridge_w is None and not full.unsupported and full.misses == 0
+       and full.accepted == 0 and not full.estimator.samples,
        "断连 reset 清空样本窗、墙钟桥与「对端不支持」判定")
 
     # ---- D 与深度换算 ----
@@ -952,6 +982,21 @@ def self_test():
                       "audioClock": {"dMs": 300}})
     ok(c.d_ms == 300 and c.align_reason == "", "合法声明放行")
     ok(c.audio_supported, "对齐归因不影响出声归因——对时只服务于对齐")
+
+    # ---- 呈现补偿：对齐生效时用 D，其余维持目标深度 ----
+    jb0 = JitterBuffer(48000, 2)
+    c.out = type("OutStub", (), {})()   # 只需要 jitter 属性，不碰声卡
+    c.out.jitter = jb0
+    c.audio_at = time.monotonic()
+    ok(c.output_latency_ms() == TARGET_BUFFER_MS, "非对齐：补偿为抖动缓冲目标深度")
+    jb0.aligned = True
+    ok(c.output_latency_ms() == TARGET_BUFFER_MS,
+       "对齐待开闸：还没按目标排程，仍用目标深度")
+    jb0.gate_open = True
+    ok(c.output_latency_ms() == 300,
+       "对齐生效（开过闸）：整条链路的延迟即声明的 D，深度与设备延迟已折算在内")
+    c.out = None
+    ok(c.output_latency_ms() == 0, "没在出声：无本机延迟可补")
 
     # ---- 对齐闸门（纯内存驱动 JitterBuffer；断言先验有真实样本再验时刻）----
     ticks_of = lambda ms: int(ms * 10_000)   # 恒等换算：假装线上offset 为 0
