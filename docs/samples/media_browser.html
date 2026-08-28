@@ -294,6 +294,7 @@ const audio = {
   frameMs: 0,           // 最近一帧的实际时长，按 PCM 字节数算出
   serverDelayMs: 0,     // 服务端内部从采样到发送的延迟
   alignWaitAt: 0,       // 对齐等待时钟就绪的起点（performance.now 毫秒）
+  pairFallback: false,  // 时钟配对走了兜底路径（无 getOutputTimestamp）
   bandPeak: 0,          // 自上次呈现以来的低频带 RMS 峰值
   bandMax: 0,           // 缓慢衰减的峰值，自适应增益的分母
   bandLevel: 1,         // 平滑后喂给 AMLL 的低频音量
@@ -658,6 +659,13 @@ function onClockReply(msg, t4) {
     probeLater();
     return;
   }
+  if (typeof msg.ts !== 'number' || !(msg.ts > 0)) {
+    // 信封 ts 是墙钟桥的原料（协议规定必在）。缺了或非法时整样本按「没成」
+    // 计——收样本不收桥会让两者不同源，而 NaN 桥会一路传进 src.start 抛异常。
+    clockMiss();
+    probeLater();
+    return;
+  }
   if (!clockAdd(p.t1, p.t2, p.t3, t4)) {
     clockMiss();
     probeLater();
@@ -950,19 +958,26 @@ function onAudioFrame(buf) {
 
 // ---------- 排程与对齐 ----------
 
-// AudioContext 时钟与 performance.now() 的配对。getOutputTimestamp 一次返回
-// 同一时刻的 contextTime 与 performanceTime，正是为此设计的 API；不可用时
-// 回落到分别读两个时钟——那会引入一次读取间隔的误差，故只作兜底。
+// AudioContext 时钟与 performance.now() 的配对，两条路径都返回「DAC 出声轴」：
+// 返回值处排程的音频恰在 perfMs 这个墙上时刻出声。
+// getOutputTimestamp 一次返回同一时刻的 contextTime 与 performanceTime，且
+// contextTime 是「正被输出设备渲染的采样帧位置」——这条映射天然落在出声处，
+// 不需要再补设备延迟。不可用时回落到分别读两个时钟：currentTime 对
+// performance.now() 的配对在渲染轴上，比真实出声早一个设备尾段，故在这里
+// 减去 deviceLatencySec() 补齐——补在别处就会对首选路径重复扣减。
 function contextTimeAt(perfMs) {
   const ts = audio.ctx.getOutputTimestamp?.();
   if (ts && ts.contextTime != null && ts.performanceTime) {
+    audio.pairFallback = false;
     return ts.contextTime + (perfMs - ts.performanceTime) / 1000;
   }
-  return audio.ctx.currentTime + (perfMs - performance.now()) / 1000;
+  audio.pairFallback = true;
+  return audio.ctx.currentTime - deviceLatencySec() + (perfMs - performance.now()) / 1000;
 }
 
-// 设备尾段延迟（秒）。outputLatency → baseLatency → 0 三级回落；回落到 0 时
-// 排程仍可用但精度未知，状态行要标注出来。「何时出声」在浏览器侧是现成的
+// 设备尾段延迟（秒）。outputLatency → baseLatency → 0 三级回落。排程侧只有
+// contextTimeAt 的兜底路径消费它（可行性判定另用它估预算下限）；回落到 0 时
+// 兜底排程仍可用但精度未知，状态行要标注出来（首选路径不受影响）。「何时出声」在浏览器侧是现成的
 // （这两个属性本页早已在用），Python 侧是 PortAudio 回调自带的 time_info；
 // 同一个信息在 .NET/WASAPI 侧要新开一条 FFI 并变更 ABI 才能拿到——成本差
 // 来自平台的可观测性，不是设计。
@@ -972,13 +987,13 @@ function deviceLatencySec() {
 
 // 本帧的目标出声时刻（AudioContext 轴，秒）；时钟未就绪时 null。
 // capturedAt + D + 手动偏移在发送端墙钟轴，经线上offset 搬到 performance 轴，
-// 再过时钟配对搬到 context 轴，最后减设备尾段——对齐落在 DAC 出声处，
-// 不是排程处。1e12 量级毫秒上的浮点舍入在 0.1µs 量级，可忽略。
+// 再过 contextTimeAt 搬到「排在此处恰好出声」的排程时刻——设备尾段的补偿
+// 在 contextTimeAt 内部按路径处理，这里不再叠加。
+// 1e12 量级毫秒上的浮点舍入在 0.1µs 量级，可忽略。
 function targetCtxTime(capturedAtMs) {
   const online = onlineOffset();
   if (online == null || align.dMs == null) return null;
-  return contextTimeAt(capturedAtMs + align.dMs + manualOffsetMs() + online / 1e4)
-       - deviceLatencySec();
+  return contextTimeAt(capturedAtMs + align.dMs + manualOffsetMs() + online / 1e4);
 }
 
 // 对齐当前处于哪一态：ready（可按目标时刻排）/ waiting（预算合法，等时钟
@@ -1285,8 +1300,10 @@ function renderAudioLine() {
 // （重采样调速）的实测演示。四类文案各自可归因，混成一句会把排查方向指错。
 function alignLine() {
   if (align.engaged) {
-    // 设备延迟三级回落到 0 时目标时刻仍能算，但少补了一段未知的尾巴。
-    const noDev = deviceLatencySec() === 0 ? '，设备延迟未知、精度存疑' : '';
+    // 首选路径（getOutputTimestamp）天然在出声轴上，与设备延迟无关；只有
+    // 兜底路径靠 deviceLatencySec() 补偿，三级回落到 0 时才少补一段未知的尾巴。
+    const noDev = audio.pairFallback && deviceLatencySec() === 0
+      ? '，时钟配对走兜底且设备延迟未知、精度存疑' : '';
     return `对齐 D=${align.dMs}ms 偏移 ${fmtMs(manualOffsetMs())}`
       + ` 误差 首块 ${fmtMs(align.firstErrMs)} / 当前 ${fmtMs(align.errMs)}`
       + `（漂移刻意不修${noDev}）`;
