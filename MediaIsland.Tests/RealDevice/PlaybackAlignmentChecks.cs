@@ -321,33 +321,72 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         Assert.Equal(targetMs, closed.TargetMsCurrent);
         Assert.False(closed.ClockOffsetAvailable, "对齐从未开启，offset 不该被判可用");
 
-        // ABI 5 起对齐开关是起播参数，会话内不可变：播放中把开关打开只会存进播放
-        // 服务等下一次起播，本会话的 native 侧不该有任何对齐路径被激活。第 7 期在
-        // 这里构造的「误差三要素齐备而执行器缺席」的 windup 形态，如今在类型上写不
-        // 出来（无执行器则闸门也不开），原判据的立论对象消失，改钉新契约本身——
-        // 且不再限于 48k 端点：任何端点上「播放中开开关不激活本会话」都必须成立。
+        // ABI 5 起对齐开关是起播参数，native 会话内不可变——而托管侧的生效方式是
+        // Task 4 的新契约：播放中拨开关，ConfigureAlignment 比对会话起播值，不一致
+        // 即恰一次停播重启，新会话携带新开关；同值绝不重启（对时结果每秒下发走的
+        // 就是这条路）。第 7 期「误差三要素齐备而执行器缺席」的 windup 形态在类型上
+        // 仍写不出来；本段钉新契约在真机上的可观测面：切换后会话起播值跟随、新会话
+        // 的对齐路径真的活了（offset 判可用、位置锚点产生、误差在算）、深度取暂存
+        // 请求值而非默认值、重启是干净的（无硬重置、声还在出）、同值再下发零重启。
         playback.ConfigureAlignment(
             enabled: true, dTicks: 500 * TicksPerMs, offsetTicks: 1, manualOffsetTicks: 0);
-        await Task.Delay(1_500);
+        await Task.Delay(3_000);
 
         var armed = renderer.ReadStats();
-        // 会话起播值仍是关：开关记下了（请求侧），但本会话不追认。
-        Assert.False(playback.SessionAlignmentEnabled, "会话起播值不该被播放中的开关改写");
-        Assert.False(
-            armed.ClockOffsetAvailable,
-            "本会话起播时对齐是关的，播放中开开关不该把 offset 判成可用");
-        // 位置锚点仍不产生：GetPosition 那一段在关闭会话里不存在。
-        Assert.Equal(0, armed.DevicePositionFrames);
-        Assert.Equal(0, armed.DevicePositionQpc);
+        var playedAfterFlip = played.Snapshot();
+        output.WriteLine($"切换后误差      : {armed.PlayTimeErrorUs} us（D 拨在 500ms 上，链路远短于它）");
+        output.WriteLine($"切换后目标深度  : {armed.TargetMsCurrent} ms（起播请求 {targetMs}ms）");
+        output.WriteLine($"切换后位置锚点  : {armed.DevicePositionFrames} 帧 / QPC {armed.DevicePositionQpc}");
 
-        // D 已拨到 500ms：若开关泄漏进会话、外环误走步，速率上限 0.5ms/s 下
-        // 10 秒足够走出 5ms，整毫米级的移动瞒不过恒等断言。
-        await Task.Delay(10_000);
-        var later = renderer.ReadStats();
-        Assert.Equal(targetMs, later.TargetMsCurrent);
-        // 关闭会话里误差恒写 0 而非留残值：对端失联后设置页不该显示一个像是
-        // 当前的误差。
-        Assert.Equal(0, later.PlayTimeErrorUs);
+        // 会话起播值跟随为开：重启真的发生且携带了新开关。这一条红意味着中途切换
+        // 没有生效——用户拨了开关、设置页显示为开，而本会话仍在关闭路径上出声。
+        Assert.True(
+            playback.SessionAlignmentEnabled,
+            "播放中拨开开关后会话起播值未跟随：中途切换的停播重启没有发生");
+        Assert.True(playback.IsPlaying, $"切换重启后不在播：{playback.LastError}");
+        Assert.True(armed.HasStarted, "切换重启后统计说从未起播");
+        // 干净的重启不是错误路径：硬重置属于欠载恢复，切换不该借道它。
+        Assert.Equal(0, armed.HardResetCount);
+
+        // 振幅先行，纪律同上：先证明重启后声音还在出，再轮到时刻断言。
+        Assert.True(
+            playedAfterFlip.Count > earlyPlayed.Count,
+            "切换重启后已播出帧数没有增长：重启后没再出声");
+        Assert.True(
+            playedAfterFlip.Peak >= AudioAlignmentThresholds.PeakAmplitudeLowerBound,
+            $"切换后已播出峰值 {playedAfterFlip.Peak} 低于下界，重启后疑似静音");
+
+        // 新会话的对齐路径活了。位置锚点只在对齐会话里产生（GetPosition 那一段
+        // 在关闭会话里不存在，上面 closed 段刚断过恒零），故这三条合起来就是
+        // 「新会话真的带着开关起来了」的实测形态。
+        Assert.True(
+            armed.DeviceClockAvailable,
+            "端点无 IAudioClock：位置锚点不产生，本段判据在此端点无从进行");
+        Assert.True(armed.ClockOffsetAvailable, "新会话携带开关起播，offset 该被判可用");
+        Assert.True(armed.DevicePositionFrames > 0, "位置锚点未产生：GetPosition 没被调用");
+        Assert.True(armed.DevicePositionQpc > 0, "位置锚点无 QPC：锚点对不完整");
+        // D 拨在 500ms 上而实际链路远短于它（200ms 深度 + 设备尾段），误差必为
+        // 显著负值——非零钉信号活着，负号钉方向约定（第一条判据实测过正 D 得负误差）。
+        Assert.True(
+            armed.PlayTimeErrorUs < 0,
+            $"切换后误差 {armed.PlayTimeErrorUs}us 不为负：新会话的误差没在算");
+
+        // 深度取暂存请求值：重启不该顺手改掉用户的 200ms。外环速率上限 0.5ms/s，
+        // 三秒窗内至多走 2ms，上界的余量给它 5ms。
+        Assert.InRange(armed.TargetMsCurrent, targetMs, targetMs + 5);
+
+        // 同值再下发绝不再重启——对时结果每秒下发走的就是这条路，重启风暴的
+        // 形态就是它。判别用位置锚点跨探针单调：新会话的 IAudioClock 位置从零
+        // 重数，上一窗已积累约三秒，探针只等一秒，若发生了第二次重启，读数
+        // 到不了上一窗的水位。
+        playback.ConfigureAlignment(
+            enabled: true, dTicks: 480 * TicksPerMs, offsetTicks: 1, manualOffsetTicks: 0);
+        await Task.Delay(1_000);
+        var afterSameValue = renderer.ReadStats();
+        output.WriteLine($"同值下发后锚点  : {afterSameValue.DevicePositionFrames} 帧（切换后水位 {armed.DevicePositionFrames}）");
+        Assert.True(
+            afterSameValue.DevicePositionFrames > armed.DevicePositionFrames,
+            $"同值下发后位置锚点 {afterSameValue.DevicePositionFrames} 未越过切换后水位 {armed.DevicePositionFrames}：会话疑似被再次重启");
 
         await sine.StopAsync(CancellationToken.None);
         playback.Configure(enabled: false, targetBufferMs: targetMs);
