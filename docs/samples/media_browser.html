@@ -1013,7 +1013,8 @@ function alignState() {
   // 由其自检钉住。
   if (budget + Math.min(manualOffsetMs(), 0) < TARGET_BUFFER_MS) {
     // TARGET_BUFFER_MS 在对齐模式下从目标深度降为下界：深度由预算决定。
-    align.fellBack = `预算 dMs=${align.dMs}ms 减设备延迟后不足最小缓冲 ${TARGET_BUFFER_MS}ms——调大发送端 dMs`
+    const minus = manualOffsetMs() < 0 ? ` 减负向手动偏移 ${Math.abs(manualOffsetMs())}ms ` : '';
+    align.fellBack = `预算 dMs=${align.dMs}ms 减设备延迟后${minus}不足最小缓冲 ${TARGET_BUFFER_MS}ms——调大发送端 dMs`
       + (manualOffsetMs() < 0 ? '，或回拨偏移滑块' : '');
     return 'off';
   }
@@ -1330,7 +1331,7 @@ function alignLine() {
     if (align.fellBack) return `非对齐：${align.fellBack}`;
     // 流已按深度锚定顺排（hello 声明后到 / dMs 改动落在流中）：对齐要等
     // 下一次锚点重排（欠载/重开声音）才生效——如实说条件；真正的「等待
-    // 时钟」窗口不排帧，由 streaming() 为假的那条分支呈现。
+    // 时钟」窗口不排帧，不在本分支呈现。
     const off = onlineOffset() != null ? '有' : '无';
     return `对齐待重排（offset ${off}，下一次锚点重排生效）`;
   }
