@@ -220,6 +220,61 @@ public class AudioFrameHubTests
         Assert.Single(sink.Frames);
     }
 
+    // ---- 设备变化的采集跟随 ----
+
+    [Fact]
+    public async Task RestartWhileCapturing_StopsThenStartsOnce_AndSinksSurvive()
+    {
+        var (hub, source) = await CapturingHubAsync();
+        var sink = new RecordingSink();
+        using var _ = hub.AddSink(sink);
+        await source.EmitAsync(Frame(1));
+
+        await hub.RestartCaptureAsync();
+
+        // 防真空：先钉「确实各发生了一次 stop 与一次新 start」，再断顺序。
+        Assert.Equal(1, source.StopCount);
+        Assert.Equal(2, source.StartCount);
+        Assert.Equal(["Start", "Stop", "Start"], source.Calls);
+        Assert.True(hub.IsCapturing);
+
+        // sink 集合在重启中不丢：帧回调注册原样，重启后的帧照常到达。
+        await source.EmitAsync(Frame(2));
+        Assert.Equal([1, 2], sink.Frames.Select(f => f.Pcm[0]));
+    }
+
+    [Fact]
+    public async Task RestartWhileNotCapturing_DoesNotTouchTheSource()
+    {
+        // 没在采集时设备变化与本 hub 无关——不许有任何源调用，
+        // 否则播放会话引发的设备跟随会顺手把没人要的采集拉起来。
+        var source = new FakeAudioFrameSource();
+        var hub = new AudioFrameHub(source);
+
+        await hub.RestartCaptureAsync();
+
+        Assert.Equal(0, source.StartCount);
+        Assert.Equal(0, source.StopCount);
+        Assert.False(hub.IsCapturing);
+    }
+
+    [Fact]
+    public async Task RestartStartFailure_LeavesNotCapturing_AndTheNextDemandHeals()
+    {
+        // 重启失败与启动失败同形态：不向外抛，IsCapturing 停在假，下一次需求重算自愈。
+        var (hub, source) = await CapturingHubAsync();
+        source.ThrowOnStart = true;
+
+        await hub.RestartCaptureAsync();
+
+        Assert.False(hub.IsCapturing);
+        Assert.Equal(1, source.StopCount);
+
+        source.ThrowOnStart = false;
+        await hub.SetCaptureDemandAsync(true, CancellationToken.None);
+        Assert.True(hub.IsCapturing);
+    }
+
     // ---- 夹具 ----
 
     private sealed class FakeAudioFrameSource : IAudioFrameSource
@@ -234,6 +289,9 @@ public class AudioFrameHubTests
 
         public int StopCount { get; private set; }
 
+        /// <summary>按发生顺序记下的启停。重启判据要的是「先停后起」，只记次数分不出顺序。</summary>
+        public List<string> Calls { get; } = [];
+
         public event Action<AudioFrame>? FrameAvailable;
 
         public Task StartAsync(CancellationToken cancellationToken)
@@ -244,12 +302,14 @@ public class AudioFrameHubTests
             }
 
             StartCount++;
+            Calls.Add("Start");
             return Task.CompletedTask;
         }
 
         public Task StopAsync(CancellationToken cancellationToken)
         {
             StopCount++;
+            Calls.Add("Stop");
             return Task.CompletedTask;
         }
 

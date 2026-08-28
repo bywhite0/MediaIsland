@@ -111,6 +111,64 @@ public sealed class AudioFrameHub : IDisposable
     }
 
     /// <summary>
+    /// 默认渲染端点变化后的采集跟随：停止再启动，走与需求启停相同的源路径。
+    /// loopback 绑定的是创建时的默认渲染端点，设备变了旧流抓的还是旧端点的混音，
+    /// 只有一次干净的停启能换绑。
+    ///
+    /// 不复用「SetCaptureDemandAsync(false) 再 (true)」：那是两次独立持闸，中间可能
+    /// 插进一次需求重算，把重启放大成「违背当前需求强行开采集」。本方法单次持闸，
+    /// 只在正采集时动作（未采集时设备变化与本 hub 无关），采集需求状态与 sink 集合
+    /// 都原样保持。启动失败与既有约定一致：不向外抛，<see cref="IsCapturing"/> 停在假，
+    /// 下一次需求重算自愈。
+    /// </summary>
+    public async Task RestartCaptureAsync(CancellationToken cancellationToken = default)
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        await _captureGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!_capturing)
+            {
+                return;
+            }
+
+            Volatile.Write(ref _capturing, false);
+            try
+            {
+                await _source.StopAsync(cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug(ex, "[音频] 采集停止时出错");
+            }
+
+            if (!_source.IsAvailable)
+            {
+                _logger?.LogDebug("[音频] 采集源不可用，跳过重启：{Reason}", _source.FailureReason);
+                return;
+            }
+
+            try
+            {
+                await _source.StartAsync(cancellationToken);
+                Volatile.Write(ref _capturing, true);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "[音频] 采集重启失败");
+            }
+        }
+        finally
+        {
+            _captureGate.Release();
+        }
+    }
+
+    /// <summary>
     /// 分发。在采集线程上同步执行，故不得阻塞——单个 sink 抛异常只记日志，
     /// 绝不打断其余 sink：它们之间没有任何依赖，一个崩掉不该让全部停摆。
     ///
