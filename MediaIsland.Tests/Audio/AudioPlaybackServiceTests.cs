@@ -527,11 +527,18 @@ public class AudioPlaybackServiceTests
         service.Configure(enabled: false, targetBufferMs: 200);
         var direct = Task.Run(() => service.Submit(Frame(1, -1)));
 
+        // 阻塞等待是被测性质：判据就是「第二个提交在窗口内没完成」，同步 Wait 的
+        // 阻塞窗口本身即测量手段，改 async/await 会把被测的互斥换成调度器的让出。
+#pragma warning disable xUnit1031
         Assert.False(direct.Wait(TimeSpan.FromMilliseconds(300)), "第二个提交不得与第一个重叠");
+#pragma warning restore xUnit1031
         Assert.Equal(0, Volatile.Read(ref inner.Completed));
 
         inner.Release();
+        // 同上：两路写者都是同步阻塞提交，收尾等待保持同一线程模型才是在测同一个对象。
+#pragma warning disable xUnit1031
         Assert.True(Task.WhenAll(played, direct).Wait(TimeSpan.FromSeconds(10)));
+#pragma warning restore xUnit1031
         Assert.Equal(2, Volatile.Read(ref inner.Completed));
     }
 
