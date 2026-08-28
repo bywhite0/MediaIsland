@@ -13,8 +13,18 @@ namespace MediaIsland.Services.Audio.Playback;
 /// 才被取走，故它计入本机最小可达延迟的下限。
 /// </param>
 /// <param name="MinTargetMs">抖动缓冲目标深度的下界，取自渲染实现的常量。</param>
+/// <param name="TargetMsCurrent">
+/// 抖动缓冲目标深度的当前值，毫秒。外环在区间内挪它；贴住区间端点说明外环已把
+/// 这个旋钮拧到头，是饱和判定的输入之一。未起播时为零。
+/// </param>
+/// <param name="PlayTimeErrorUs">
+/// 外环误差，微秒，有符号。贴边且误差仍超预算才算饱和——贴边但误差已收进预算
+/// 只是恰好收敛到边界。未起播时为零。
+/// </param>
 public readonly record struct AudioAlignmentFacts(
     bool HasStarted,
     double DeviceLatencyMs,
     double DeviceBufferMs,
-    int MinTargetMs);
+    int MinTargetMs,
+    int TargetMsCurrent,
+    long PlayTimeErrorUs);

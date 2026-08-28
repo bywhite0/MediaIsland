@@ -331,7 +331,9 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
             stats.HasStarted,
             stats.DeviceLatencyUs / 1_000.0,
             bufferMs,
-            _renderer.TargetDepthBounds().MinTargetMs);
+            _renderer.TargetDepthBounds().MinTargetMs,
+            stats.TargetMsCurrent,
+            stats.PlayTimeErrorUs);
     }
 
     public void Submit(AudioFrame frame)

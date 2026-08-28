@@ -714,4 +714,25 @@ public class AudioPlaybackServiceTests
 
         Assert.Equal(TimeSpan.Zero, service.OutputLatency);
     }
+
+    [Fact]
+    public void ReadAlignmentFacts_CarriesTheOuterLoopPairFromStats()
+    {
+        // 诊断面的两笔输入（目标深度当前值、外环误差）必须与其余事实同源自同一次
+        // ReadStats——漏接哪个，饱和判定就拿着零去判「贴边」或「误差在预算内」。
+        // 期望值取不对称字面量且误差为负：两字段串位或符号被吞都在此红。
+        var renderer = new FakeRenderer
+        {
+            Stats = new AudioRenderStats(
+                RingFrames: 0, UnderrunCount: 0, HardResetCount: 0, DeviceFramesRendered: 0,
+                DeviceSampleRate: 48_000, ResampleRatioPpm: 0,
+                TargetMsCurrent: 180, PlayTimeErrorUs: -7_200)
+        };
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+
+        var facts = service.ReadAlignmentFacts();
+
+        Assert.Equal(180, facts.TargetMsCurrent);
+        Assert.Equal(-7_200L, facts.PlayTimeErrorUs);
+    }
 }
