@@ -711,7 +711,7 @@ mod wasapi {
         build_resampler, device_latency_us, frames_to_ms, output_frames_at_device_position,
         playing_position_frames, prefill_silence_frames, ratio_to_ppm, resample_ratio,
         target_frames, AlignmentCell, DeviceFrames, PrefillState, RenderStatsCell, ResamplerState,
-        TargetDepthCell, MIN_TARGET_MS, RING_CAPACITY_FRAMES,
+        ResyncGate, TargetDepthCell, MIN_TARGET_MS, RESYNC_EXCESS_MS, RING_CAPACITY_FRAMES,
     };
     use crate::convert;
     use crate::convert::MixFormat;
@@ -1067,6 +1067,8 @@ mod wasapi {
         // 另读一个时钟会引入两个时基之间的偏差。
         let mut outer = OuterLoop::default();
         let mut last_qpc: Option<u64> = None;
+        // 重同步门与外环同寿命:积压是跨轮累计出来的病灶,门的记忆也要跨轮。
+        let mut gate = ResyncGate::default();
         let device_latency_ticks = i64::try_from(session.device_latency_us * 10).unwrap_or(0);
 
         let mut resampler = build_resampler(
@@ -1182,6 +1184,9 @@ mod wasapi {
             // 没有执行器（48k 端点起播时对齐没开、或建重采样器失败）时同样不走：
             // target_ms 那时对出声时刻毫无作用，走步就是纯积分器一路 windup 到边界，
             // 而 target_ms_current 贴在边界会指向一个不存在的结论。
+            // 本轮误差另拿一份给重同步门:门要的是「对齐活跃且本轮 error 有效」这一
+            // 完整事实,None 即本轮走了下面的停摆臂。
+            let mut aligned_error_ticks: Option<i64> = None;
             match (
                 context.alignment.offset_available() && resampler.is_some(),
                 position_qpc,
@@ -1200,6 +1205,7 @@ mod wasapi {
                     );
                     let error_ticks = play_time_error_ticks(actual, goal);
                     stats.set_play_time_error_us(error_ticks / 10);
+                    aligned_error_ticks = Some(error_ticks);
 
                     if let Some(previous) = last_qpc {
                         let dt =
@@ -1283,6 +1289,36 @@ mod wasapi {
                 }
             } else {
                 prefill.note_progress();
+            }
+
+            // 重同步门:持续超额即丢最旧,补「积压不欠载、硬重置永不触发」的自愈缺口。
+            // 超额分两臂取——对齐活跃时用本轮外环误差(它就是「实际比目标晚多少」,
+            // 只有正值算超额:负 error 是放早,不是本门的事,i64 除法向零截断天然满足);
+            // 对齐不活跃时退回缓冲深度对目标的超出。prefill 轮次在上面 continue,
+            // 天然不进门。
+            let excess_ms = match aligned_error_ticks {
+                Some(error_ticks) => error_ticks / TICKS_PER_MS,
+                None => frames_to_ms(available) as i64 - i64::from(target_ms),
+            };
+            if gate.note(excess_ms > i64::from(RESYNC_EXCESS_MS), needed) {
+                // 点火轮 excess_ms 必为正(over 为假时 note 不点火),折 48k 帧后
+                // 钳在 available − target_frames 以内:丢穿目标深度就是亲手制造欠载。
+                let excess_frames =
+                    (crate::OUTPUT_SAMPLE_RATE as usize).saturating_mul(excess_ms as usize) / 1_000;
+                let drop_frames =
+                    excess_frames.min(available.saturating_sub(target_frames(target_ms)));
+                {
+                    // 持 ring 锁一次,只做游标回收——丢最旧是 O(1) 的 filled 减法。
+                    let Ok(mut ring) = ring.lock() else { break };
+                    ring.drop_oldest(drop_frames);
+                }
+                // 与硬重置共享的两步:读游标跳段之后误差的历史随之失效,残差留着
+                // 会让下一步凭空多走;last_qpc 清空让外环下轮重新取基准。
+                outer.reset();
+                last_qpc = None;
+                // 重采样器刻意不重置:流未断,丢最旧只是读游标在连续流上跳了一段,
+                // 历史样本仍属同一条流——与硬重置场景相反,那边样本整体作废,
+                // 留着历史才会把旧尾巴混进新流。
             }
 
             let device_frames = match resampler.as_mut() {
