@@ -980,14 +980,11 @@ public class MediaLinkEndToEndTests
         await StartBoundedAsync(upstreamService);
         await WaitUntilAsync(() => upstreamService.IsConnected);
 
-        // 先换歌。这一条必须被接收端认成会话级变更，否则歌词永远不刷新——
-        // 那是本修复的反向失效，比刷太多更坏，故与刷太多同用一条判据钉住。
-        var track = new MediaInfo("upstream-app", "TimelineSong", "TimelineArtist", null,
-            TimeSpan.Zero, TimeSpan.FromMinutes(4),
-            new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
-        upstreamMedia.Raise(track, MediaInfoChangeKind.CurrentSession);
-        await WaitUntilAsync(() => downstreamStore.GetMediaSnapshot()?.Title == "TimelineSong");
-
+        // 计数器与订阅必须先于换歌就位。等待锚必须在被测观察面（事件流）上，
+        // 不能在其上游（存储快照）——存储先在锁内落字段、释放锁后才派发事件，
+        // 快照可见与事件派发之间有跨线程窗口。原先「先等快照、后订阅」会在这个
+        // 窗口里醒来并完成订阅，换歌的 CurrentSession 事件随即落进订阅之内，把
+        // sessionLevel 计成 1。此为 2026-08-29 收尾三连 run3 现行抓获的 flake 的修法。
         var sessionLevel = 0;
         var timeline = 0;
         downstreamCoordinator.EffectiveMediaChanged += (_, e) =>
@@ -1001,6 +998,22 @@ public class MediaLinkEndToEndTests
                 Interlocked.Increment(ref timeline);
             }
         };
+
+        // 先换歌。这一条必须被接收端认成会话级变更，否则歌词永远不刷新——
+        // 那是本修复的反向失效，比刷太多更坏，故与刷太多同用一条判据钉住。
+        var track = new MediaInfo("upstream-app", "TimelineSong", "TimelineArtist", null,
+            TimeSpan.Zero, TimeSpan.FromMinutes(4),
+            new MediaPlaybackInfo(MediaPlaybackState.Playing), null, null);
+        upstreamMedia.Raise(track, MediaInfoChangeKind.CurrentSession);
+        // 双条件锚：标题就位证明消息已写入存储；sessionLevel >= 1 证明事件已在
+        // 派发链上同步走完——观察到它即该消息的派发终结，其后清零不会再吞到它。
+        await WaitUntilAsync(() =>
+            downstreamStore.GetMediaSnapshot()?.Title == "TimelineSong"
+            && Volatile.Read(ref sessionLevel) >= 1);
+
+        // 清零后只剩五次时间线推进这一个事件源。
+        Interlocked.Exchange(ref sessionLevel, 0);
+        Interlocked.Exchange(ref timeline, 0);
 
         // 同一首歌走时间线前进五次。
         for (var i = 1; i <= 5; i++)
