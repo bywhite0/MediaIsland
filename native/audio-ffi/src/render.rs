@@ -105,6 +105,48 @@ impl PrefillState {
     }
 }
 
+/// 重同步门的超额阈值,毫秒。
+///
+/// 250ms 高于稳态噪声——对齐 |e| 中位 1.3ms、FIFO 占用锯齿 ±50ms、网络突发簇
+/// ~100-200ms 都够不着它——且低于病灶量级(卡顿积压是秒级)。低了会把正常抖动
+/// 当积压丢帧,高了会让本可自愈的滞后拖到可感知才动手。
+pub const RESYNC_EXCESS_MS: u32 = 250;
+
+/// 重同步门的持续期,以消费帧数计(48k 轴):24_000 帧 = 500ms × 48 帧/ms。
+///
+/// 500ms 的持续期把一个 RTT 内自行排空的突发簇全部滤掉——只有棘轮/积压这类
+/// 不自愈的超额撑得过它。以消费帧数计而非另读时钟:渲染循环的推进本身就是
+/// 48k 轴上的时间,不引入第二时基。
+pub const RESYNC_SUSTAIN_FRAMES: usize = 24_000;
+
+/// 重同步门:持续超额才点火,与 [`PrefillState`] 同为脱离 WASAPI 可测的纯件。
+///
+/// 对齐外环限速 0.5ms/s、内环 ±0.1%,秒级积压追不动;硬重置只由欠载触发,
+/// 而积压场景恰恰不欠载——这道门补的就是这条自愈缺口。
+#[derive(Default)]
+pub struct ResyncGate {
+    sustained_frames: usize,
+}
+
+impl ResyncGate {
+    /// 记一轮观测。over 为假立即清零并返回假——回落即重新起算,瞬时超额不积累;
+    /// over 为真则累计本轮消费帧数,累计 ≥ [`RESYNC_SUSTAIN_FRAMES`] 即返回真
+    /// 并自清(恰达阈也点火,用 `>=`;自清让下一次点火重新攒满整个持续期)。
+    pub fn note(&mut self, over_threshold: bool, consumed_frames: usize) -> bool {
+        if !over_threshold {
+            self.sustained_frames = 0;
+            return false;
+        }
+
+        self.sustained_frames += consumed_frames;
+        if self.sustained_frames >= RESYNC_SUSTAIN_FRAMES {
+            self.sustained_frames = 0;
+            return true;
+        }
+        false
+    }
+}
+
 /// 送给 `rubato` 的重采样比率。
 ///
 /// 两个方向必须分清，接反了在真机上表现为「放十几分钟后开始周期性卡顿」，
@@ -2097,6 +2139,68 @@ mod tests {
         state.note_underrun(400.0);
         state.note_progress();
         assert!(!state.note_underrun(400.0));
+    }
+
+    #[test]
+    fn resync_excess_threshold_is_pinned_at_250ms() {
+        // 字面钉。阈值立论(高于稳态噪声、低于病灶量级)钉的是 250 这个数本身,
+        // 谁改它谁就得先来改这条判据,而不是让立论静默失效。
+        assert_eq!(RESYNC_EXCESS_MS, 250);
+    }
+
+    #[test]
+    fn resync_sustain_frames_is_pinned_at_24_000() {
+        // 字面钉:24_000 = 500ms × 48 帧/ms。系数或时基误改都会先撞在这里。
+        assert_eq!(RESYNC_SUSTAIN_FRAMES, 24_000);
+    }
+
+    #[test]
+    fn the_gate_does_not_accumulate_below_threshold() {
+        // 阈下轮次的消费帧数再大也不进账:门计的是「超额的持续」,
+        // 不是「播放的持续」。
+        let mut gate = ResyncGate::default();
+        for _ in 0..10 {
+            assert!(!gate.note(false, 1_000_000));
+        }
+        assert!(!gate.note(true, 23_999), "此前的阈下轮次不得留下积累");
+    }
+
+    #[test]
+    fn the_gate_fires_exactly_when_sustained_frames_reach_the_threshold() {
+        // 恰达阈点火(>=):8_000 × 3 = 24_000,第三次就是点火轮。
+        let mut gate = ResyncGate::default();
+        assert!(!gate.note(true, 8_000));
+        assert!(!gate.note(true, 8_000));
+        assert!(gate.note(true, 8_000), "恰累计到 24_000 应当点火");
+    }
+
+    #[test]
+    fn a_dip_below_threshold_clears_the_tally() {
+        // 回落清零:500ms 持续期滤的就是「一个 RTT 内自行排空的突发簇」,
+        // 残留积累会让两个不相干的突发拼成一次误点。
+        let mut gate = ResyncGate::default();
+        assert!(!gate.note(true, 16_000));
+        assert!(!gate.note(false, 960));
+        assert!(!gate.note(true, 23_999), "回落之后必须从零重新攒");
+    }
+
+    #[test]
+    fn firing_clears_the_gate() {
+        // 点火自清:下一次点火要重新攒满整个持续期,否则一次积压会连环点火,
+        // 每轮都丢一段最旧。前三步即 the_gate_fires_... 的点火序列。
+        let mut gate = ResyncGate::default();
+        gate.note(true, 8_000);
+        gate.note(true, 8_000);
+        gate.note(true, 8_000);
+        assert!(!gate.note(true, 23_999), "点火后积累必须归零");
+    }
+
+    #[test]
+    fn the_sustain_boundary_sits_between_23_999_and_24_000() {
+        // 边界钉两侧:23_999 不点、再进 1 帧恰达 24_000 即点。
+        let mut gate = ResyncGate::default();
+        assert!(!gate.note(true, 23_999));
+        assert!(gate.note(true, 1));
     }
 
     #[test]

@@ -183,6 +183,17 @@ impl PlaybackRing {
         self.filled -= taken;
         taken
     }
+
+    /// 丢掉最旧的 `frames` 帧(超过现存量则全丢,饱和不下穿)。
+    ///
+    /// 只减 filled:读游标是「写游标回退 filled」,减 filled 即读游标在累积轴上
+    /// 前进,`write`、`written`、`timeline` 一律不动。锚点映射的是累积轴,
+    /// 丢最旧之后 `sender_ticks_at` 对剩余内容照常外推——这是与硬重置的本质区别:
+    /// `reset()` 连锚点一起作废(样本全体作废,锚已无所指),而重同步丢的只是
+    /// 读游标之前的一段,对时地基不丢。
+    pub fn drop_oldest(&mut self, frames: usize) {
+        self.filled -= frames.min(self.filled);
+    }
 }
 
 /// 按缓冲填充度算重采样比率。
@@ -581,5 +592,65 @@ mod tests {
 
         ring.push_at(&stereo(&[(3, 3)]), 9 * TICKS_PER_MS);
         assert_eq!(ring.sender_ticks_at(at(2)), Some(9 * TICKS_PER_MS));
+    }
+
+    #[test]
+    fn drop_oldest_shrinks_filled_but_not_written() {
+        // 丢最旧只动读侧:written 是累积轴坐标,随丢弃回退会让锚点外推整体错位。
+        let mut ring = PlaybackRing::new(16);
+        let frames: Vec<(i16, i16)> = (1..=10).map(|v| (v, -v)).collect();
+        ring.push(&stereo(&frames));
+        assert_eq!(ring.written_frames().raw(), 10);
+
+        ring.drop_oldest(4);
+
+        assert_eq!(ring.available_frames(), 6);
+        assert_eq!(ring.written_frames().raw(), 10, "written 不随丢弃回退");
+    }
+
+    #[test]
+    fn drop_oldest_keeps_the_remaining_frames_readable_in_order() {
+        // 读回来比对:只查帧数挡不住「丢了最新留了最旧」这类方向接反,
+        // 而方向接反正是本方法存在的理由的反面。
+        let mut ring = PlaybackRing::new(16);
+        let frames: Vec<(i16, i16)> = (1..=10).map(|v| (v, -v)).collect();
+        ring.push(&stereo(&frames));
+
+        ring.drop_oldest(4);
+
+        let mut out = vec![0i16; 6 * CH];
+        assert_eq!(ring.read_into(&mut out), 6);
+        let expected: Vec<(i16, i16)> = (5..=10).map(|v| (v, -v)).collect();
+        assert_eq!(out, stereo(&expected));
+    }
+
+    #[test]
+    fn drop_oldest_saturates_beyond_the_filled_count() {
+        // 超过现存量则全丢,不下穿:filled 是 usize,下穿在 debug 是 panic,
+        // 在 release 是一个天文数字的「可读帧数」。
+        let mut ring = PlaybackRing::new(16);
+        let frames: Vec<(i16, i16)> = (1..=10).map(|v| (v, -v)).collect();
+        ring.push(&stereo(&frames));
+
+        ring.drop_oldest(100);
+
+        assert_eq!(ring.available_frames(), 0);
+    }
+
+    #[test]
+    fn drop_oldest_keeps_the_timeline_anchor() {
+        // 与硬重置的本质区别:重同步不丢对时地基。丢 n 帧后新读游标处的时刻,
+        // 就是未丢时「游标 +n」处的时刻——锚点映射累积轴,照常外推,不作废。
+        let mut ring = PlaybackRing::new(48_000);
+        ring.push_at(&tone(FRAME), 5 * TICKS_PER_MS);
+
+        let cursor_plus_n = ring.read_cursor_frames().advance(96);
+        let expected = ring.sender_ticks_at(cursor_plus_n);
+        assert!(expected.is_some(), "锚点在,+n 处本就该有答案");
+
+        ring.drop_oldest(96);
+
+        assert_eq!(ring.read_cursor_frames(), cursor_plus_n);
+        assert_eq!(ring.sender_ticks_at(ring.read_cursor_frames()), expected);
     }
 }
