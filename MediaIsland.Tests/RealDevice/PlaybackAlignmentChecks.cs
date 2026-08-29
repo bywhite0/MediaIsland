@@ -10,7 +10,7 @@ using Xunit.Abstractions;
 namespace MediaIsland.Tests.RealDevice;
 
 /// <summary>
-/// 跨机对齐的真机判据。两条门控：对齐精度与设备会话事实实测。
+/// 跨机对齐的真机判据。三条门控：对齐精度、设备会话事实与垫零偏移被输出延迟跟随的实测。
 ///
 /// 为何必须真机：误差信号的两个端点——IAudioClock::GetPosition 的位置/QPC 对与
 /// 设备尾段延迟估计——只在真实 WASAPI 会话上存在。控制律本身已有仿真判据
@@ -408,6 +408,166 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         Assert.True(
             afterSameValue.DevicePositionFrames > armed.DevicePositionFrames,
             $"同值下发后位置锚点 {afterSameValue.DevicePositionFrames} 未越过切换后水位 {armed.DevicePositionFrames}：会话疑似被再次重启");
+
+        await sine.StopAsync(CancellationToken.None);
+        playback.Configure(enabled: false, targetBufferMs: targetMs);
+    }
+
+    /// <summary>
+    /// 垫零偏移被 OutputLatency 跟随的真机门控。真实病灶是网络卡顿：发送端持续产帧，
+    /// 帧被延迟后整批补达。接收端 ring 先耗尽 target 时长的真实帧、再垫零，积压到达后
+    /// 占用回填到卡顿时长的水平并持续——占用大于 target 的恒偏就是歌词超前的根源，
+    /// 本判据钉的是 OutputLatency 跟随这个恒偏而不是恒回起播常量。
+    ///
+    /// 注入必须闸住缓存、到点整批回灌，不能停源再重启：停掉的源不产生积压，
+    /// 恢复后占用趋零，方向就反了，测不到病灶。
+    ///
+    /// 数值账：对齐关（FIFO，默认病灶路径），target 200ms。闸 500ms：ring 先耗掉约
+    /// 200ms 真实帧，再垫约 300ms 零（UnderrunCount 大于 0）；欠载累计约 300ms 低于
+    /// 500ms 硬重置阈（第 9 期判据：累积过 500ms 触发恰一次硬重置）→ HardResetCount
+    /// 恒 0，钉住「偏移持续存在恰因未硬重置」的机制边界。回灌 500ms 积压 → 占用回填至
+    /// 约 500ms 并稳态维持（FIFO 无控制律拉回）。OutputLatency（节流 100ms + 死区
+    /// 25ms）应跟随到占用水平——修前它恒回 200，与约 500 的占用差 300ms。
+    /// </summary>
+    [RealAudioFact]
+    public async Task NetworkStallBackfill_OutputLatencyFollowsOccupancyOffset()
+    {
+        AudioRenderNative.ResetForTesting();
+
+        using var renderer = new WasapiRenderer();
+        Assert.True(renderer.IsAvailable, $"播放不可用：{renderer.FailureReason}");
+
+        var played = new PlayedPcmRecorder();
+        using var playback = new AudioPlaybackService(played, renderer);
+
+        // 对齐不开启（不调 ConfigureAlignment），比对 DeviceSessionFacts 的关闭路径开场。
+        // 帧照带发送端时间戳——关闭路径承诺「时刻在场也不走时间轴」的强形。
+        const int targetMs = 200;
+
+        // 卡顿时长。垫零约 500 - 200 = 300ms，离 500ms 硬重置阈有 200ms 的构造性余量；
+        // 回填约 500ms，与 target 差 300ms，远大于 50ms 跟随容差——两头都不靠运气。
+        const int stallMs = 500;
+
+        // 跟随容差：死区 25 + 采集块 10 + 节流陈旧余量。吞不掉 300ms 的病灶量级。
+        const double followToleranceMs = 50;
+
+        playback.Configure(enabled: true, targetBufferMs: targetMs);
+        Assert.True(playback.IsPlaying, $"起播失败：{playback.LastError}");
+
+        // 喂帧闸：常态直送，闸下入队缓存，开闸先按序整批回灌再恢复直送。
+        // Submit 收在锁内，回灌期间泵线程在锁上等，直送不会插进回灌序列。
+        var gate = new object();
+        var gateClosed = false;
+        var held = new List<AudioFrame>();
+        var stamper = new SenderTimelineStamper();
+        using var sine = new SineFrameSource(ToneHz, Amplitude);
+        sine.FrameAvailable += frame =>
+        {
+            lock (gate)
+            {
+                var stamped = stamper.Stamp(frame);
+                if (gateClosed)
+                {
+                    held.Add(stamped);
+                    return;
+                }
+
+                playback.Submit(stamped);
+            }
+        };
+        await sine.StartAsync(CancellationToken.None);
+
+        // 预填充与起播过渡走完再看。
+        await Task.Delay(3_000);
+
+        // 振幅地基先于一切时刻断言，纪律同上两条。
+        var earlyPlayed = played.Snapshot();
+        Assert.True(earlyPlayed.Count > 0, "FramePlayed 一次都没触发");
+        Assert.True(
+            earlyPlayed.Peak >= AudioAlignmentThresholds.PeakAmplitudeLowerBound,
+            $"已播出峰值 {earlyPlayed.Peak} 低于下界 {AudioAlignmentThresholds.PeakAmplitudeLowerBound}，注入疑似静音");
+        Assert.True(
+            NonZeroRatio(earlyPlayed) >= AudioAlignmentThresholds.NonZeroFrameRatioLowerBound,
+            $"已播出非零帧占比 {NonZeroRatio(earlyPlayed):F2} 低于下界");
+
+        Assert.True(renderer.ReadStats().HasStarted, "统计说从未起播");
+
+        // 基线：FIFO 稳态占用贴 target；OutputLatency 该在占用的跟随容差内。
+        // 占用带不动摇后面的推导（垫零量、回填水位都从它出发），先钉住它。
+        var baselineRingMs = await SampleRingMsAsync(renderer, seconds: 3);
+        var baselineLatencyMs = playback.OutputLatency.TotalMilliseconds;
+        output.WriteLine($"基线占用中位    : {baselineRingMs:F1} ms（target {targetMs}ms）");
+        output.WriteLine($"基线输出延迟    : {baselineLatencyMs:F1} ms");
+        Assert.InRange(baselineRingMs, targetMs - 50, targetMs + 50);
+        Assert.True(
+            Math.Abs(baselineLatencyMs - baselineRingMs) <= followToleranceMs,
+            $"基线 |OutputLatency {baselineLatencyMs:F1} − 占用中位 {baselineRingMs:F1}| 超 {followToleranceMs}ms");
+
+        // 闸 500ms：泵线程照常产帧入 held，ring 先耗真实帧再垫零。
+        lock (gate)
+        {
+            gateClosed = true;
+        }
+
+        await Task.Delay(stallMs);
+
+        // 开闸整批回灌：占用回填到约「卡顿时长」的水平。
+        lock (gate)
+        {
+            foreach (var frame in held)
+            {
+                playback.Submit(frame);
+            }
+
+            held.Clear();
+            gateClosed = false;
+        }
+
+        var atBackfill = played.Snapshot();
+
+        // 等节流窗翻过与占用稳定，再采 3 秒中位。
+        await Task.Delay(1_000);
+        var backfillRingMs = await SampleRingMsAsync(renderer, seconds: 3);
+        var latencyMs = playback.OutputLatency.TotalMilliseconds;
+        var stalled = renderer.ReadStats();
+        var playedFinal = played.Snapshot();
+
+        output.WriteLine($"闸后占用中位    : {backfillRingMs:F1} ms（闸 {stallMs}ms）");
+        output.WriteLine($"闸后输出延迟    : {latencyMs:F1} ms");
+        output.WriteLine($"欠载 / 硬重置   : {stalled.UnderrunCount} / {stalled.HardResetCount}");
+
+        // 顺序即纪律：先振幅复扫（回灌后声音还在出），再机制与时刻断言。
+        // 「还在出声」看 NonZeroCount 跨开闸增长：垫零块也触发 FramePlayed（内容全零），
+        // 总数增长在闸下也成立，是弱形。
+        Assert.True(
+            playedFinal.NonZeroCount > atBackfill.NonZeroCount,
+            "回灌后非零帧计数没有增长：开闸后没再出声");
+        Assert.True(
+            playedFinal.Peak >= AudioAlignmentThresholds.PeakAmplitudeLowerBound,
+            $"已播出峰值 {playedFinal.Peak} 低于下界 {AudioAlignmentThresholds.PeakAmplitudeLowerBound}，注入疑似静音");
+        Assert.True(
+            NonZeroRatio(playedFinal) >= AudioAlignmentThresholds.NonZeroFrameRatioLowerBound,
+            $"已播出非零帧占比 {NonZeroRatio(playedFinal):F2} 低于下界");
+
+        // 垫零真实发生。
+        Assert.True(stalled.UnderrunCount > 0, "闸 500ms 后欠载计数仍为零：垫零没有发生");
+
+        // 未借道硬重置：欠载累计约 300ms 低于 500ms 阈，偏移持续存在恰因如此。
+        Assert.Equal(0, stalled.HardResetCount);
+
+        // 回填到约「卡顿时长」的水平并稳态维持（FIFO 无控制律拉回）。
+        Assert.InRange(backfillRingMs, 430, 570);
+
+        // 核心：OutputLatency 跟随占用。修前出声臂恒回 target，与约 500 的占用差
+        // 300ms，此断言必红；修后 FIFO 臂消费 RingMs，一步跟随后必绿。
+        Assert.True(
+            Math.Abs(latencyMs - backfillRingMs) <= followToleranceMs,
+            $"|OutputLatency {latencyMs:F1} − 占用中位 {backfillRingMs:F1}| 超 {followToleranceMs}ms：输出延迟没跟上垫零偏移");
+
+        // FIFO 臂选路的真机在场证：offset 从未可用、误差从未在算，
+        // tracker 消费的确是占用而非误差。
+        Assert.False(stalled.ClockOffsetAvailable, "对齐从未开启，offset 不该被判可用");
+        Assert.Equal(0, stalled.PlayTimeErrorUs);
 
         await sine.StopAsync(CancellationToken.None);
         playback.Configure(enabled: false, targetBufferMs: targetMs);
