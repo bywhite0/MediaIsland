@@ -102,7 +102,14 @@ public class AudioPlaybackServiceTests
         /// <summary>可写：Task 4 与 Task 5 的判据要让它返回特定统计。</summary>
         public AudioRenderStats Stats { get; set; }
 
-        public AudioRenderStats ReadStats() => Stats;
+        /// <summary>ReadStats 被调次数。输出延迟的节流判据数的就是它。</summary>
+        public int ReadStatsCount { get; private set; }
+
+        public AudioRenderStats ReadStats()
+        {
+            ReadStatsCount++;
+            return Stats;
+        }
 
         /// <summary>目标深度区间。真实实现取自 native 常量，这里可写以驱动判定边界。</summary>
         public (int MinTargetMs, int MaxTargetMs) DepthBounds { get; set; } = (50, 1000);
@@ -720,6 +727,86 @@ public class AudioPlaybackServiceTests
         service.Configure(enabled: false, targetBufferMs: 200);
 
         Assert.Equal(TimeSpan.Zero, service.OutputLatency);
+    }
+
+    [Fact]
+    public void OutputLatency_WithDeviceClockOffset_TracksTheAlignmentError()
+    {
+        // 对齐臂：设备时钟偏移可用时，实际输出延迟 = target 加对齐误差。
+        // 缓冲占用折 450ms 摆在旁边作干扰——选错臂会得 450，两臂的期望值刻意分开。
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.True(service.IsPlaying);
+
+        renderer.Stats = new AudioRenderStats(
+            RingFrames: 21_600, UnderrunCount: 0, HardResetCount: 0, DeviceFramesRendered: 0,
+            DeviceSampleRate: 48_000, ResampleRatioPpm: 0,
+            PlayTimeErrorUs: 300_000, ClockOffsetAvailable: true);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(500), service.OutputLatency);
+    }
+
+    [Fact]
+    public void OutputLatency_WithoutDeviceClockOffset_FallsBackToRingOccupancy()
+    {
+        // FIFO 臂：偏移不可用时退化读缓冲占用。负的对齐误差作干扰——
+        // 错走对齐臂会得 200 减 300 钳 0，与 450 判然两分。
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.True(service.IsPlaying);
+
+        renderer.Stats = new AudioRenderStats(
+            RingFrames: 21_600, UnderrunCount: 0, HardResetCount: 0, DeviceFramesRendered: 0,
+            DeviceSampleRate: 48_000, ResampleRatioPpm: 0,
+            PlayTimeErrorUs: -300_000, ClockOffsetAvailable: false);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(450), service.OutputLatency);
+    }
+
+    [Fact]
+    public void OutputLatency_ThrottlesStatsReadsToTheSampleWindow()
+    {
+        // ReadStats 与渲染送帧的 Push 同一把锁，歌词 80ms 节拍与词模式高频 tick
+        // 逐次进锁不可接受。假时钟恒值下同窗只许采一次；推进整 100ms 是
+        // 窗口边界含端点的钉子——首读必采样由哨兵给出，两段计数各自成判据。
+        var clock = 0L;
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(
+            new RecordingSubmitter(), renderer, tickCount64: () => clock);
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        _ = service.OutputLatency;
+        _ = service.OutputLatency;
+        Assert.Equal(1, renderer.ReadStatsCount);
+
+        clock += 100;
+        _ = service.OutputLatency;
+        Assert.Equal(2, renderer.ReadStatsCount);
+    }
+
+    [Fact]
+    public void OutputLatency_AfterRestart_StartsFreshFromTheNewTarget()
+    {
+        // 深度变更走停播重启，估计必须随会话清态：上一会话跟到的 450 若粘进新会话，
+        // 歌词会按早已不存在的占用去补偿。先让 FIFO 臂真的跟到 450（此处不设断言，
+        // 跟随语义由 FIFO 臂判据钉；断了它本条会兼答选路），重启并把统计归全零后，
+        // 读到的必须是新 target，不是残值。
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        renderer.Stats = new AudioRenderStats(
+            RingFrames: 21_600, UnderrunCount: 0, HardResetCount: 0, DeviceFramesRendered: 0,
+            DeviceSampleRate: 48_000, ResampleRatioPpm: 0,
+            PlayTimeErrorUs: 0, ClockOffsetAvailable: false);
+        _ = service.OutputLatency;
+
+        renderer.Stats = default;
+        service.Configure(enabled: false, targetBufferMs: 200);
+        service.Configure(enabled: true, targetBufferMs: 200);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(200), service.OutputLatency);
     }
 
     [Fact]
