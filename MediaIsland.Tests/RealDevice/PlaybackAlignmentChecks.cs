@@ -493,7 +493,8 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         Assert.True(renderer.ReadStats().HasStarted, "统计说从未起播");
 
         // 基线：FIFO 稳态占用贴 target；OutputLatency 该在占用的跟随容差内。
-        // 占用带不动摇后面的推导（垫零量、回填水位都从它出发），先钉住它。
+        // 占用带不动摇后面的推导（垫零量与硬重置余量从基线占用出发；回填水位
+        // ≈ 闸时长，与基线近似无关），先钉住它。
         var baselineRingMs = await SampleRingMsAsync(renderer, seconds: 3);
         var baselineLatencyMs = playback.OutputLatency.TotalMilliseconds;
         output.WriteLine($"基线占用中位    : {baselineRingMs:F1} ms（target {targetMs}ms）");
