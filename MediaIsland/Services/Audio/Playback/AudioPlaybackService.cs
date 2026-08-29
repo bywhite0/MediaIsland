@@ -29,6 +29,13 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     private readonly IAudioRenderer _renderer;
     private readonly Func<string?> _deviceIdProvider;
     private readonly ILogger? _logger;
+
+    /// <summary>
+    /// 毫秒单调钟，默认 <see cref="Environment.TickCount64"/>。可注入沿
+    /// <c>AudioClockProbe</c> 的 <c>now100Ns</c> 先例——节流判据要能拨表。
+    /// </summary>
+    private readonly Func<long> _tickCount64;
+
     private readonly object _gate = new();
 
     /// <summary>
@@ -66,6 +73,28 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     /// 「用户改了开关但本会话还没跟上」，中途切换要不要停播重启就比对它。
     /// </summary>
     private bool _sessionAlignmentEnabled;
+
+    /// <summary>输出延迟的采样节流窗口，毫秒。立论见 <see cref="OutputLatency"/>。</summary>
+    private const long LatencySampleWindowMs = 100;
+
+    /// <summary>
+    /// 采样时刻哨兵：与任何当前时刻的差都远在窗口外，推回它即「首读必采样」。
+    /// 取最小值之半，注入的假时钟给负值时相减也不溢出。
+    /// </summary>
+    private const long LatencyNeverSampledMs = long.MinValue / 2;
+
+    /// <summary>
+    /// 输出延迟估计器。target 经起播与停播路径的 <see cref="ResetLatencyUnlocked"/>
+    /// 进入，构造初值取多少都读不到——未出声时 <see cref="OutputLatency"/> 的零臂先挡住了。
+    /// </summary>
+    private readonly OutputLatencyTracker _latencyTracker = new(0);
+
+    /// <summary>
+    /// 上次采样输出延迟的时刻，毫秒，取自 <see cref="_tickCount64"/>。Volatile 读写
+    /// 不进锁：同窗双读竞态只是偶发多一次 ReadStats（渲染器自有锁），不为它加锁面。
+    /// </summary>
+    private long _latencySampledAtMs = LatencyNeverSampledMs;
+
     private long _rejectedFrames;
     private volatile bool _playing;
     private bool _disposed;
@@ -74,11 +103,13 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
         IAudioFrameSubmitter inner,
         IAudioRenderer renderer,
         ILogger? logger = null,
-        Func<string?>? deviceIdProvider = null)
+        Func<string?>? deviceIdProvider = null,
+        Func<long>? tickCount64 = null)
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
         _renderer = renderer ?? throw new ArgumentNullException(nameof(renderer));
         _deviceIdProvider = deviceIdProvider ?? DefaultRenderEndpoint.TryGetId;
+        _tickCount64 = tickCount64 ?? (static () => Environment.TickCount64);
         _logger = logger;
         _renderer.FramePlayed += OnFramePlayed;
     }
@@ -132,12 +163,21 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     public long RejectedFrameCount => Interlocked.Read(ref _rejectedFrames);
 
     /// <summary>
-    /// 本机输出延迟。出声时等于在用的抖动缓冲深度，否则为零。
+    /// 本机输出延迟。出声时为跟踪器折算的实测估计，否则为零。
     ///
-    /// 取目标缓冲深度而不是实测占用（<see cref="AudioRenderStats.RingMs"/>）：占用在目标值
-    /// 附近持续波动，把它直接喂给呈现侧会让画面来回抖，而向后跳一下比恒定偏一点更难看。
-    /// 目标深度是稳定值，且漂移控制律把占用保持在目标附近，两者的稳态差远小于人可察觉的
-    /// 约 50ms。将来若实测出稳态差超过那个量级，再换成平滑后的实测值。
+    /// 早先这里直接回目标缓冲深度，当时的注释留了「将来若实测出稳态差超过那个量级，
+    /// 再换成平滑后的实测值」——接收端卡顿时渲染垫空帧，实际播放位置相对推流位置的
+    /// 偏移正是那样的稳态差，如今兑现：交给 <see cref="OutputLatencyTracker"/> 折算每拍
+    /// 渲染统计。选路两臂：设备时钟偏移可用时用对齐误差（target 加误差即实际输出延迟），
+    /// 不可用时退化读缓冲占用（<see cref="AudioRenderStats.RingMs"/>）；25ms 死区挡住
+    /// 占用在目标附近的持续波动，稳态下输出恒定，呈现不抖的既有观感零变化。
+    /// 完整立论见跟踪器类注释。
+    ///
+    /// 采样节流 100ms：<see cref="IAudioRenderer.ReadStats"/> 与渲染送帧的 Push 同一把锁，
+    /// 歌词 80ms 节拍与词模式的高频 tick 不得逐次进锁。100ms 窗口内缓慢漂移能积累的量
+    /// 在死区以下，节流不引入死区之外的误差；垫零跳变最多晚一拍被跟上，歌词行粒度下
+    /// 不可见。起播把采样时刻推回窗口外，首读必采样；同窗双读竞态只是偶发多一次
+    /// ReadStats（渲染器自有锁），不为它加锁面，本属性维持无锁读。
     ///
     /// 不含端点缓冲（共享模式下约 10 到 30ms）：它本身就在可察觉阈值以下，而读到它需要
     /// IAudioClient::GetStreamLatency，那是一次 FFI 与 ABI 变更。它是本量已知的残余误差。
@@ -146,8 +186,27 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     /// 那时减去一个缓冲深度会把画面推到听觉后面，比不补偿更坏。
     /// 而在播必然意味着仲裁认定生效媒体来自上游，故不必再另外判一次音源。
     /// </summary>
-    public TimeSpan OutputLatency =>
-        _playing ? TimeSpan.FromMilliseconds(Volatile.Read(ref _requestedTargetMs)) : TimeSpan.Zero;
+    public TimeSpan OutputLatency
+    {
+        get
+        {
+            if (!_playing)
+            {
+                return TimeSpan.Zero;
+            }
+
+            var now = _tickCount64();
+            if (now - Volatile.Read(ref _latencySampledAtMs) >= LatencySampleWindowMs)
+            {
+                Volatile.Write(ref _latencySampledAtMs, now);
+                var stats = _renderer.ReadStats();
+                _latencyTracker.Sample(
+                    stats.HasStarted, stats.ClockOffsetAvailable, stats.RingMs, stats.PlayTimeErrorUs);
+            }
+
+            return _latencyTracker.Current;
+        }
+    }
 
     /// <summary>
     /// 设置播放开关与目标缓冲深度。幂等：由设置变化与仲裁变化共同触发，会被反复调用，
@@ -238,6 +297,7 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
             ApplyAlignmentUnlocked();
             _renderer.Start(_requestedTargetMs, _alignmentEnabled);
             _sessionAlignmentEnabled = _alignmentEnabled;
+            ResetLatencyUnlocked();
             _playing = true;
             LastError = null;
         }
@@ -412,6 +472,17 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
         }
     }
 
+    /// <summary>
+    /// 让输出延迟估计回到「target 即估计、首读必采样」态。起播成功时调用，
+    /// 新会话按当次请求深度起步；停播时同样调用，幂等清残态防跨会话粘值——
+    /// 停播期的读虽被零臂挡住，残值也不该活过会话。恒在 <c>_gate</c> 下调用。
+    /// </summary>
+    private void ResetLatencyUnlocked()
+    {
+        _latencyTracker.Reset(_requestedTargetMs);
+        Volatile.Write(ref _latencySampledAtMs, LatencyNeverSampledMs);
+    }
+
     private void StopUnlocked()
     {
         if (!_playing)
@@ -420,6 +491,7 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
         }
 
         _playing = false;
+        ResetLatencyUnlocked();
         try
         {
             _renderer.Stop();
