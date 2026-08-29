@@ -1007,6 +1007,7 @@ public class MediaLinkEndToEndTests
         upstreamMedia.Raise(track, MediaInfoChangeKind.CurrentSession);
         // 双条件锚：标题就位证明消息已写入存储；sessionLevel >= 1 证明事件已在
         // 派发链上同步走完——观察到它即该消息的派发终结，其后清零不会再吞到它。
+        // sessionLevel >= 1 归属本消息的前提是换歌前无任何带媒体的存储写入/平台媒体。
         await WaitUntilAsync(() =>
             downstreamStore.GetMediaSnapshot()?.Title == "TimelineSong"
             && Volatile.Read(ref sessionLevel) >= 1);
