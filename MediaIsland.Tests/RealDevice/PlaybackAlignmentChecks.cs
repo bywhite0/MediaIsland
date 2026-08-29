@@ -415,10 +415,19 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
     }
 
     /// <summary>
-    /// 垫零偏移被 OutputLatency 跟随的真机门控。真实病灶是网络卡顿：发送端持续产帧，
-    /// 帧被延迟后整批补达。接收端 ring 先耗尽 target 时长的真实帧、再垫零，积压到达后
-    /// 占用回填到卡顿时长的水平并持续——占用大于 target 的恒偏就是歌词超前的根源，
-    /// 本判据钉的是 OutputLatency 跟随这个恒偏而不是恒回起播常量。
+    /// 亚硬重置域重同步的真机门控：500ms 闸回灌形成的占用棘轮被重同步门剪除，
+    /// 且 OutputLatency 双向跟随（冲高一步跟上、剪除一步回落）。与长闸判据
+    /// LongStallBackfill_ResyncTrimsOccupancyToTargetBand 互补：那边欠载累计越
+    /// 500ms 阈（硬重置恰一次）加容量封顶，这边欠载累计约 300ms 低于阈——
+    /// HardResetCount 恒 0 即两域的判别锚，剪积压全靠重同步门，不借道硬重置。
+    ///
+    /// 真实病灶是网络卡顿：发送端持续产帧，帧被延迟后整批补达。接收端 ring 先耗尽
+    /// target 时长的真实帧、再垫零，积压到达后占用冲到约卡顿时长的水平。第 10 期
+    /// 本判据锚的是该水平「维持」（430–570，当时 FIFO 确无拉回路径）并被
+    /// OutputLatency 跟随；第 11 期重同步门落地（超额大于 250ms 持续 500ms 即
+    /// 丢最旧收干回 target），该场景确定性剪回 target 带，「维持」锚随第 11 期
+    /// 设计废止，本判据重锚为剪除后的终态带，冲高侧跟随（第 10 期交付）降为
+    /// 点火前的短轮询探针继续在场。
     ///
     /// 注入必须闸住缓存、到点整批回灌，不能停源再重启：停掉的源不产生积压，
     /// 恢复后占用趋零，方向就反了，测不到病灶。
@@ -426,12 +435,12 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
     /// 数值账：对齐关（FIFO，默认病灶路径），target 200ms。闸 500ms：ring 先耗掉约
     /// 200ms 真实帧，再垫约 300ms 零（UnderrunCount 大于 0）；欠载累计约 300ms 低于
     /// 500ms 硬重置阈（第 9 期判据：累积过 500ms 触发恰一次硬重置）→ HardResetCount
-    /// 恒 0，钉住「偏移持续存在恰因未硬重置」的机制边界。回灌 500ms 积压 → 占用回填至
-    /// 约 500ms 并稳态维持（FIFO 无控制律拉回）。OutputLatency（节流 100ms + 死区
-    /// 25ms）应跟随到占用水平——修前它恒回 200，与约 500 的占用差 300ms。
+    /// 恒 0。回灌约 500ms 积压 → 占用冲到约 500ms，超额约 300ms 大于 250ms 阈，
+    /// 持续 500ms（24_000 消费帧）后重同步点火剪回 target 带；OutputLatency（节流
+    /// 100ms + 死区 25ms）冲高后一步跟到占用水平（点火前探针钉住），剪除后同步回落。
     /// </summary>
     [RealAudioFact]
-    public async Task NetworkStallBackfill_OutputLatencyFollowsOccupancyOffset()
+    public async Task NetworkStallBackfill_ResyncTrimsOccupancyWithoutHardReset()
     {
         AudioRenderNative.ResetForTesting();
 
@@ -445,8 +454,9 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         // 帧照带发送端时间戳——关闭路径承诺「时刻在场也不走时间轴」的强形。
         const int targetMs = 200;
 
-        // 卡顿时长。垫零约 500 - 200 = 300ms，离 500ms 硬重置阈有 200ms 的构造性余量；
-        // 回填约 500ms，与 target 差 300ms，远大于 50ms 跟随容差——两头都不靠运气。
+        // 卡顿时长。垫零约 500 - 200 = 300ms，离 500ms 硬重置阈有 200ms 的构造性余量
+        // （亚硬重置域不擦线）；回灌约 500ms → 超额约 300ms 越 250ms 重同步阈，且
+        // 持续期内消费与直送流入相抵、超额不衰减——点火同样构造性成立，不靠运气。
         const int stallMs = 500;
 
         // 跟随容差：死区 25 + 采集块 10 + 节流陈旧余量。吞不掉 300ms 的病灶量级。
@@ -527,18 +537,54 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
 
         var atBackfill = played.Snapshot();
 
-        // 等节流窗翻过与占用稳定，再采 3 秒中位。
-        await Task.Delay(1_000);
-        var backfillRingMs = await SampleRingMsAsync(renderer, seconds: 3);
+        // 回灌探针：积压真的进了 ring。没有这一条，终态的「占用回 target 带」与
+        // 「积压根本没进来」不可区分——修与不修都该绿的前提要单独钉住。
+        // RingMs 是渲染轮快照（每轮 set_ring_frames），回灌完成到下一轮之间隔着
+        // 一个消费节拍，零延迟单次读会撞上回灌前的旧快照——故短轮询。预算 300ms
+        // 远小于点火时刻（超额持续 500ms 从回灌起算），读到高水位时重同步必未点火，
+        // 语义是「点火前进了 ring」；积压真没进来时轮询同样读不到，判别力不丢。
+        var ringProbeClock = Stopwatch.StartNew();
+        var backfillProbeMs = renderer.ReadStats().RingMs;
+        while (backfillProbeMs <= 400 && ringProbeClock.ElapsedMilliseconds < 300)
+        {
+            await Task.Delay(10);
+            backfillProbeMs = renderer.ReadStats().RingMs;
+        }
+
+        output.WriteLine($"回灌探针占用    : {backfillProbeMs:F1} ms（闸 {stallMs}ms，探针窗 {ringProbeClock.ElapsedMilliseconds}ms）");
+        Assert.True(
+            backfillProbeMs > 400,
+            $"回灌后占用探针 {backfillProbeMs:F1}ms 未过 400ms：积压没进 ring，终态断言失去前提");
+
+        // 上行跟随探针（第 10 期交付的保全）：占用冲高后 OutputLatency 一步跟上。
+        // 节流 100ms 加死区 25ms 远小于 300ms 预算；此窗仍在点火前（时序同上一条）。
+        // 上行方向的跟随证据只在这里存在——终态时占用已剪回 target，恒回起播常量的
+        // 退化实现也能贴上终态跟随断言，冲不过这里的 400ms。
+        var latencyProbeClock = Stopwatch.StartNew();
+        var probeLatencyMs = playback.OutputLatency.TotalMilliseconds;
+        while (probeLatencyMs <= 400 && latencyProbeClock.ElapsedMilliseconds < 300)
+        {
+            await Task.Delay(10);
+            probeLatencyMs = playback.OutputLatency.TotalMilliseconds;
+        }
+
+        output.WriteLine($"上行探针延迟    : {probeLatencyMs:F1} ms（探针窗 {latencyProbeClock.ElapsedMilliseconds}ms）");
+        Assert.True(
+            probeLatencyMs > 400,
+            $"回灌后输出延迟探针 {probeLatencyMs:F1}ms 未过 400ms：占用冲高没被 OutputLatency 一步跟上");
+
+        // 等重同步点火（回灌后约 500ms）加余量走完，再采 3 秒中位看终态。
+        await Task.Delay(1_500);
+        var settledRingMs = await SampleRingMsAsync(renderer, seconds: 3);
         var latencyMs = playback.OutputLatency.TotalMilliseconds;
-        var stalled = renderer.ReadStats();
+        var settled = renderer.ReadStats();
         var playedFinal = played.Snapshot();
 
-        output.WriteLine($"闸后占用中位    : {backfillRingMs:F1} ms（闸 {stallMs}ms）");
-        output.WriteLine($"闸后输出延迟    : {latencyMs:F1} ms");
-        output.WriteLine($"欠载 / 硬重置   : {stalled.UnderrunCount} / {stalled.HardResetCount}");
+        output.WriteLine($"终态占用中位    : {settledRingMs:F1} ms（target {targetMs}ms）");
+        output.WriteLine($"终态输出延迟    : {latencyMs:F1} ms");
+        output.WriteLine($"欠载 / 硬重置   : {settled.UnderrunCount} / {settled.HardResetCount}");
 
-        // 顺序即纪律：先振幅复扫（回灌后声音还在出），再机制与时刻断言。
+        // 顺序即纪律：先振幅复扫（回灌后声音还在出），再机制与数值断言。
         // 「还在出声」看 NonZeroCount 跨开闸增长：垫零块也触发 FramePlayed（内容全零），
         // 总数增长在闸下也成立，是弱形。
         Assert.True(
@@ -552,24 +598,25 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
             $"已播出非零帧占比 {NonZeroRatio(playedFinal):F2} 低于下界");
 
         // 垫零真实发生。
-        Assert.True(stalled.UnderrunCount > 0, "闸 500ms 后欠载计数仍为零：垫零没有发生");
+        Assert.True(settled.UnderrunCount > 0, "闸 500ms 后欠载计数仍为零：垫零没有发生");
 
-        // 未借道硬重置：欠载累计约 300ms 低于 500ms 阈，偏移持续存在恰因如此。
-        Assert.Equal(0, stalled.HardResetCount);
+        // 亚硬重置域的判别锚：欠载累计约 300ms 低于 500ms 阈，硬重置恒零——积压的
+        // 剪除全靠重同步门，与长闸判据的恰一次硬重置判然两分。
+        Assert.Equal(0, settled.HardResetCount);
 
-        // 回填到约「卡顿时长」的水平并稳态维持（FIFO 无控制律拉回）。
-        Assert.InRange(backfillRingMs, 430, 570);
+        // 核心：重同步已剪积压，占用收干回 target 带。第 10 期「维持 430–570」的
+        // 老锚在重同步门下确定性红，随第 11 期设计废止，重锚于此。
+        Assert.InRange(settledRingMs, 150, 300);
 
-        // 核心：OutputLatency 跟随占用。修前出声臂恒回 target，与约 500 的占用差
-        // 300ms，此断言必红；修后 FIFO 臂消费 RingMs，一步跟随后必绿。
+        // 下行跟随（第 10 期交付的另一半）：积压剪掉后 OutputLatency 一步回落。
         Assert.True(
-            Math.Abs(latencyMs - backfillRingMs) <= followToleranceMs,
-            $"|OutputLatency {latencyMs:F1} − 占用中位 {backfillRingMs:F1}| 超 {followToleranceMs}ms：输出延迟没跟上垫零偏移");
+            Math.Abs(latencyMs - settledRingMs) <= followToleranceMs,
+            $"|OutputLatency {latencyMs:F1} − 占用中位 {settledRingMs:F1}| 超 {followToleranceMs}ms：输出延迟没跟上重同步回落");
 
-        // FIFO 臂选路的真机在场证：offset 从未可用、误差从未在算，
-        // tracker 消费的确是占用而非误差。
-        Assert.False(stalled.ClockOffsetAvailable, "对齐从未开启，offset 不该被判可用");
-        Assert.Equal(0, stalled.PlayTimeErrorUs);
+        // FIFO 臂在场证：offset 从未可用、误差从未在算，tracker 与重同步超额
+        // 走的确是深度臂而非误差臂。
+        Assert.False(settled.ClockOffsetAvailable, "对齐从未开启，offset 不该被判可用");
+        Assert.Equal(0, settled.PlayTimeErrorUs);
 
         await sine.StopAsync(CancellationToken.None);
         playback.Configure(enabled: false, targetBufferMs: targetMs);
