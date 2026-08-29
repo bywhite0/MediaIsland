@@ -147,6 +147,36 @@ impl ResyncGate {
     }
 }
 
+/// 读游标前跳量的上界钳:一步最多丢到目标深度,丢穿目标深度就是亲手制造欠载。
+///
+/// 凡使读游标前跳的动作都过这里,不各自写一份 min——写两份的那一天,两份里
+/// 只有一份记得目标深度是下界。
+///
+/// 返回 0 意味着读游标一帧都不会动,故调用方一步都不许清:外环残差、门的持续期、
+/// 外环取斜率的上一次 QPC,依据全都是「误差信号的地基没跳」。此前门点火块正是
+/// 在这里栽的——钳成 0 的那些轮次读游标没动,却把外环攒的亚毫秒残差清了,而残差
+/// 要攒够 1ms 才进位,每 500ms 被清一次就永远进不了位,误差冻结在原处。
+///
+/// `saturating_sub` 而非裸减:占用低于目标深度时盈余为负,裸减法在 debug 下当场
+/// panic 在实时线程上(带走整个宿主进程),release 下回绕成天文数字、经 min 之后
+/// 等于把整个缓冲一次丢空。饱和到 0 的语义恰好正确:没盈余就一帧都不丢。
+pub fn clamp_shift_frames(frames: usize, available: usize, target_ms: u32) -> usize {
+    frames.min(available.saturating_sub(target_frames(target_ms)))
+}
+
+/// 重同步门点火轮该丢的帧数:超额毫秒折 48k 轴帧数,再过 [`clamp_shift_frames`]。
+///
+/// 折算与钳分两层是刻意的:「毫秒怎么折成帧」与「一步最多丢多少」是两条独立的
+/// 性质,合成一层就无法分别钉住——折算率错了与钳失效了会在同一条判据上混成一团。
+///
+/// 负 `excess_ms` 折成 0 帧。点火轮的超额必为正(阈下 `note` 不点火),但本函数
+/// 签名收的是全体 i64,而裸 `as usize` 对负值是静默回绕(-1 变 1.8e19),经饱和乘
+/// 与钳之后表现为「一步把盈余全丢光」。负超额是放早,不是本函数的事。
+pub fn resync_drop_frames(excess_ms: i64, available: usize, target_ms: u32) -> usize {
+    let frames = (OUTPUT_SAMPLE_RATE as usize).saturating_mul(excess_ms.max(0) as usize) / 1_000;
+    clamp_shift_frames(frames, available, target_ms)
+}
+
 /// 送给 `rubato` 的重采样比率。
 ///
 /// 两个方向必须分清，接反了在真机上表现为「放十几分钟后开始周期性卡顿」，
@@ -710,8 +740,9 @@ mod wasapi {
     use super::{
         build_resampler, device_latency_us, frames_to_ms, output_frames_at_device_position,
         playing_position_frames, prefill_silence_frames, ratio_to_ppm, resample_ratio,
-        target_frames, AlignmentCell, DeviceFrames, PrefillState, RenderStatsCell, ResamplerState,
-        ResyncGate, TargetDepthCell, MIN_TARGET_MS, RESYNC_EXCESS_MS, RING_CAPACITY_FRAMES,
+        resync_drop_frames, target_frames, AlignmentCell, DeviceFrames, PrefillState,
+        RenderStatsCell, ResamplerState, ResyncGate, TargetDepthCell, MIN_TARGET_MS,
+        RESYNC_EXCESS_MS, RING_CAPACITY_FRAMES,
     };
     use crate::convert;
     use crate::convert::MixFormat;
@@ -1273,6 +1304,10 @@ mod wasapi {
                     // 第一次调整凭空多走一步。
                     outer.reset();
                     last_qpc = None;
+                    // 凡使误差信号地基跳变的动作,必须清空全部依赖该信号的累积器。
+                    // ring 整体作废使「超额已持续多久」一并失去意义:漏清它,重置后的
+                    // 第一轮就带着上一段攒下的持续期,一超阈立刻点火再丢一段最旧。
+                    gate = ResyncGate::default();
                     // prefill 重建到外环当下在追的深度，而不是沿用起播时冻结的目标：
                     // 外环已把 target_ms 挪走时，填回旧深度会让内环随即用 τ内（默认
                     // 300 秒）去追差额，两环在同一件事上做功。起播那条「prefill 不随
@@ -1301,24 +1336,28 @@ mod wasapi {
                 None => frames_to_ms(available) as i64 - i64::from(target_ms),
             };
             if gate.note(excess_ms > i64::from(RESYNC_EXCESS_MS), needed) {
-                // 点火轮 excess_ms 必为正(over 为假时 note 不点火),折 48k 帧后
-                // 钳在 available − target_frames 以内:丢穿目标深度就是亲手制造欠载。
-                let excess_frames =
-                    (crate::OUTPUT_SAMPLE_RATE as usize).saturating_mul(excess_ms as usize) / 1_000;
-                let drop_frames =
-                    excess_frames.min(available.saturating_sub(target_frames(target_ms)));
-                {
-                    // 持 ring 锁一次,只做游标回收——丢最旧是 O(1) 的 filled 减法。
-                    let Ok(mut ring) = ring.lock() else { break };
-                    ring.drop_oldest(drop_frames);
+                // 点火轮 excess_ms 必为正(over 为假时 note 不点火)。折帧与上界钳的
+                // 理由住在 resync_drop_frames 一处,这里只按它给的结论办。
+                let drop_frames = resync_drop_frames(excess_ms, available, target_ms);
+                // 真剪了才清。钳把该丢的量钳成 0 时读游标一步都没动,误差信号的地基
+                // 没跳,此时清残差等于把外环攒的亚毫秒积分白扔——残差要攒够 1ms 才
+                // 进位,每 500ms 被清一次就永远进不了位,误差冻结在原处。三步与丢帧
+                // 同进一个条件块,让「一帧没丢却清了」成为结构上不可能。
+                if drop_frames > 0 {
+                    {
+                        // 持 ring 锁一次,只做游标回收——丢最旧是 O(1) 的 filled 减法。
+                        let Ok(mut ring) = ring.lock() else { break };
+                        ring.drop_oldest(drop_frames);
+                    }
+                    // 与硬重置共享的两步:读游标跳段之后误差的历史随之失效,残差留着
+                    // 会让下一步凭空多走;last_qpc 清空让外环下轮重新取基准。
+                    outer.reset();
+                    last_qpc = None;
+                    // 门自身的持续期不在此清:note 点火时已自清,再清一遍是同一件事
+                    // 写两处。重采样器也刻意不重置:流未断,丢最旧只是读游标在连续流上
+                    // 跳了一段,历史样本仍属同一条流——与硬重置场景相反,那边样本整体
+                    // 作废,留着历史才会把旧尾巴混进新流。
                 }
-                // 与硬重置共享的两步:读游标跳段之后误差的历史随之失效,残差留着
-                // 会让下一步凭空多走;last_qpc 清空让外环下轮重新取基准。
-                outer.reset();
-                last_qpc = None;
-                // 重采样器刻意不重置:流未断,丢最旧只是读游标在连续流上跳了一段,
-                // 历史样本仍属同一条流——与硬重置场景相反,那边样本整体作废,
-                // 留着历史才会把旧尾巴混进新流。
             }
 
             let device_frames = match resampler.as_mut() {
@@ -2237,6 +2276,60 @@ mod tests {
         let mut gate = ResyncGate::default();
         assert!(!gate.note(true, 23_999));
         assert!(gate.note(true, 1));
+    }
+
+    #[test]
+    fn resync_drop_takes_the_whole_excess_when_there_is_room() {
+        // D1 正常剪:缓冲 500ms 深、目标 200ms,盈余恰好放得下 300ms 超额的折帧,
+        // 钳不该动它。等号边界本身是钉点——钳写成严格小于一类的形态会当场红。
+        assert_eq!(
+            resync_drop_frames(300, target_frames(500), 200),
+            target_frames(300)
+        );
+    }
+
+    #[test]
+    fn no_surplus_over_target_shifts_nothing() {
+        // D2 钳退化到零:占用恰在目标深度上,盈余为零,一帧都不许丢——丢了就是亲手
+        // 制造欠载。返回 0 同时是给调用方的信号:读游标没动,一个累积器都不许清。
+        assert_eq!(
+            clamp_shift_frames(target_frames(300), target_frames(200), 200),
+            0
+        );
+    }
+
+    #[test]
+    fn the_clamp_caps_the_shift_at_the_surplus() {
+        // D3 钳生效于部分:盈余 50ms,想丢 300ms,只能丢 50ms。
+        assert_eq!(
+            clamp_shift_frames(target_frames(300), target_frames(250), 200),
+            target_frames(50)
+        );
+    }
+
+    #[test]
+    fn occupancy_below_target_saturates_instead_of_wrapping() {
+        // D4 available < target:盈余为负,饱和到 0 而不回绕。裸减法在 debug 下当场
+        // panic 在实时线程上,release 下回绕成天文数字、经 min 之后把缓冲一次丢空。
+        assert_eq!(
+            clamp_shift_frames(target_frames(300), target_frames(100), 200),
+            0
+        );
+    }
+
+    #[test]
+    fn excess_milliseconds_fold_at_the_output_rate() {
+        // D5 折帧率:100ms 在 48k 轴上是 4800 帧,字面钉住时基。盈余给足让钳不参与,
+        // 读到的就是折算本身。
+        assert_eq!(resync_drop_frames(100, target_frames(1_000), 50), 4_800);
+    }
+
+    #[test]
+    fn a_negative_excess_folds_to_no_shift() {
+        // D6 负超额:那是放早,不是本门的事。裸 `as usize` 会把它回绕成天文数字,
+        // 经饱和乘与钳之后表现为「一步把盈余全丢光」;折成 0 帧让它什么都不做。
+        // 钉的是纯函数的定义域——点火轮的超额恒为正,接线上这一条永不走到。
+        assert_eq!(resync_drop_frames(-300, target_frames(500), 200), 0);
     }
 
     #[test]
