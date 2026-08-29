@@ -732,19 +732,46 @@ public class AudioPlaybackServiceTests
     [Fact]
     public void OutputLatency_WithDeviceClockOffset_TracksTheAlignmentError()
     {
-        // 对齐臂：设备时钟偏移可用时，实际输出延迟 = target 加对齐误差。
+        // 对齐臂：设备时钟偏移可用时，实际输出延迟 = 声明预算 D 加对齐误差。
+        // 期望 600 = D 300 + 误差 300；起播 target 200 只作初值,不进对齐臂——
+        // 基线从 target 换 D 正是本期主修,拿 target 作基线的实现在此得 500 而红。
         // 缓冲占用折 450ms 摆在旁边作干扰——选错臂会得 450，两臂的期望值刻意分开。
         var renderer = new FakeRenderer();
         using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
         service.Configure(enabled: true, targetBufferMs: 200);
         Assert.True(service.IsPlaying);
 
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 300 * 10_000, offsetTicks: 1, manualOffsetTicks: 0);
+
         renderer.Stats = new AudioRenderStats(
             RingFrames: 21_600, UnderrunCount: 0, HardResetCount: 0, DeviceFramesRendered: 0,
             DeviceSampleRate: 48_000, ResampleRatioPpm: 0,
             PlayTimeErrorUs: 300_000, ClockOffsetAvailable: true);
 
-        Assert.Equal(TimeSpan.FromMilliseconds(500), service.OutputLatency);
+        Assert.Equal(TimeSpan.FromMilliseconds(600), service.OutputLatency);
+    }
+
+    [Fact]
+    public void OutputLatency_AlignedArm_TakesConfiguredBudgetAsBase()
+    {
+        // service 供值接线：对齐臂基线来自 ConfigureAlignment 下发的 D（ticks 折毫秒），
+        // 不是起播 target。误差取 0，读数即基线本身；ring 折 450ms 作选路干扰、
+        // target 200 作基线干扰——错读哪个都与 300 判然两分。
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(new RecordingSubmitter(), renderer);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        Assert.True(service.IsPlaying);
+
+        service.ConfigureAlignment(
+            enabled: true, dTicks: 300 * 10_000, offsetTicks: 1, manualOffsetTicks: 0);
+
+        renderer.Stats = new AudioRenderStats(
+            RingFrames: 21_600, UnderrunCount: 0, HardResetCount: 0, DeviceFramesRendered: 0,
+            DeviceSampleRate: 48_000, ResampleRatioPpm: 0,
+            PlayTimeErrorUs: 0, ClockOffsetAvailable: true);
+
+        Assert.Equal(TimeSpan.FromMilliseconds(300), service.OutputLatency);
     }
 
     [Fact]

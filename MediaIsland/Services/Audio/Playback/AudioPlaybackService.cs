@@ -168,9 +168,11 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     /// 早先这里直接回目标缓冲深度，当时的注释留了「将来若实测出稳态差超过那个量级，
     /// 再换成平滑后的实测值」——接收端卡顿时渲染垫空帧，实际播放位置相对推流位置的
     /// 偏移正是那样的稳态差，如今兑现：交给 <see cref="OutputLatencyTracker"/> 折算每拍
-    /// 渲染统计。选路两臂：设备时钟偏移可用时用对齐误差（target 加误差即实际输出延迟），
-    /// 不可用时退化读缓冲占用（<see cref="AudioRenderStats.RingMs"/>）；25ms 死区挡住
-    /// 占用在目标附近的持续波动，稳态下输出恒定，呈现不抖的既有观感零变化。
+    /// 渲染统计。选路两臂：设备时钟偏移可用时用声明预算 D 加对齐误差（对齐控制律把
+    /// 出声时刻钉在采集加 D，基线加误差即实际输出延迟；拿 target 作基线会恒偏小
+    /// D 减 target），不可用时退化读缓冲占用（<see cref="AudioRenderStats.RingMs"/>）；
+    /// 25ms 死区挡住占用在目标附近的持续波动，稳态下输出恒定，呈现不抖的既有观感零变化。
+    /// D 每拍传入而非缓存：<c>MediaLinkAlignmentCoordinator</c> 运行时重下发不经停播重启。
     /// 完整立论见跟踪器类注释。
     ///
     /// 采样节流 100ms：<see cref="IAudioRenderer.ReadStats"/> 与渲染送帧的 Push 同一把锁，
@@ -204,8 +206,11 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
             {
                 Volatile.Write(ref _latencySampledAtMs, now);
                 var stats = _renderer.ReadStats();
+                // 对齐臂基线 D 的读法：写点 ConfigureAlignment 在 _gate 内，本属性无锁读，
+                // Volatile 读防 long 撕裂。未下发过对齐时为 0，那时偏移不可用走 FIFO 臂，零值不进对齐臂。
                 _latencyTracker.Sample(
-                    stats.HasStarted, stats.ClockOffsetAvailable, stats.RingMs, stats.PlayTimeErrorUs);
+                    stats.HasStarted, stats.ClockOffsetAvailable, stats.RingMs, stats.PlayTimeErrorUs,
+                    alignedBaseMs: Volatile.Read(ref _alignmentDTicks) / 10_000.0);
             }
 
             return _latencyTracker.Current;

@@ -17,7 +17,11 @@ namespace MediaIsland.Services.Audio.Playback;
 /// 输出会先跟到低值再爬回——该时段本机无声无听觉参照,显式接受。
 /// 不钳 max(raw, target),因为发送端晶振慢时端上抽干缓冲的真实低占用必须可跟随。
 ///
-/// target 是会话常量(深度变更走停播重启),经构造或 Reset 进入,不逐次传参。
+/// target 是会话常量(深度变更走停播重启),经构造或 Reset 进入,只作初值,不进对齐臂。
+/// 对齐臂基线是每拍传入的声明预算 D:对齐控制律把出声时刻钉在采集 + D,误差收敛后
+/// 实际听觉滞后即 D;若拿 target 作基线,估计恒偏小约 D − target,歌词恒偏快。
+/// D 非会话常量——MediaLinkAlignmentCoordinator 运行时重下发不经停播重启,
+/// 构造缓存会粘住旧值,故走 Sample 逐拍传参。
 /// 全成员收在一把私有锁内:采样与读频率不超过每 100ms 一次,零争用代价,
 /// 不写无锁优化。
 /// </summary>
@@ -27,7 +31,6 @@ internal sealed class OutputLatencyTracker
     internal const double DeadbandMs = 25;
 
     private readonly object _gate = new();
-    private int _targetMs;
     private double _currentMs;
 
     /// <summary>初值即 target:未采到任何样本前,起播常量仍是最好的估计。</summary>
@@ -49,11 +52,18 @@ internal sealed class OutputLatencyTracker
     /// 喂入一拍渲染统计。顺序即规则:未起播先退,再选路,再死区,再一步跟随。
     ///
     /// 未起播时 stats 全零或瞬时读失败,维持现值兜底。选路:设备时钟偏移可用时
-    /// 用对齐误差(target 加误差即实际输出延迟),不可用时退化读缓冲占用。
+    /// 用对齐基线加对齐误差,不可用时退化读缓冲占用。
+    ///
+    /// 对齐臂基线取 alignedBaseMs(声明预算 D)而非 target:对齐控制律把出声时刻
+    /// 钉在采集 + D,误差收敛到零时实际听觉滞后就是 D,基线加误差才是真实输出延迟。
+    /// D 每拍传参:它运行时可变,MediaLinkAlignmentCoordinator 重下发不经停播重启,
+    /// 会话内缓存读不到新值。
     ///
     /// 钳非负收在存储侧:负延迟无物理意义,而对齐误差在极端暂态可把 raw 推到负值。
     /// </summary>
-    internal void Sample(bool hasStarted, bool clockOffsetAvailable, double ringMs, long playTimeErrorUs)
+    internal void Sample(
+        bool hasStarted, bool clockOffsetAvailable, double ringMs, long playTimeErrorUs,
+        double alignedBaseMs)
     {
         lock (_gate)
         {
@@ -62,7 +72,7 @@ internal sealed class OutputLatencyTracker
                 return;
             }
 
-            var raw = clockOffsetAvailable ? _targetMs + playTimeErrorUs / 1000.0 : ringMs;
+            var raw = clockOffsetAvailable ? alignedBaseMs + playTimeErrorUs / 1000.0 : ringMs;
             if (Math.Abs(raw - _currentMs) < DeadbandMs)
             {
                 return;
@@ -75,12 +85,11 @@ internal sealed class OutputLatencyTracker
     /// <summary>回到与构造同语义的初值态。深度变更走停播重启,新 target 从这里进。</summary>
     internal void Reset(int requestedTargetMs) => Initialize(requestedTargetMs);
 
-    /// <summary>构造与 Reset 共用的初值路径:初值语义只此一处。</summary>
+    /// <summary>构造与 Reset 共用的初值路径:初值语义只此一处。初值即 target。</summary>
     private void Initialize(int requestedTargetMs)
     {
         lock (_gate)
         {
-            _targetMs = requestedTargetMs;
             _currentMs = requestedTargetMs;
         }
     }
