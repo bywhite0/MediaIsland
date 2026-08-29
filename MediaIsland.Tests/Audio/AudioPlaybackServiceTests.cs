@@ -810,6 +810,29 @@ public class AudioPlaybackServiceTests
     }
 
     [Fact]
+    public void OutputLatency_AfterRestart_SamplesImmediatelyWithinTheSameWindow()
+    {
+        // 重启必须把采样时刻推回哨兵：新会话首读必采样，即便与旧会话上一拍同窗。
+        // 少了这一步，深度变更后的最多一整窗里读到的还是旧会话的估计——恰在用户
+        // 刚拨完设置、最盯着歌词的那一瞬。假时钟恒值钉住「同窗」：计数递增只可能
+        // 来自哨兵推回，不可能来自窗口自然滑过。
+        var clock = 0L;
+        var renderer = new FakeRenderer();
+        using var service = new AudioPlaybackService(
+            new RecordingSubmitter(), renderer, tickCount64: () => clock);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        clock += 100;
+        _ = service.OutputLatency;
+        Assert.Equal(1, renderer.ReadStatsCount);
+
+        service.Configure(enabled: false, targetBufferMs: 200);
+        service.Configure(enabled: true, targetBufferMs: 200);
+        _ = service.OutputLatency;
+
+        Assert.Equal(2, renderer.ReadStatsCount);
+    }
+
+    [Fact]
     public void ReadAlignmentFacts_CarriesTheOuterLoopPairFromStats()
     {
         // 诊断面的两笔输入（目标深度当前值、外环误差）必须与其余事实同源自同一次

@@ -179,6 +179,10 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
     /// 不可见。起播把采样时刻推回窗口外，首读必采样；同窗双读竞态只是偶发多一次
     /// ReadStats（渲染器自有锁），不为它加锁面，本属性维持无锁读。
     ///
+    /// 更宽的竞态同样显式接受：读者过了在播检查后挂起、横跨整个停播重启的
+    /// in-flight 采样，会把旧会话的 stats 喂进新会话的 tracker——自愈不超过一拍，
+    /// 哨兵已推回、下拍必重采样，残差再由死区吞掉，不设防。
+    ///
     /// 不含端点缓冲（共享模式下约 10 到 30ms）：它本身就在可察觉阈值以下，而读到它需要
     /// IAudioClient::GetStreamLatency，那是一次 FFI 与 ABI 变更。它是本量已知的残余误差。
     ///
