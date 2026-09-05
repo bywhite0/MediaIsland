@@ -150,8 +150,30 @@ impl ResyncGate {
 
 /// 读游标前跳量的上界钳:一步最多丢到目标深度,丢穿目标深度就是亲手制造欠载。
 ///
-/// 凡使读游标前跳的动作都过这里,不各自写一份 min——写两份的那一天,两份里
-/// 只有一份记得目标深度是下界。
+/// 为缩短缓冲而主动丢最旧的两个调用点(重同步门点火、声明预算执行器下调)都过这里,
+/// 不各自写一份 min——写两份的那一天,两份里只有一份记得目标深度是下界。使读游标在
+/// 累积轴上前跳的另有正常消费、硬重置与空档超容量时的整清,那三条都不是为缩短缓冲丢
+/// 最旧。还有一条是丢最旧却不过这道钳:占用顶到容量时继续推入,写游标前移即等价于丢
+/// 掉最旧那一帧。那一条丢完占用仍等于容量,而容量是目标深度上限的两倍,故它结构上丢
+/// 不穿目标深度——这道钳要守的下界在那一支上自动成立,不是漏了它。
+///
+/// 「一步最多丢到目标深度」以 `available` 是前跳发生那一刻的占用为前提,不是
+/// 无条件保证:传一份过期快照,下界就松掉快照与前跳之间已经消费掉的那部分。
+/// 两个调用点的新鲜度不同,调用方须自己知道站在哪一侧——门点火块的 `available`
+/// 取自本轮读取之前而丢帧发生在读取之后,故那一处的实际下界是目标深度减去一轮
+/// 消费量;声明预算执行器的前跳发生在本轮读取之前,期间没有任何消费。
+///
+/// 后一处也不是等号,而且两个方向都松:占用可以在快照与前跳之间涨,也可以掉。
+///
+/// 涨的一侧是写入路径,那一侧确实只增不减(逐帧写与补静音都对容量封顶)。掉的一侧
+/// 不是写入而是整清:`PlaybackRing::push_at` 在空档超过整个容量时先 `reset`,`filled`
+/// 归零,于是占用从原值掉到新到那一包的帧数。触发它的是发送端时刻向前跳过整个容量
+/// (卡顿、换歌、续播),该分支自己的注释就把这当真实工况处理。
+///
+/// 故两侧的结论不同。涨的那一侧快照偏小,方向保守——按偏小的占用算出的钳只会剪得
+/// 更少、剪后深度只会更高。掉的那一侧快照偏大,钳据一个已经不存在的盈余去剪,
+/// `drop_oldest` 又是饱和的,读游标可以一路推到占用见底,即剪穿目标深度。
+/// 这个竞态是既有的,门点火块吃的是同一个快照;此处只陈述它,不断言它不发生。
 ///
 /// 返回 0 意味着读游标一帧都不会动,故调用方一步都不许清:外环残差、门的持续期、
 /// 外环取斜率的上一次 QPC,依据全都是「误差信号的地基没跳」。此前门点火块正是
@@ -281,7 +303,19 @@ impl PendingShift {
     /// 墙钟内把占用顶到那里。重同步门此刻拦不住——门的持续期按消费帧数计,即半秒的播放
     /// 时长,而回灌不消耗播放时长,那半秒里占用可以远高于目标深度加超额阈值而门一动不动;
     /// 滤掉一个 RTT 内自行排空的突发簇,本就是那个持续期的存在理由。占用越过「容量减去
-    /// 本笔请求量」之后钳即真咬,咬掉的量按上面那条既定语义交外环慢慢补。
+    /// 本笔请求量」之后钳即真咬。
+    ///
+    /// 咬掉的量有两处后果,不止一处。一是那一段深度只能按上面那条既定语义交外环慢慢补。
+    /// 二是本件与调用方在此刻不再同步:调用方那侧的目标深度按整笔生效量无条件推到位,
+    /// 而这里只记下钳后的量,于是用户拨回来时 [`PendingShift::owe_trim`] 抵扣不到那么多
+    /// pad,差额全额交真剪——读游标为那次上调一次都没停过,却为这次下调实打实跳了一段,
+    /// 恰好打掉抵扣在先本要防的那件事。
+    ///
+    /// 后者有界,故本件不为它做二次限幅:真剪一律过读游标前跳的上界钳,而那道钳按传进去
+    /// 的占用把剪后深度托在目标深度上——前提是那个占用没有偏大(见 [`clamp_shift_frames`]
+    /// 记的那条整清路径);且只在深度积压时可达,而那时重同步门本来就要剪掉
+    /// 大部分积压,多剪的量与门本要做的事重叠。在本件里补一道限幅,补的是一笔它算不出
+    /// 的账——它不知道调用方把目标深度推了多少——那会是一段无判官的死防御。
     pub fn owe_pad(&mut self, frames: usize, headroom_frames: usize) {
         self.pad_frames += frames.min(headroom_frames);
     }
@@ -313,6 +347,87 @@ impl PendingShift {
     pub fn clear(&mut self) {
         self.pad_frames = 0;
     }
+}
+
+/// 声明预算 D 的有效域闸:offset 不可用时 D 无所指,既不执行也不动锚。
+///
+/// 这不是一道防抖动的护栏,是 D 的定义决定的。D 的含义是「在发送端采样之后 D 毫秒
+/// 出声」,而把发送端的那个时刻映射到本机轴要靠跨机 offset。offset 不可用时,那个时刻
+/// 在本机没有坐标,「D 毫秒之后」也就没有所指;此时让目标深度去追 D,追的是一个没有
+/// 物理所指的数。下发侧按同一口径:判不过时 D 与 offset 一起置零,那个零的含义是
+/// 「D 此刻不可用」,不是「D 是 0」。不带闸去读它,是在它的有效域之外读它。
+///
+/// 收整枚 [`AlignmentCell`] 而不是收一个 `bool`:闸的判据在于它绑到哪个条件上,
+/// 而绑定关系一旦落在形参上就跑到调用点去了,判据再也看不见它——传 `true` 与传
+/// [`AlignmentCell::is_enabled`] 在那种形态下无从分辨,而后者在 offset 判不过时仍为真。
+/// D 也一并在这里读,理由相同:两次读同属一个绑定。
+///
+/// 闸住的必须是整个 [`SetpointStep::note`],不能只闸返回值。锚若在闸关期间跟着那个
+/// 不可用的值挪过去,恢复的那一轮 D 一回到真值,锚与它的差就成了一次凭空的反向阶跃
+/// ——用户没拨过滑块,读游标却跳了一整段。
+///
+/// 代价是闸关期间用户拨滑块不当场生效。这与用户在该状态下本就成立的可见契约一致
+/// (声音照出、只是不对齐),且锚停在最后一个有效 D 上,恢复那一轮一次性补上。
+pub fn live_setpoint_step(
+    setpoint: &mut SetpointStep,
+    alignment: &AlignmentCell,
+    current_target_ms: u32,
+) -> i64 {
+    if !alignment.offset_available() {
+        return 0;
+    }
+
+    setpoint.note(alignment.d_ticks(), current_target_ms)
+}
+
+/// 一次声明预算阶跃的位移计划:目标深度推到哪,以及本轮该真剪多少帧。
+///
+/// 两个方向是同一根轴上的反向操作。`applied` 为负是下调:读游标前跳、丢最旧,当场
+/// 做得完,故本件把该剪的帧数算出来交调用方去剪。`applied` 为正是上调:读游标暂停,
+/// 某几轮不从缓冲读而直接写零,生产者继续写故占用上涨,跨若干轮摊完,故本件只把欠账
+/// 记进 `shift`、真剪帧数返 0。`applied` 为零两侧都不动,连 `shift` 都不碰。
+///
+/// 真剪一律过 [`clamp_shift_frames`],且下界取的是新目标深度而不是旧的:本笔阶跃之后
+/// 该守的就是新的那条。取旧的会把该剪的量再钳掉一截,于是下调半天深度下不来。
+///
+/// 一处已裁定保留的不对称:返回的新目标深度按整笔 `applied` 无条件走满,而垫零那一侧
+/// 的欠账可能被容量钳咬成 0。于是用户拨回来时 [`PendingShift::owe_trim`] 抵扣不到那么
+/// 多,差额全额交真剪——读游标为那次上调一次都没停过,却为这次下调实打实跳了一段。
+/// 此处刻意不做二次限幅:本期已裁定接受这条不对称。修它要把容量钳从欠账时点挪到
+/// 摊还时点,那是 [`PendingShift`] 的接口重构,不是这里加一道夹取。真剪那一段的边界
+/// 由 [`clamp_shift_frames`] 定,连它的前提一起,理由住在那里一处。
+///
+/// 两条前提由调用方保证,本件不检查也不饱和。`applied` 须是 [`SetpointStep::note`] 的
+/// 返回值,故其绝对值不超过目标深度上下界之差,裸取负与转 u32 都靠这一条;`available`
+/// 须是环形缓冲某一刻的占用读数,故不超过 [`RING_CAPACITY_FRAMES`](`filled` 的全部
+/// 改动点都在界内,故这一条与快照新不新无关),容量余量那处裸减靠这一条。两处若改成
+/// 饱和运算,得到的是两段可证不可达、也就永远没有判官的分支。
+pub fn plan_setpoint_shift(
+    applied: i64,
+    available: usize,
+    target_ms: u32,
+    shift: &mut PendingShift,
+) -> (u32, usize) {
+    if applied == 0 {
+        return (target_ms, 0);
+    }
+
+    let next_target_ms = (i64::from(target_ms) + applied) as u32;
+    if applied < 0 {
+        // 抵扣在先:pad 是尚未发生的位移,取消它零代价——缓冲里一帧都还没动过。若先把
+        // 垫零垫完再去剪,用户来回拨滑块会听到一串本可互相抵消的静音与跳跃。
+        let owed = shift.owe_trim(target_frames((-applied) as u32));
+        return (
+            next_target_ms,
+            clamp_shift_frames(owed, available, next_target_ms),
+        );
+    }
+
+    shift.owe_pad(
+        target_frames(applied as u32),
+        RING_CAPACITY_FRAMES - available,
+    );
+    (next_target_ms, 0)
 }
 
 /// 送给 `rubato` 的重采样比率。
@@ -876,11 +991,12 @@ mod wasapi {
     use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 
     use super::{
-        build_resampler, device_latency_us, frames_to_ms, output_frames_at_device_position,
-        playing_position_frames, prefill_silence_frames, ratio_to_ppm, resample_ratio,
-        resync_drop_frames, target_frames, AlignmentCell, DeviceFrames, PrefillState,
-        RenderStatsCell, ResamplerState, ResyncGate, TargetDepthCell, MIN_TARGET_MS,
-        RESYNC_EXCESS_MS, RING_CAPACITY_FRAMES,
+        build_resampler, device_latency_us, frames_to_ms, live_setpoint_step,
+        output_frames_at_device_position, plan_setpoint_shift, playing_position_frames,
+        prefill_silence_frames, ratio_to_ppm, resample_ratio, resync_drop_frames, target_frames,
+        AlignmentCell, DeviceFrames, PendingShift, PrefillState, RenderStatsCell, ResamplerState,
+        ResyncGate, SetpointStep, TargetDepthCell, MIN_TARGET_MS, RESYNC_EXCESS_MS,
+        RING_CAPACITY_FRAMES,
     };
     use crate::convert;
     use crate::convert::MixFormat;
@@ -953,9 +1069,28 @@ mod wasapi {
         /// 播放中改目标深度。渲染循环下一轮即读到，越界值被夹到支持区间内。
         ///
         /// 本期不导出到 FFI：新增导出是 ABI 变更，而 ABI 只在一处升一次。
-        /// 这里先把内部表示改成可写的。当前 target 的唯一运行时写者是外环
-        /// （渲染线程内的读-改-写，无竞争）；一旦本方法接上第二个写者，
-        /// 外环那次读-改-写会静默吃掉这里的设置，届时外环必须改成 `fetch_update`。
+        /// 这里先把内部表示改成可写的。
+        ///
+        /// 运行时写者现在有两个，都在渲染线程内、彼此无竞争：外环每轮那次读-改-写，
+        /// 以及声明预算执行器那一笔。后者的读取在本轮开头、写入在阶跃算完之后，
+        /// 中间隔着大半个循环体，连外环自己那次写都落在当中，故它吃得尤其宽。
+        /// 一旦本方法接上 FFI 成为第三个写者，这两条读-改-写都会静默吃掉外部设置。
+        ///
+        /// 届时两处都要改，改法不同。外环那条不是换一个原子读-改-写就能了事：替它的写法
+        /// 须同时满足三条约束。一、[`OuterLoop::step`] 带跨轮残差，进位一次扣一次，故不能
+        /// 落在会被重跑的闭包里——`fetch_update` 的闭包按标准库契约可以被跑多次，单次执行
+        /// 不在契约里；而重跑最常发生在有并发写时，也就是引入它要对付的那件事上。
+        /// 二、那枚原子只有 [`TargetDepthCell::set_ms`] 一个写入入口、夹紧就长在那里，
+        /// 而字段在本模块拿得到(私有字段对后代模块可见)、编译器不挡，故绕开 `set_ms` 的
+        /// 写入必须自带夹紧，否则越界值存得进去。
+        /// 三、[`OuterLoop::step`] 交的是绝对目标值而非增量，故「把增量原子地并进当前值」
+        /// 这个形状先得自己算出那个增量。
+        ///
+        /// 执行器那条另有一条：它必须能分辨读到的新值是「外部设置」还是「外环本轮那笔
+        /// 增量」——前者要并进来，后者按不变量 I 仍须丢(理由见执行器写 target 那处)。
+        /// 直白的 `fetch_update(|cur| cur + applied)` 拿到的可能正是外环刚写完的值，
+        /// 而只要可能就够——那正是那处判为错的写法。(只是可能:外环那次写另要过
+        /// 重采样器在场与上一轮 QPC 在手,而执行器点火只过 offset 可用。)
         pub fn set_target_ms(&self, raw_ms: u32) {
             self.target.set_ms(raw_ms);
         }
@@ -1238,6 +1373,11 @@ mod wasapi {
         let mut last_qpc: Option<u64> = None;
         // 重同步门与外环同寿命:积压是跨轮累计出来的病灶,门的记忆也要跨轮。
         let mut gate = ResyncGate::default();
+        // 声明预算执行器的两枚会话内状态,与门同处声明,起停播天然重建。
+        // 两者的记忆同样跨轮,而在新会话里都无所指:锚记的是上一次观测到的 D,
+        // 余额记的是尚未摊完的读游标位移,而新会话的缓冲是空的、深度从预填充重新起。
+        let mut setpoint = SetpointStep::default();
+        let mut shift = PendingShift::default();
         let device_latency_ticks = i64::try_from(session.device_latency_us * 10).unwrap_or(0);
 
         let mut resampler = build_resampler(
@@ -1394,6 +1534,68 @@ mod wasapi {
                 }
             }
 
+            // 声明预算的执行器。D 变了就当场把目标深度推到新值,不经外环:外环按
+            // 准静态残差整定(设备延迟估计残差、prefill 对齐残差那一类),时间常数
+            // 是几百秒的量级,而用户拨滑块是阶跃。把阶跃塞进一条为准静态残差设计的
+            // 通路是用错了通路——慢不是病根。
+            //
+            // 当场推到位,不分轮爬升:`SetpointStep::note` 每次读的是当时的目标深度,
+            // 故一串连续同向阶跃的生效量之和望远镜式相消成末值减初值,与拨了几次无关,
+            // 恒不超过目标深度上下界之差。分轮爬升会让第二笔从尚未抬到位的目标出发,
+            // 那条相消性质随之破裂,而 owe_pad 那道容量钳的量级估计整个建在它上面。
+            //
+            // 闸在 offset 可用性上,理由住在 live_setpoint_step 一处:D 的有效域,
+            // 不是防抖动。判定与位移计划都是纯的,理由与判据跟着那两个纯件走;
+            // 整枚 cell 交进去而不是在这里读出条件,是为了让「闸绑到哪一项」本身可判。
+            let applied = live_setpoint_step(&mut setpoint, &context.alignment, target_ms);
+            let (next_target_ms, drop_frames) =
+                plan_setpoint_shift(applied, available, target_ms, &mut shift);
+
+            if drop_frames > 0 {
+                // 本轮尚未读取,故 `available` 与真实占用之间没有隔着消费。但它两个方向
+                // 都可能偏:推送线程在这中间写入会让真实占用更高(那一侧保守,钳只会剪
+                // 得更少);而 push_at 在空档超过整个容量时会先整清 ring,那一侧真实占用
+                // 掉到新到那一包,快照偏大,这一剪就可能剪穿目标深度。理由住在
+                // clamp_shift_frames 一处。该竞态是既有的——门点火块吃的是同一个快照,
+                // 且它那份还额外过期了一轮消费量。本笔不改它,只是不再断言它不发生。
+                //
+                // 钳到 0 时根本不到这里来,不白抢一次 ring 锁——锁的另一侧是网络推送线程。
+                let Ok(mut ring) = ring.lock() else { break };
+                ring.drop_oldest(drop_frames);
+            }
+
+            if applied != 0 {
+                // 同一轮里外环可能刚写过一次 target,这里覆盖掉它是刻意的:
+                // next_target_ms 算自本轮开头那个外环之前的快照,故外环那一步的增量
+                // 在此丢失。丢得对,而两种情形各有一条理由:外环那次读 d_ticks(误差臂)
+                // 与执行器那次(live_setpoint_step 里)是对同一个原子的两次独立 Relaxed
+                // load,两次读同值时外环的误差就是拿新 D 算的,那一步已是对同一次跳变的
+                // 部分响应,留着就是同一个跳变算两遍、深度多走一截;托管侧 set_runtime 的
+                // store 恰落在两次读之间时,外环用的是旧 D,那一步根本不是对这次跳变的
+                // 响应,依据已经不在。反向不可达:同线程对同一位置的两次读受 coherence 约束。
+                context.target.set_ms(next_target_ms);
+
+                // 地基跳变了就清空全部承载收敛进度的累积器。外环的残差里此刻混着两样,
+                // 两样都得走:跳变之前按旧目标攒下的那部分,依据已经不在了;本轮那一小步
+                // 与上面 target 那一笔同理,两种情形一条是重复计入、一条是依据已不在,
+                // 哪一条都不该留。取斜率用的上一次 QPC 一并清,它是残差的时间基准。
+                //
+                // 与门点火块那个「真剪了才清」的条件不同,不要照抄过去:那里钳成 0 意味着
+                // 读游标一帧都没动、误差信号的地基没跳;而这里即使两侧的钳都把位移咬成 0,
+                // target 与 D 也已经变了,地基照样跳了整整一个 applied。
+                //
+                // 门的持续期也显式归零:「超额已持续多久」是相对旧地基说的。这一处是显式
+                // 清,不靠 note 自清——note 自己那两处清是点火那一轮、以及阈下的每一轮
+                // (赋值幂等,可观测的转移只在回落那一轮),两处都是门自身的设计(前者限速、
+                // 后者「回落即重新起算」),没有一处是为地基跳变而设的,故不能指望它替这里清。
+                outer.reset();
+                gate = ResyncGate::default();
+                last_qpc = None;
+                // 重采样器刻意不重置,这一点与硬重置相反:流未断,读游标只是在连续流上
+                // 跳了一段或停了一段,历史样本仍属同一条流。硬重置那边是样本整体作废,
+                // 留着历史才会把旧尾巴混进新流。
+            }
+
             // 本次要吃多少输入：重采样时由 rubato 说，比率与输出块都会改变它，
             // 故两者都要先设好再问。
             let needed = match resampler.as_mut() {
@@ -1429,14 +1631,33 @@ mod wasapi {
                 continue;
             }
 
-            let taken = {
+            // 垫零消费路径。本轮该垫的那部分直接写零、不从缓冲读:不消费即读游标暂停,
+            // 而生产者继续写,占用因此上涨——这正是上调声明预算要的效果。填零逻辑不必
+            // 新写一份,`read_into` 取不足时本就填零(重复上一帧会产生蜂鸣);垫零要的
+            // 只是「不消费」这一件事。
+            let pad_this = shift.take_pad(needed);
+            staging[..pad_this * channels].fill(0);
+
+            // 轮内混合把子切片交给 `read_into` 天然成立:它按 `out.len()` 自己算 wanted,
+            // 故一轮里垫几帧、读几帧精确到帧,不引入按轮取整的残余。整轮全垫时不去持锁:
+            // 要读的是 0 帧,而锁的另一侧是网络推送线程。
+            let want = needed - pad_this;
+            let taken = if want > 0 {
                 let Ok(mut ring) = ring.lock() else { break };
-                ring.read_into(&mut staging[..needed * channels])
+                ring.read_into(&mut staging[pad_this * channels..needed * channels])
+            } else {
+                0
             };
 
-            if taken < needed {
+            // 欠载判定只对真去读的那部分生效。垫零帧既不计 stats 的欠载数,也不计
+            // prefill 的连续欠载:它是用户刻意调设定值的结果,不是数据不够。计进去会让
+            // 整轮全垫的那几轮凑够连续欠载阈值而触发硬重置,那会把 ring 全清、重新
+            // 预填充,恰好毁掉执行器刚做到位的事——而硬重置计数还是真机判据用来判别
+            // 工况域的锚,污染了它,判据就分不清「设备真缺了数据」与「用户拨了滑块」。
+            // want == 0 即整轮全垫,走 note_progress 那一臂:那一轮一帧都没缺。
+            if want > 0 && taken < want {
                 stats.note_underrun();
-                if prefill.note_underrun(frames_to_ms(needed - taken)) {
+                if prefill.note_underrun(frames_to_ms(want - taken)) {
                     stats.note_hard_reset();
                     // 时间轴随 ring 一起作废，误差信号从头来。残差留着会让重置后的
                     // 第一次调整凭空多走一步。
@@ -1446,10 +1667,27 @@ mod wasapi {
                     // ring 整体作废使「超额已持续多久」一并失去意义:漏清它,重置后的
                     // 第一轮就带着上一段攒下的持续期,一超阈立刻点火再丢一段最旧。
                     gate = ResyncGate::default();
-                    // prefill 重建到外环当下在追的深度，而不是沿用起播时冻结的目标：
+                    // 位移余额同理作废:它记的是「把现有占用推到某处」,而现有占用已经
+                    // 不在了。留着会让重新预填充之后凭空垫上一段静音,而那一段静音在
+                    // 用户听来与欠载不可区分。
+                    //
+                    // setpoint 的锚刻意不动:硬重置这件事本身不改变 D,锚照样有效。
+                    // 同一轮里执行器也可能刚点过火,那不影响这条:那一笔的锚已经在点火
+                    // 时按它自己的规则前进过了。重置锚会让下一轮把「当前 D 与陈旧锚之
+                    // 差」看作一次新阶跃执行下去,那是把用户从没拨过的滑块替他拨了一次。
+                    shift.clear();
+                    // prefill 重建到本轮开头读到的那个目标深度，而不是沿用起播时冻结的目标：
                     // 外环已把 target_ms 挪走时，填回旧深度会让内环随即用 τ内（默认
                     // 300 秒）去追差额，两环在同一件事上做功。起播那条「prefill 不随
                     // 外环变」说的是不要每轮重读，重置时重读一次不违反它。
+                    //
+                    // 一处已登记的过期:target_ms 是本轮开头取的快照,而在它之后写过
+                    // cell 的有两个,不止一个。外环那次写(误差臂里那一步)幅度小但常有;
+                    // 执行器点火那次是整笔阶跃,可达数百毫秒,但要硬重置与阶跃撞在同一轮
+                    // 才可达,极罕见。两者都会让这里按一个已经不是当前值的深度重建
+                    // prefill。共同点是它不像重采样比率那处一轮自愈——prefill 的目标深度
+                    // 是构造时定死的一个数,要等下一次硬重置才会重取。本期登记不修:
+                    // 改它要动这条重置路径的取值来源,而本笔只做接线。
                     prefill = PrefillState::new(target_frames(target_ms));
                     let Ok(mut ring) = ring.lock() else { break };
                     ring.reset();
@@ -2325,6 +2563,36 @@ mod tests {
     }
 
     #[test]
+    fn the_capacity_covers_the_deepest_target_plus_the_largest_pad_debt() {
+        // C1 容量账。垫零期间不消费而生产继续,占用一路涨向「起始占用 + 待垫量」。
+        // 两项各自的上界:占用的上界就是目标深度的上界;单笔待垫量的上界是目标深度
+        // 上下界之差——一串连续同向上调的生效量在同一根目标深度轴上望远镜式相消成
+        // 末值减初值,与拨了几次无关。两者之和仍须装得进环形缓冲,否则写游标前移即
+        // 等价于静默丢最旧,把垫零刚推高的占用又推了回去。
+        let deepest = target_frames(MAX_TARGET_MS);
+        let largest_debt = target_frames(MAX_TARGET_MS - MIN_TARGET_MS);
+        assert!(deepest + largest_debt < RING_CAPACITY_FRAMES);
+
+        // 余量恰 2400 帧,即输出率上的 50ms。这个数在代数上恒等于
+        // target_frames(MIN_TARGET_MS):容量是上界的两倍,减去上界、再减去「上界减
+        // 下界」,剩下的正是下界那一份。故字面钉住 2400 钉的是下界与输出率这两项,
+        // 上界改动不从这条露头——那一项归容量绝对值那条钉。
+        assert_eq!(RING_CAPACITY_FRAMES - (deepest + largest_debt), 2_400);
+    }
+
+    #[test]
+    fn the_ring_capacity_derives_to_two_seconds_at_the_output_rate() {
+        // C2 字面钉:96_000 帧即输出率上的 2000ms。
+        //
+        // 与上面 ring_capacity_is_twice_the_upper_bound 分工,两条各挡各的:那条钉
+        // 「容量由上界的两倍导出」这条来历,上界与容量一起变时它恒绿;这条钉容量的
+        // 绝对值,故上界从 1000 改成别的数(导出值随之走)只有这条看得见。两条断言若
+        // 合写在一处,那条就再无独有的红点——任何使它红的改动都会连带这条一起红,
+        // 而两处同时红分不出是来历坏了还是数值变了。
+        assert_eq!(RING_CAPACITY_FRAMES, 96_000);
+    }
+
+    #[test]
     fn prefill_gate_opens_only_after_target_is_reached() {
         let mut state = PrefillState::new(target_frames(200));
 
@@ -2719,6 +2987,265 @@ mod tests {
         // 而例外的默认值必须是「什么都不做」。
         let mut shift = PendingShift::default();
         assert_eq!(shift.take_pad(400), 0);
+    }
+
+    #[test]
+    fn a_zero_step_moves_neither_the_target_nor_the_balance() {
+        // R1 零不动。这是渲染每一轮的常态路径:D 没变时执行器必须什么都不做,连余额
+        // 都不许碰。若零也走进某一条臂并顺手动了余额,未清完的垫零会被每一轮的零阶跃
+        // 反复啃掉,用户上调一次深度只涨一点点就再也不涨。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(target_frames(100), PLENTY);
+
+        assert_eq!(
+            plan_setpoint_shift(0, target_frames(900), 300, &mut shift),
+            (300, 0)
+        );
+        assert_eq!(shift.take_pad(PLENTY), target_frames(100), "余额须原封不动");
+    }
+
+    #[test]
+    fn a_step_up_owes_a_pad_and_cuts_nothing() {
+        // R2 上调走垫零臂:读游标暂停,一帧都不剪。剪了就是把刚要推高的占用又推回去。
+        // 余量按「能欠下的最大一笔」留足,故这一条读的是方向路由,不牵扯容量钳。
+        let mut shift = PendingShift::default();
+        let available = RING_CAPACITY_FRAMES - target_frames(MAX_TARGET_MS - MIN_TARGET_MS);
+
+        let (next, drop) = plan_setpoint_shift(300, available, 300, &mut shift);
+
+        assert_eq!(next, 600);
+        assert_eq!(drop, 0, "上调不得真剪");
+        assert_eq!(
+            shift.take_pad(PLENTY),
+            target_frames(300),
+            "整笔记成垫零欠账"
+        );
+    }
+
+    #[test]
+    fn a_step_down_cuts_now_and_owes_no_pad() {
+        // R3 下调走真剪臂:当场做得完,不留欠账。留成欠账等于让下调也跨轮摊,而下调要
+        // 丢的是已经在缓冲里的最旧样本,拖到下一轮只是让它们更旧。
+        let mut shift = PendingShift::default();
+
+        let (next, drop) = plan_setpoint_shift(-300, target_frames(900), 600, &mut shift);
+
+        assert_eq!(next, 300);
+        assert_eq!(drop, target_frames(300));
+        assert_eq!(shift.take_pad(PLENTY), 0, "下调不留垫零欠账");
+    }
+
+    #[test]
+    fn a_pending_pad_is_cancelled_before_anything_is_cut() {
+        // R4 抵扣在先。已欠 100ms 垫零时来一笔 300ms 下调:先抵掉那 100ms——取消一笔
+        // 尚未发生的位移零代价,缓冲里一帧都还没动过——只剩 200ms 交真剪。若先垫完再剪,
+        // 用户来回拨滑块会听到一串本可互相抵消的静音与跳跃。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(target_frames(100), PLENTY);
+
+        let (_, drop) = plan_setpoint_shift(-300, target_frames(900), 600, &mut shift);
+
+        assert_eq!(drop, target_frames(200), "抵扣之后才是该真剪的量");
+        assert_eq!(shift.take_pad(PLENTY), 0, "抵扣掉的那部分不再欠垫");
+    }
+
+    #[test]
+    fn a_small_step_down_only_eats_into_the_pending_pad() {
+        // R5 下调量小于欠垫量:全额被抵扣,一帧都不剪,余额只减不清。
+        // 与 R4 各挡各的:R4 挡「抵扣之后剩下的量交真剪」,这条挡「抵扣够用时不许动
+        // 缓冲」——把抵扣写成「先剪了再补记」时,只有这条看得见。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(target_frames(300), PLENTY);
+
+        let (_, drop) = plan_setpoint_shift(-100, target_frames(900), 400, &mut shift);
+
+        assert_eq!(drop, 0, "抵扣够用就一帧都不该剪");
+        assert_eq!(
+            shift.take_pad(PLENTY),
+            target_frames(200),
+            "余额只减去抵扣掉的那部分"
+        );
+    }
+
+    #[test]
+    fn a_cut_never_digs_below_the_new_target_depth() {
+        // R6 真剪确实过共用上界钳。占用只比新目标深度多 50ms 时下调 300ms:剪得动的
+        // 只有那 50ms 盈余,其余钳掉——丢穿目标深度就是亲手制造欠载。去掉那道钳时
+        // 只有这条红,R3 与 R7 的占用都够高、钳本来就不咬。
+        let mut shift = PendingShift::default();
+        let available = target_frames(300) + target_frames(50);
+
+        let (next, drop) = plan_setpoint_shift(-300, available, 600, &mut shift);
+
+        assert_eq!(next, 300, "钳咬合不妨碍目标深度走满整笔");
+        assert_eq!(drop, target_frames(50), "只剪得动盈余那一段");
+    }
+
+    #[test]
+    fn a_comfortable_buffer_takes_the_whole_cut_at_the_new_floor() {
+        // R7 钳的下界取的是新目标深度。600 → 300 那一笔、占用 700ms 是刻意挑的:按新
+        // 下界 300 还剩 400ms 盈余,300ms 全剪得动;下界若误取旧的 600,盈余只剩 100ms,
+        // 这一笔就被钳成 100ms。R3 的占用 900ms 在两种下界之下都够,分不出这件事;
+        // R6 分得出(那一档两种下界给出的量不同),但只有这一档是在「钳本来不该咬」的
+        // 位置上分辨的:这条红意味着钳咬了本不该咬的一口,R6 红只意味着咬的量不对。
+        let mut shift = PendingShift::default();
+
+        let (_, drop) = plan_setpoint_shift(-300, target_frames(700), 600, &mut shift);
+
+        assert_eq!(drop, target_frames(300), "余量充裕就该整笔剪到位");
+    }
+
+    #[test]
+    fn the_pad_debt_is_capped_by_what_the_buffer_can_still_hold() {
+        // R8 容量余量只够一部分时,欠账按余量记。全记会在垫到一半时撞顶,那时写游标
+        // 前移即等价于静默丢最旧,一轮白垫还搭上一段可闻跳跃;不记则用户的上调完全
+        // 不生效。取中间那条:显式有界降级,垫不下的交外环慢慢挪。
+        let mut shift = PendingShift::default();
+        let available = RING_CAPACITY_FRAMES - target_frames(100);
+
+        let (next, _) = plan_setpoint_shift(300, available, 300, &mut shift);
+
+        assert_eq!(next, 600);
+        assert_eq!(
+            shift.take_pad(PLENTY),
+            target_frames(100),
+            "只欠缓冲还装得下的量"
+        );
+    }
+
+    #[test]
+    fn a_capped_pad_still_moves_the_target_the_whole_way() {
+        // R9 那条已裁定保留的不对称,从注释变成判据。占用顶到容量时上调:容量钳把欠账
+        // 咬成 0,而目标深度照样走满整笔 applied——两侧就此不同步,这正是不对称的定义。
+        //
+        // 这一条是给将来「顺手修好」它的人留的。本期已裁定接受不修:后果见 R10,
+        // 且唯一干净的修法要作废一个已过复审的部件连同它的判据。要改,先来红这一条。
+        let mut shift = PendingShift::default();
+
+        let (next, drop) = plan_setpoint_shift(300, RING_CAPACITY_FRAMES, 300, &mut shift);
+
+        assert_eq!(next, 600, "目标深度无条件走满整笔");
+        assert_eq!(drop, 0);
+        assert_eq!(shift.take_pad(PLENTY), 0, "而位移账一帧都没记下");
+    }
+
+    #[test]
+    fn the_capped_pad_leaves_the_matching_step_back_to_a_full_cut() {
+        // R10 不对称的后果。承 R9:上调那笔的欠账被咬成 0,故用户拨回来时抵扣不到任何
+        // 东西,300ms 全额交真剪——读游标为那次上调一次都没停过,却为这次下调实打实跳了
+        // 一段。这一段的边界由 clamp_shift_frames 定,连它的前提一起,理由住在那里一处。
+        let mut shift = PendingShift::default();
+        plan_setpoint_shift(300, RING_CAPACITY_FRAMES, 300, &mut shift);
+
+        let (_, drop) = plan_setpoint_shift(-300, RING_CAPACITY_FRAMES, 600, &mut shift);
+
+        assert_eq!(drop, target_frames(300), "抵扣不到,全额交真剪");
+    }
+
+    /// 一个可用的跨机 offset。取非零即可:0 是「不可用」的编码约定,不兼作别的。
+    const LIVE_OFFSET_TICKS: i64 = 5 * TICKS_PER_MS;
+
+    /// 造一枚对齐参数格。下发侧在可行性判不过时把 D 与 offset 一起置零,
+    /// 这里照那个形态构造,故两项分开传。
+    fn alignment_cell(enabled: bool, d_ticks: i64, offset_ticks: i64) -> AlignmentCell {
+        let cell = AlignmentCell::default();
+        cell.set_enabled(enabled);
+        cell.set_runtime(d_ticks, offset_ticks, 0);
+        cell
+    }
+
+    #[test]
+    fn a_dead_setpoint_domain_neither_steps_nor_moves_the_anchor() {
+        // R11 闸关那一轮不动作,而且不动锚——后者才是要害。第三行:闸关期间 D 被下发侧
+        // 置零,恢复时 D 回到真值;锚若在闸关那一轮跟着那个 0 挪过去,这一行就会得到一次
+        // 凭空的反向阶跃,用户没拨过滑块而读游标跳一整段。
+        //
+        // 关态取「对齐开关关掉而 offset 仍在」的档位,是为了同时挡住把闸误绑到 offset
+        // 单项上的写法——那种绑法在这一档会判成开。绑到开关上的那种写法由 R13 挡。
+        let mut step = SetpointStep::default();
+        let live = alignment_cell(true, SETPOINT_D, LIVE_OFFSET_TICKS);
+        let dead = alignment_cell(false, 0, LIVE_OFFSET_TICKS);
+
+        assert_eq!(
+            live_setpoint_step(&mut step, &live, SETPOINT_TARGET_MS),
+            0,
+            "首轮只记锚"
+        );
+        assert_eq!(
+            live_setpoint_step(&mut step, &dead, SETPOINT_TARGET_MS),
+            0,
+            "闸关那一轮不动作"
+        );
+        assert_eq!(
+            live_setpoint_step(&mut step, &live, SETPOINT_TARGET_MS),
+            0,
+            "恢复时不得凭空产生阶跃"
+        );
+    }
+
+    #[test]
+    fn a_real_change_still_fires_once_the_domain_is_live_again() {
+        // R12 闸不是把执行器关死。把闸写成恒关时 R11 三行全绿,只有这条与 R14 红。
+        // 顺带钉住闸关期间用户真拨了滑块的处置:锚停在最后一个有效 D 上,恢复那一轮
+        // 一次性补上,拨了多少就生效多少——闸推迟生效,不吞掉。
+        let mut step = SetpointStep::default();
+        live_setpoint_step(
+            &mut step,
+            &alignment_cell(true, SETPOINT_D, LIVE_OFFSET_TICKS),
+            SETPOINT_TARGET_MS,
+        );
+        live_setpoint_step(
+            &mut step,
+            &alignment_cell(false, 0, LIVE_OFFSET_TICKS),
+            SETPOINT_TARGET_MS,
+        );
+
+        let moved = alignment_cell(true, SETPOINT_D + 200 * TICKS_PER_MS, LIVE_OFFSET_TICKS);
+        assert_eq!(
+            live_setpoint_step(&mut step, &moved, SETPOINT_TARGET_MS),
+            200
+        );
+    }
+
+    #[test]
+    fn the_switch_alone_does_not_open_the_setpoint_domain() {
+        // R13 闸绑的是 offset 可用性,不是对齐开关。这一档正是下发侧判不过时的真实状态:
+        // 开关仍开着(它是用户设置,可行性判不过不会去改它),而 D 与 offset 一起被置零。
+        // 闸若误绑到开关上,这一档会判成开,于是那个「D 此刻不可用」的 0 被当成一次
+        // 真阶跃执行下去——默认预算下就是 −250,缓冲当场被剪到下界。R14 是它的正面对照。
+        let mut step = SetpointStep::default();
+        live_setpoint_step(
+            &mut step,
+            &alignment_cell(true, SETPOINT_D, LIVE_OFFSET_TICKS),
+            SETPOINT_TARGET_MS,
+        );
+
+        let judged_infeasible = alignment_cell(true, 0, 0);
+        assert_eq!(
+            live_setpoint_step(&mut step, &judged_infeasible, SETPOINT_TARGET_MS),
+            0,
+            "开关开着但 offset 不可用,仍算关"
+        );
+    }
+
+    #[test]
+    fn both_the_switch_and_the_offset_open_the_setpoint_domain() {
+        // R14 R13 的正面对照。两条合起来才把闸钉成「offset 可用性」这个双条件:R13 说
+        // offset 不可用即关,这条说开关与 offset 皆可用即开。两处的 cell 只差 offset
+        // 一项,差别就摆在源码里看得见。
+        let mut step = SetpointStep::default();
+        live_setpoint_step(
+            &mut step,
+            &alignment_cell(true, SETPOINT_D, LIVE_OFFSET_TICKS),
+            SETPOINT_TARGET_MS,
+        );
+
+        let moved = alignment_cell(true, SETPOINT_D + 120 * TICKS_PER_MS, LIVE_OFFSET_TICKS);
+        assert_eq!(
+            live_setpoint_step(&mut step, &moved, SETPOINT_TARGET_MS),
+            120,
+            "开关与 offset 皆可用即照常执行,前馈是精确 1:1"
+        );
     }
 
     #[test]
