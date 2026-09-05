@@ -247,6 +247,74 @@ impl SetpointStep {
     }
 }
 
+/// 位移余额:欠下的读游标位移,按轮摊还。与 [`ResyncGate`]、[`SetpointStep`] 同为
+/// 脱离 WASAPI 可测的纯件。
+///
+/// 只有垫零方向需要记账。下调声明预算要读游标前跳(丢最旧),那一步当场做得完;
+/// 上调要读游标暂停——某几轮不从缓冲读、直接写零,生产者继续写故占用上涨——而一轮
+/// 只垫得下本轮的输出帧数,要跨若干轮才摊得完,所以待垫的量必须留在某处。
+///
+/// 本件不知道环形缓冲的存在:容量余量由调用方算好传进来,真正的丢帧与写零也由调用方
+/// 去做。它只管 pad_frames 这一个数。
+#[derive(Default)]
+pub struct PendingShift {
+    pad_frames: usize,
+}
+
+impl PendingShift {
+    /// 欠下一笔垫零。只欠缓冲还装得下的量,垫不下的余额交外环慢慢补。
+    ///
+    /// 容量钳的理由:垫零期间不消费而生产继续,占用一路上涨,撞到环形缓冲容量顶时
+    /// 写游标前移即等价于静默丢最旧,恰好抵消垫零的目的——垫零本是为了把占用推高,
+    /// 丢最旧又把它推了回去,一轮白垫还搭上一段可闻的跳跃。显式有界降级优于静默丢弃:
+    /// 垫不下的部分留给外环按它的限速慢慢挪,用户听到的是缓慢收敛而不是当场断音。
+    ///
+    /// 钳的是本次增量,不是累加后的总额,而且每一笔都过钳,不只第一笔。headroom 说的是
+    /// 本次调用那一刻缓冲还空着多少,而已欠未垫的位移尚未发生、占用还没为它涨过,故那笔
+    /// 旧账不该被当次余量二次剪裁。
+    ///
+    /// 单笔请求量本身有界:一串相继的上调在同一根目标深度轴上首尾相接,每笔生效量都相对
+    /// 当时的目标深度算出,故其和望远镜式相消成末值减初值,恒不超过目标深度上下界之差。
+    /// 而缓冲容量取的正是目标深度上界的两倍,故稳态工况下余量充裕,这道钳罕有咬合。
+    ///
+    /// 但它确实会咬,不是理论边角:占用的上限就是容量本身,而卡顿后的整批回灌能在几毫秒
+    /// 墙钟内把占用顶到那里。重同步门此刻拦不住——门的持续期按消费帧数计,即半秒的播放
+    /// 时长,而回灌不消耗播放时长,那半秒里占用可以远高于目标深度加超额阈值而门一动不动;
+    /// 滤掉一个 RTT 内自行排空的突发簇,本就是那个持续期的存在理由。占用越过「容量减去
+    /// 本笔请求量」之后钳即真咬,咬掉的量按上面那条既定语义交外环慢慢补。
+    pub fn owe_pad(&mut self, frames: usize, headroom_frames: usize) {
+        self.pad_frames += frames.min(headroom_frames);
+    }
+
+    /// 欠下一笔真剪(读游标前跳、丢最旧),返回抵扣之后还该真剪多少帧。
+    ///
+    /// 抵扣在先:pad 是尚未发生的位移,取消它零代价——缓冲里一帧都还没动过。若先把
+    /// 垫零垫完再去剪,用户来回拨滑块时会听到一串本可互相抵消的静音与跳跃,而两个
+    /// 方向本就是同一根轴上的反向操作,相消是它们的本性。
+    ///
+    /// 两者各减:抵扣掉的那部分既不再欠垫,也不必真剪。返回值是调用方拿去剪的量,
+    /// 怎么剪不归本件知道。
+    pub fn owe_trim(&mut self, frames: usize) -> usize {
+        let cancel = frames.min(self.pad_frames);
+        self.pad_frames -= cancel;
+        frames - cancel
+    }
+
+    /// 取本轮该垫的帧数并从余额扣除。needed 是本轮的输出帧数——垫零跨轮摊完,一轮
+    /// 垫不下整笔,取多了也无处写。
+    pub fn take_pad(&mut self, needed: usize) -> usize {
+        let taken = self.pad_frames.min(needed);
+        self.pad_frames -= taken;
+        taken
+    }
+
+    /// 硬重置用:ring 已全清,欠下的位移无所指——它记的是「把现有占用推到某处」,
+    /// 而现有占用已经不在了。留着会让重新预填充之后凭空垫上一段静音。
+    pub fn clear(&mut self) {
+        self.pad_frames = 0;
+    }
+}
+
 /// 送给 `rubato` 的重采样比率。
 ///
 /// 两个方向必须分清，接反了在真机上表现为「放十几分钟后开始周期性卡顿」，
@@ -2551,6 +2619,106 @@ mod tests {
         // 饱和之后语义仍然正确:差量饱和成极大负值,折毫秒后夹到 0、钳到下界。
         let mut step = anchored_setpoint();
         assert_eq!(step.note(i64::MIN, SETPOINT_TARGET_MS), -250);
+    }
+
+    /// 大到不参与的余量与需求量。给到饱和值是刻意的:这些条要读的是钳与 min 之外的
+    /// 那部分语义,让它们在条内恒不触发,红点才不会串到别处去。
+    const PLENTY: usize = usize::MAX;
+
+    #[test]
+    fn pad_debt_accumulates_across_rounds() {
+        // P1 余额累加:垫零跨轮摊完,两笔各 4800 帧(48k 轴 100ms)的欠账都得还在。
+        // 后一笔若覆盖前一笔,用户连拨两次滑块只有后一次生效。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(4_800, PLENTY);
+        shift.owe_pad(4_800, PLENTY);
+        assert_eq!(shift.take_pad(PLENTY), 9_600);
+    }
+
+    #[test]
+    fn the_headroom_caps_what_can_be_owed() {
+        // P2 容量钳:想垫 9600 帧而缓冲只空得下 2400,就只欠 2400。垫过头会撞容量顶,
+        // 而撞顶时写游标前移即等价于静默丢最旧,恰好抵消垫零的目的。垫不下的部分
+        // 交外环慢慢补——显式有界降级优于静默丢弃。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(9_600, 2_400);
+        assert_eq!(shift.take_pad(PLENTY), 2_400);
+    }
+
+    #[test]
+    fn the_headroom_caps_each_debt_on_its_own_round() {
+        // P9 钳落在每一笔上,各按自己那一轮的 headroom:既不合并成总额去钳,也不是
+        // 只钳第一笔。三种错法一条全封——钳总额得 min(4800+9600, 2400) = 2400;只在
+        // 余额为零时钳得 4800 + 9600 = 14400;整个去掉钳同样 14400。
+        // 第一笔的 headroom 给到不参与,第二笔才让钳真正咬合。这个配法是扫出来的:
+        // P2 让钳咬合但那时余额为零,单靠它看不出「余额非零时钳还在不在」;而两笔都
+        // 钳不动的配法看不出「钳的是当次还是总额」。两处各占一半,得由这一条合起来钉。
+        // 钳当次才对:headroom 说的是本次调用那一刻缓冲还空着多少,已欠未垫的位移
+        // 尚未发生、占用还没为它涨过,把旧账一并压进当次余量等于无故剪掉先欠的那笔。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(4_800, PLENTY);
+        shift.owe_pad(9_600, 2_400);
+        assert_eq!(shift.take_pad(PLENTY), 7_200);
+    }
+
+    #[test]
+    fn each_round_takes_only_what_that_round_needs() {
+        // P3 按轮消费:欠 1000 帧,每轮只取本轮要的 400,第三轮只剩 200。取多了本轮
+        // 无处写,不扣余额则永远垫不完。第三轮的 200 才是这条的钉点——前两轮的 400
+        // 在「取了不扣」的写法下碰巧也对。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(1_000, PLENTY);
+        assert_eq!(shift.take_pad(400), 400);
+        assert_eq!(shift.take_pad(400), 400);
+        assert_eq!(shift.take_pad(400), 200);
+    }
+
+    #[test]
+    fn a_trim_cancels_pending_pad_before_it_cuts_anything() {
+        // P4 抵扣优先:欠着 1000 帧垫零未清,来了 400 的真剪,先取消 400 尚未发生的
+        // 垫零,一帧都不必真剪(返 0),余额剩 600。取消未发生的位移零代价,而先垫
+        // 后剪会让来回拨滑块听到一串本可互相抵消的静音与跳跃。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(1_000, PLENTY);
+        assert_eq!(shift.owe_trim(400), 0);
+        assert_eq!(shift.take_pad(PLENTY), 600);
+    }
+
+    #[test]
+    fn a_trim_larger_than_the_pad_leaves_the_remainder_to_cut() {
+        // P5 抵扣不足:欠 400 垫零,来了 1000 的真剪,抵掉 400 之后 600 交调用方去剪。
+        // 第二条断言钉的是 pad 那一侧也被扣了——只算抵扣量而不扣余额的写法返回值
+        // 仍对,却会把已经抵消掉的 400 再垫一次。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(400, PLENTY);
+        assert_eq!(shift.owe_trim(1_000), 600);
+        assert_eq!(shift.take_pad(PLENTY), 0);
+    }
+
+    #[test]
+    fn a_trim_with_no_pad_to_cancel_passes_through_whole() {
+        // P6 无余额可抵:整笔原样交给调用方去剪。抵扣是一条旁路而非必经之路——用户
+        // 没在拨滑块的常态下,每一次真剪走的都是这条。
+        let mut shift = PendingShift::default();
+        assert_eq!(shift.owe_trim(1_000), 1_000);
+    }
+
+    #[test]
+    fn a_hard_reset_drops_the_whole_balance() {
+        // P7 硬重置:ring 已全清,欠下的位移无所指——它记的是「把现有占用推到某处」,
+        // 而现有占用已经不在了。留着会让重新预填充之后凭空垫上一段静音。
+        let mut shift = PendingShift::default();
+        shift.owe_pad(1_000, PLENTY);
+        shift.clear();
+        assert_eq!(shift.take_pad(PLENTY), 0);
+    }
+
+    #[test]
+    fn taking_from_an_empty_balance_pads_nothing() {
+        // P8 空余额:没欠就一帧都不垫。这是渲染循环绝大多数轮次走的路——垫零是例外,
+        // 而例外的默认值必须是「什么都不做」。
+        let mut shift = PendingShift::default();
+        assert_eq!(shift.take_pad(400), 0);
     }
 
     #[test]
