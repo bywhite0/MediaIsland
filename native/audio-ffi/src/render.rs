@@ -16,7 +16,8 @@ use std::sync::atomic::{AtomicI64, AtomicU32, AtomicU64, Ordering as AtomicOrder
 
 use rubato::{SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 
-use crate::timeline::CumulativeFrames;
+use crate::outer_loop::DEAD_ZONE_MS;
+use crate::timeline::{CumulativeFrames, TICKS_PER_MS};
 use crate::{OUTPUT_CHANNELS, OUTPUT_SAMPLE_RATE};
 
 /// 抖动缓冲目标深度的取值范围。
@@ -175,6 +176,75 @@ pub fn clamp_shift_frames(frames: usize, available: usize, target_ms: u32) -> us
 pub fn resync_drop_frames(excess_ms: i64, available: usize, target_ms: u32) -> usize {
     let frames = (OUTPUT_SAMPLE_RATE as usize).saturating_mul(excess_ms.max(0) as usize) / 1_000;
     clamp_shift_frames(frames, available, target_ms)
+}
+
+/// 声明预算阶跃的死区,tick。就是外环死区 [`DEAD_ZONE_MS`] 折成 tick,同一个数
+/// 同一个理由:小于误差预算分配额的变化不值得动 target,而每次动 target 都在改
+/// 输出延迟。由那个常量导出而不另写一个 10_000——两份各自为真的声明,改动时
+/// 总有一份记不住。
+///
+/// 它不得低于一毫秒,因为生效量折的是整毫秒:[`DEAD_ZONE_MS`] 若降到 1.0 以下,
+/// 落在死区与一毫秒之间的变化会越过死区却折出 0 毫秒。那一轮不出错,只是白走
+/// 一趟——锚同样前进 0,余量留在原处继续攒,够一毫秒才真动 target。
+pub const SETPOINT_DEAD_ZONE_TICKS: i64 = (DEAD_ZONE_MS * TICKS_PER_MS as f64) as i64;
+
+/// 声明预算 D 的阶跃检测:D 变了多少,折成 target 该动多少。与 [`ResyncGate`]
+/// 同为脱离 WASAPI 可测的纯件。
+///
+/// 前馈,不是反馈。收敛条件下出声时刻 = 采集段 + 网络段 + 缓冲深度 + 设备尾段,
+/// D 变而后三段里只有缓冲深度可控、另两段不变,故 target 定态值的变化量恰等于
+/// ΔD——精确 1:1,不是近似。让外环去「发现」这个已知量是用错了通路:外环按
+/// 准静态残差整定(见 [`crate::outer_loop`] 的时间常数),而用户拨滑块是阶跃。
+#[derive(Default)]
+pub struct SetpointStep {
+    anchor: Option<i64>,
+}
+
+impl SetpointStep {
+    /// 记一轮 D 观测,返回本轮该加到 target 上的毫秒数(0 = 不动作)。
+    ///
+    /// 首轮只记锚:起播已按那一刻请求的深度起,首轮没有「变化」可言。
+    ///
+    /// 死区内不更新锚。若逐次更新,连续漂移就永远进不了执行——相邻两轮各 +0.9ms
+    /// 都在死区之内,而它们相对同一个锚的累计早已越过死区。这与外环把亚毫秒增量
+    /// 攒起来不丢是同一件事。
+    ///
+    /// 锚按钳前折出的整毫秒前进,与 applied 被钳掉多少无关:钳掉的量本就无处
+    /// 可去。若改成「按实际生效量(钳后)前进、把钳掉的部分记成欠账」,target 撞上界
+    /// 之后欠账永远还不掉,于是每一轮都点火、每一次 applied 都是 0——那是空转点火。
+    ///
+    /// 「钳掉的余量」与「截断的余量」是两回事,只有前者要丢。折毫秒向零截断留下的
+    /// 不到一毫秒仍留在锚与 `d_ticks` 之间,下一轮接着攒;锚若整量跳到 `d_ticks`,
+    /// 每次点火最多永久丢弃将近一毫秒,而 `d_ticks` 每个渲染回调读一次,用户拖动
+    /// 滑块时每拍都丢一截,欠跟的那部分会落回外环——绕开外环恰是本纯件的存在理由。
+    pub fn note(&mut self, d_ticks: i64, current_target_ms: u32) -> i64 {
+        let Some(anchor) = self.anchor else {
+            self.anchor = Some(d_ticks);
+            return 0;
+        };
+
+        // 饱和而非裸减:`d_ticks` 是对端在报文里声明的值,畸形或敌意报文可以给出
+        // 任意 i64,而这条链跑在实时渲染线程上,debug 下的溢出 panic 会带走整个
+        // 宿主进程,不是可恢复的托管异常。`saturating_abs` 同理(i64::MIN 的 abs)。
+        let delta_ticks = d_ticks.saturating_sub(anchor);
+        if delta_ticks.saturating_abs() < SETPOINT_DEAD_ZONE_TICKS {
+            return 0;
+        }
+
+        // 折毫秒用 i64 除法(向零截断),两个方向同一口径。给负方向另写一套取整规则,
+        // 等于让「上调半毫秒」与「下调半毫秒」的处置不对称,而 D 是用户来回拨的。
+        let delta_ms = delta_ticks / TICKS_PER_MS;
+        self.anchor = Some(anchor.saturating_add(delta_ms.saturating_mul(TICKS_PER_MS)));
+
+        let current = i64::from(current_target_ms);
+        // 先夹到 u32 值域只为让下面那次 as 无损:负值裸 `as u32` 回绕成天文数字,
+        // 经 clamp_target_ms 之后落在上界,即「下调」被静默翻成「上调到上界」。
+        // 目标深度那条界仍然只由 clamp_target_ms 一处说。
+        let desired = current
+            .saturating_add(delta_ms)
+            .clamp(0, i64::from(u32::MAX));
+        i64::from(clamp_target_ms(desired as u32)) - current
+    }
 }
 
 /// 送给 `rubato` 的重采样比率。
@@ -2330,6 +2400,157 @@ mod tests {
         // 经饱和乘与钳之后表现为「一步把盈余全丢光」;折成 0 帧让它什么都不做。
         // 钉的是纯函数的定义域——点火轮的超额恒为正,接线上这一条永不走到。
         assert_eq!(resync_drop_frames(-300, target_frames(500), 200), 0);
+    }
+
+    /// 声明预算的一个任意起点。绝对值不进任何判据——纯件只看差量。
+    const SETPOINT_D: i64 = 300 * TICKS_PER_MS;
+
+    /// 默认播放延迟预算下的目标深度。
+    const SETPOINT_TARGET_MS: u32 = 300;
+
+    /// 已记锚的纯件。首轮返回值刻意不在这里断言:S1 是它唯一的执行者,
+    /// 助手里再断言一遍会让「锚有初值」那类改动红遍全组,失去定位力。
+    fn anchored_setpoint() -> SetpointStep {
+        let mut step = SetpointStep::default();
+        step.note(SETPOINT_D, SETPOINT_TARGET_MS);
+        step
+    }
+
+    #[test]
+    fn the_setpoint_dead_zone_is_the_outer_loop_dead_zone_folded_to_ticks() {
+        // S8 两条各挡各的,谁也替不了谁。字面这条挡的是「常量仍由 DEAD_ZONE_MS
+        // 导出,而 DEAD_ZONE_MS 或时基被改」;导出那条挡的是「常量被脱钩写死成
+        // 10_000,此后 DEAD_ZONE_MS 再改」——那时字面条恒绿,只有它看得见两份
+        // 声明已经各自为真,而那正是常量文档注释点名要防的形态。
+        assert_eq!(SETPOINT_DEAD_ZONE_TICKS, 10_000);
+        assert_eq!(
+            SETPOINT_DEAD_ZONE_TICKS,
+            (DEAD_ZONE_MS * TICKS_PER_MS as f64) as i64
+        );
+    }
+
+    #[test]
+    fn the_first_observation_only_records_the_anchor() {
+        // S1 首轮没有「变化」可言:起播已按那一刻请求的深度起。锚若有初值 0,
+        // 首轮就会把整个 D 当成一次阶跃执行下去,即起播当场再挪一次深度。
+        let mut step = SetpointStep::default();
+        assert_eq!(step.note(SETPOINT_D, SETPOINT_TARGET_MS), 0);
+    }
+
+    #[test]
+    fn a_setpoint_change_inside_the_dead_zone_moves_nothing() {
+        // S2 与外环死区同一个理由:小于误差预算分配额的变化不值得动 target,
+        // 而每次动 target 都在改输出延迟。
+        let mut step = anchored_setpoint();
+        assert_eq!(step.note(SETPOINT_D + 9_000, SETPOINT_TARGET_MS), 0);
+    }
+
+    #[test]
+    fn dead_zone_rounds_leave_the_anchor_where_it_was() {
+        // S3 本组核心。连着两轮 +0.9ms:第一轮在死区内返 0 且不动锚,第二轮相对
+        // 原锚已是 1.8ms,越过死区并向零截断成 +1。锚若被第一轮更新,第二轮的差量
+        // 只剩 0.9ms、仍在死区内 → 返 0,于是连续漂移永远进不了执行。
+        let mut step = anchored_setpoint();
+        assert_eq!(step.note(SETPOINT_D + 9_000, SETPOINT_TARGET_MS), 0);
+        assert_eq!(step.note(SETPOINT_D + 18_000, SETPOINT_TARGET_MS), 1);
+    }
+
+    #[test]
+    fn the_anchor_advances_by_the_folded_milliseconds_not_by_the_whole_step() {
+        // S12 钉锚的前进量:是折出的整毫秒,不是跳到本轮的 d_ticks。向零截断丢掉的
+        // 那不到一毫秒留在锚与 d_ticks 之间,下一轮接着攒。
+        // 两轮各 +0.9ms:第一轮相对锚是 1.8ms,折出 +1 并把锚推进 1ms;第二轮相对
+        // 新锚是 1.7ms,仍越过死区,再折出 +1。锚若整量跳到 D+1.8ms,第二轮的差量
+        // 只剩 0.9ms、落进死区 → 返 0,那 0.8ms 就永久丢了。
+        // d_ticks 每个渲染回调读一次,拖动滑块时每拍都丢一截,欠跟的量会落回外环。
+        let mut step = anchored_setpoint();
+        assert_eq!(step.note(SETPOINT_D + 18_000, SETPOINT_TARGET_MS), 1);
+        assert_eq!(step.note(SETPOINT_D + 27_000, SETPOINT_TARGET_MS), 1);
+    }
+
+    #[test]
+    fn a_step_down_past_the_lower_bound_applies_only_what_fits() {
+        // S4 下调 300ms:300 − 300 = 0 在下界之外,钳到 50,故实际生效 −250。
+        // 账按钳后的量走——多出来的 50ms 本就无处可去。
+        let mut step = anchored_setpoint();
+        assert_eq!(
+            step.note(SETPOINT_D - 300 * TICKS_PER_MS, SETPOINT_TARGET_MS),
+            -250
+        );
+    }
+
+    #[test]
+    fn a_step_down_below_zero_is_not_silently_turned_into_a_step_up() {
+        // 这一条的必要性是实测出来的:S4 的 −300ms 恰好落在 0 上,不触发回绕,于是
+        // 「先夹到 u32 值域」那道护栏在其余判据之下无人看守——去掉它全组照绿。
+        // −400ms 让 target + ΔD 真的为负:负值裸 `as u32` 回绕成天文数字,经
+        // clamp_target_ms 之后落在上界,即用户下调被静默翻成上调到上界。
+        let mut step = anchored_setpoint();
+        assert_eq!(
+            step.note(SETPOINT_D - 400 * TICKS_PER_MS, SETPOINT_TARGET_MS),
+            -250
+        );
+    }
+
+    #[test]
+    fn a_step_inside_the_range_is_applied_one_to_one() {
+        // S5 上调 300ms,600 在界内。前馈是精确 1:1:收敛条件下 D 变而采集段、
+        // 网络段、设备尾段不变,target 定态值的变化量恰等于 ΔD。
+        let mut step = anchored_setpoint();
+        assert_eq!(
+            step.note(SETPOINT_D + 300 * TICKS_PER_MS, SETPOINT_TARGET_MS),
+            300
+        );
+    }
+
+    #[test]
+    fn a_step_up_past_the_upper_bound_applies_only_what_fits() {
+        // S6 上调 900ms:1200 越上界,钳到 1000,故实际生效 +700。
+        let mut step = anchored_setpoint();
+        assert_eq!(
+            step.note(SETPOINT_D + 900 * TICKS_PER_MS, SETPOINT_TARGET_MS),
+            700
+        );
+    }
+
+    #[test]
+    fn a_step_up_at_the_upper_bound_applies_nothing() {
+        // S7 target 已贴在上界:钳后与钳前同值,故本轮不动作。
+        let mut step = SetpointStep::default();
+        step.note(SETPOINT_D, MAX_TARGET_MS);
+        assert_eq!(step.note(SETPOINT_D + 300 * TICKS_PER_MS, MAX_TARGET_MS), 0);
+    }
+
+    #[test]
+    fn a_change_exactly_at_the_dead_zone_fires() {
+        // S9 恰达阈也点火(死区判 `<`,即点火判 `>=`),与门的恰达阈同一口径。
+        let mut step = anchored_setpoint();
+        assert_eq!(step.note(SETPOINT_D + TICKS_PER_MS, SETPOINT_TARGET_MS), 1);
+    }
+
+    #[test]
+    fn the_anchor_advances_in_full_even_when_the_clamp_eats_the_whole_step() {
+        // S10 钉的是「锚按钳前的折出量前进」:target 贴在上界,+300ms 那轮被钳成
+        // applied = 0,而锚照样前进了整 300ms,故紧接着拨回 D 是一次完整的 −300。
+        //
+        // 锚若改成按 applied(钳后)前进,此刻差量为 0 → 返 0:撞上界后欠账永远
+        // 还不掉,于是每一轮都点火而每一次 applied 都是 0,那是空转点火。
+        // 这与 S12「按折出毫秒前进」不冲突——被截断的余量与被钳掉的余量是两回事:
+        // 前者下一轮还攒得回来,后者本就无处可去。
+        let mut step = SetpointStep::default();
+        step.note(SETPOINT_D, MAX_TARGET_MS);
+        assert_eq!(step.note(SETPOINT_D + 300 * TICKS_PER_MS, MAX_TARGET_MS), 0);
+        assert_eq!(step.note(SETPOINT_D, MAX_TARGET_MS), -300);
+    }
+
+    #[test]
+    fn a_setpoint_from_the_wire_cannot_overflow_the_difference() {
+        // S13 钉两处饱和。d_ticks 是对端在报文里声明的值,畸形或敌意报文可以给出
+        // 任意 i64,故这条路径可达:裸减与裸 abs 在 debug 下都是当场 panic,而这条
+        // 链要跑在实时渲染线程上,panic 会带走整个宿主进程。
+        // 饱和之后语义仍然正确:差量饱和成极大负值,折毫秒后夹到 0、钳到下界。
+        let mut step = anchored_setpoint();
+        assert_eq!(step.note(i64::MIN, SETPOINT_TARGET_MS), -250);
     }
 
     #[test]
