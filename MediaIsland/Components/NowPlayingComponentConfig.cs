@@ -6,6 +6,7 @@ namespace MediaIsland.Components
     {
 
         bool _isHideWhenPaused = false;
+        bool _isShowStatusText = false;
         bool _isShowSource = false;
         bool _isShowSourceName = true;
         double _sourceIconRadius = 16.0;
@@ -93,6 +94,20 @@ namespace MediaIsland.Components
             {                   
                 if (_isShowPlaybackStatus == value) return;
                 _isShowPlaybackStatus = value;
+                OnPropertyChanged();
+            }
+        }
+
+        /// <summary>
+        /// 没有可显示媒体时显示状态文本，而不是整块隐藏。默认关闭，保持旧行为。
+        /// </summary>
+        public bool IsShowStatusText
+        {
+            get => _isShowStatusText;
+            set
+            {
+                if (_isShowStatusText == value) return;
+                _isShowStatusText = value;
                 OnPropertyChanged();
             }
         }

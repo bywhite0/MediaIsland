@@ -20,6 +20,9 @@
     <Border x:Name="MarginHost"
             ClipToBounds="False"
             Background="Transparent">
+    <Grid>
+    <!-- 与 MediaGrid 同级：没有可显示媒体时 MediaGrid 隐藏，状态文本代替它占位。 -->
+    <TextBlock x:Name="StatusText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="14" Opacity="0.72" IsVisible="False" />
     <Grid x:Name="MediaGrid"
           Margin="0"
           HorizontalAlignment="Center"
@@ -89,6 +92,7 @@
                 </ProgressBar.Transitions>
             </ProgressBar>
         </Canvas>
+    </Grid>
     </Grid>
     </Border>
 

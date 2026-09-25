@@ -17,6 +17,13 @@
                     <ToggleSwitch IsChecked="{Binding Settings.IsHideWhenPaused, Mode=TwoWay}" />
                 </controls:FASettingsExpander.Footer>
             </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xF07B;}"
+                                         Header="显示状态文本"
+                                         Description="没有正在播放的媒体时显示「未在播放」，而不是留空。开启「暂停时隐藏组件」后，暂停时仍然隐藏。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsShowStatusText, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
             <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9B2;}" Header="显示专辑封面"
                                          Description="显示当前播放的专辑封面。">
                 <controls:FASettingsExpander.Footer>

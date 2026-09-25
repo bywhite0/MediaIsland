@@ -38,6 +38,7 @@ namespace MediaIsland.Components
         private TimeSpan _currentEndTime;
         private bool _isPlaying;
         private bool _isLoaded;
+        private bool _isIdle;
         private MediaInfo? _currentMediaInfo;
 
         public NowPlayingComponent(
@@ -185,6 +186,9 @@ namespace MediaIsland.Components
                     {
                         UpdateProgressBarVisibility(_currentEndTime);
                     });
+                    break;
+                case nameof(NowPlayingComponentConfig.IsShowStatusText):
+                    Dispatcher.UIThread.InvokeAsync(ApplyStatusText);
                     break;
                 case nameof(NowPlayingComponentConfig.IsProgressBarLeftMargin):
                 case nameof(NowPlayingComponentConfig.IsProgressBarRightMargin):
@@ -390,6 +394,8 @@ namespace MediaIsland.Components
                         }
 
                         MediaGrid.IsVisible = true;
+                        _isIdle = false;
+                        ApplyStatusText();
                         StatusIcon.Glyph = "\uEDB8";
                         break;
                     case MediaPlaybackState.Paused:
@@ -397,6 +403,8 @@ namespace MediaIsland.Components
                         _timelineTimer.Stop();
                         StatusIcon.Glyph = "\uEC90";
                         MediaGrid.IsVisible = !Settings.IsHideWhenPaused;
+                        _isIdle = false;
+                        ApplyStatusText();
                         break;
                     case MediaPlaybackState.Stopped:
                         _isPlaying = false;
@@ -515,7 +523,15 @@ namespace MediaIsland.Components
                 MediaGrid.IsVisible = false;
                 ProgressBar.Value = 0;
                 ProgressContainer.IsVisible = false;
+                _isIdle = true;
+                ApplyStatusText();
             });
+        }
+
+        private void ApplyStatusText()
+        {
+            StatusText.Text = NowPlayingStatusText.Idle;
+            StatusText.IsVisible = NowPlayingStatusText.IsVisible(_isIdle, Settings.IsShowStatusText);
         }
 
         private void UpdateProgressBar(TimeSpan position, TimeSpan duration)

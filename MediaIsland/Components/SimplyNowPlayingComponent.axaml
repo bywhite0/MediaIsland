@@ -19,6 +19,9 @@
     <Border x:Name="MarginHost"
             ClipToBounds="False"
             Background="Transparent">
+    <Grid>
+    <!-- 与 MediaGrid 同级：没有可显示媒体时 MediaGrid 隐藏，状态文本代替它占位。 -->
+    <TextBlock x:Name="StatusText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="{DynamicResource MainWindowBodyFontSize}" Opacity="0.72" IsVisible="False" />
     <Grid x:Name="MediaGrid" ColumnDefinitions="Auto,Auto" HorizontalAlignment="Center" DataContext="{Binding RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:SimplyNowPlayingComponent}}" IsVisible="{Binding !Settings.IsHideWhenPaused}">
         <StackPanel Name="StatusStackPanel" Grid.Column="0" Margin="0" Orientation="Horizontal">
             <ci:FluentIcon x:Name="StatusIcon" Glyph="&#xEDB8;" IsVisible="{Binding Settings.IsShowPlaybackStatus}" VerticalAlignment="Center" Margin="0 0 4 0" />
@@ -49,6 +52,7 @@
                 </controls:OverflowScrollHost>
             </StackPanel>
         </StackPanel>
+    </Grid>
     </Grid>
     </Border>
 

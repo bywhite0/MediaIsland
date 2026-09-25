@@ -29,6 +29,7 @@ namespace MediaIsland.Components
 
         private PluginSettings globalSettings;
         private bool _isLoaded;
+        private bool _isIdle;
         private MediaInfo? _currentMediaInfo;
 
         public SimplyNowPlayingComponent(
@@ -115,6 +116,9 @@ namespace MediaIsland.Components
                         });
                     }
 
+                    break;
+                case nameof(SimplyNowPlayingComponentConfig.IsShowStatusText):
+                    Dispatcher.UIThread.InvokeAsync(ApplyStatusText);
                     break;
                 case "InfoType":
                     Dispatcher.UIThread.InvokeAsync(ApplyInfoType);
@@ -283,6 +287,9 @@ namespace MediaIsland.Components
                 MediaGrid.IsVisible = true;
             }
 
+            _isIdle = false;
+            ApplyStatusText();
+
             StatusIcon.Glyph = mediaInfo.PlaybackInfo.PlaybackState switch
             {
                 MediaPlaybackState.Playing => "\uEDB8",
@@ -330,7 +337,15 @@ namespace MediaIsland.Components
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 MediaGrid.IsVisible = false;
+                _isIdle = true;
+                ApplyStatusText();
             });
+        }
+
+        private void ApplyStatusText()
+        {
+            StatusText.Text = NowPlayingStatusText.Idle;
+            StatusText.IsVisible = NowPlayingStatusText.IsVisible(_isIdle, Settings.IsShowStatusText);
         }
 
     }
