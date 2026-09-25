@@ -75,7 +75,12 @@ namespace MediaIsland
             {
                 ConfigureFileHelper.SaveConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"), Settings);
             };
-            services.AddSettingsPage<GeneralSettingsPage>();
+            services.AddSettingsPageGroup(MediaIslandSettingsPage.GroupId, "\uEBCA", "MediaIsland");
+            services.AddSettingsPage<MediaSettingsPage>();
+            services.AddSettingsPage<LyricsSettingsPage>();
+            services.AddSettingsPage<DisplaySettingsPage>();
+            services.AddSettingsPage<MediaLinkShareSettingsPage>();
+            services.AddSettingsPage<MediaLinkReceiveSettingsPage>();
 #if !DEBUG
             if (Settings.IsTodayEatSentry)
             {

@@ -1,0 +1,21 @@
+<UserControl x:Class="MediaIsland.SettingsPages.ExperimentalBadge"
+             xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ci="http://classisland.tech/schemas/xaml/core"
+             VerticalAlignment="Center"
+             ToolTip.Tip="音频链路仍在实验阶段：行为、参数与默认值可能在后续版本调整。">
+    <Border CornerRadius="4"
+            Padding="8 2"
+            Background="{DynamicResource SystemFillColorCautionBackgroundBrush}">
+        <StackPanel Orientation="Horizontal" Spacing="4">
+            <ci:FluentIcon Glyph="&#xE1E9;"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+            <TextBlock Text="实验性"
+                       FontSize="12"
+                       VerticalAlignment="Center"
+                       Foreground="{DynamicResource SystemFillColorCautionBrush}" />
+        </StackPanel>
+    </Border>
+</UserControl>

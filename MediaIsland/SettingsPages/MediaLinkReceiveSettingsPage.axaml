@@ -1,0 +1,144 @@
+<local:MediaIslandSettingsPage x:Class="MediaIsland.SettingsPages.MediaLinkReceiveSettingsPage"
+                               xmlns="https://github.com/avaloniaui"
+                               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                               xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                               xmlns:controls="using:FluentAvalonia.UI.Controls"
+                               xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                               xmlns:local="clr-namespace:MediaIsland.SettingsPages"
+                               xmlns:models="clr-namespace:MediaIsland.Models"
+                               mc:Ignorable="d"
+                               d:DesignHeight="450" d:DesignWidth="800"
+                               TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+                               Background="{DynamicResource MaterialDesignPaper}"
+                               FontFamily="{StaticResource HarmonyOsSans}"
+                               TextElement.FontWeight="Regular"
+                               TextElement.FontSize="14">
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:MediaLinkReceiveSettingsPage}}">
+        <StackPanel Classes="settings-container animated-intro">
+            <TextBlock Text="接收端：显示并播放另一台设备或外部程序共享过来的歌曲、歌词与音频。对方需要先在「Link to the MEDIA」页开启共享。"
+                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                       TextWrapping="Wrap"
+                       Margin="0 0 0 16" />
+            <ci:IconText Glyph="&#xEDC6;" Text="连接" Margin="0 0 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE44D;}"
+                                         Header="从另一台设备接收"
+                                         Description="显示同一局域网内另一台设备正在播放的歌曲与歌词。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUpstreamIsEnabled, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
+                                         Header="接收状态"
+                                         Description="断开后会自动重试，无需手动重连。">
+                <controls:FASettingsExpander.Footer>
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding MediaLinkUpstreamStatusText}"
+                               TextWrapping="Wrap"
+                               MaxWidth="360" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE109;}"
+                                         Header="对方的地址与密钥"
+                                         Description="填对方设备的 IP 和端口（如 192.168.1.201:21757），以及对方设置页里的连接密钥。注意不是本机的密钥。若已复制对方的配置码，直接点「粘贴配置码」即可自动填好。">
+                <controls:FASettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox Width="200"
+                                 PlaceholderText="192.168.1.201:21757"
+                                 Text="{Binding Settings.MediaLinkUpstreamEndpoint, Mode=TwoWay}" />
+                        <TextBox Width="160"
+                                 PasswordChar="•"
+                                 PlaceholderText="对方的连接密钥"
+                                 Text="{Binding Settings.MediaLinkUpstreamToken, Mode=TwoWay}" />
+                        <Button Content="粘贴配置码" Click="PasteMediaLinkConfigCodeOnClick" />
+                    </StackPanel>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <TextBlock Text="{Binding MediaLinkUpstreamCodeHint}"
+                       IsVisible="{Binding HasMediaLinkUpstreamCodeHint}"
+                       Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                       TextWrapping="Wrap"
+                       Margin="0 4 0 8" />
+            <ci:IconText Glyph="&#xE0D2;" Text="显示内容来源" Margin="0 16 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE0E8;}"
+                                         Header="媒体信息来源"
+                                         Description="决定本机显示的媒体信息从哪里来。默认「本机播放器」即读取本机正在播放的媒体信息；要显示另一台电脑或外部程序发来的内容，请选后两项。">
+                <controls:FASettingsExpander.Footer>
+                    <ComboBox Width="220"
+                              SelectedIndex="{Binding MediaLinkMediaSourceModeIndex, Mode=TwoWay}">
+                        <ComboBoxItem Content="本机播放器" />
+                        <ComboBoxItem Content="仅外部来源" />
+                        <ComboBoxItem Content="外部来源优先" />
+                    </ComboBox>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE2AD;}"
+                                         Header="桌面组件跟随上述来源"
+                                         Description="关闭后，桌面上的对应组件将始终显示本机播放器的内容，忽略外部来源。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkUiUsesEffective, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE579;}"
+                                         Header="共享给其它程序的内容跟随上述来源"
+                                         Description="本机同时开启了共享时生效。关闭后，共享出去的始终是本机播放器的内容，忽略外部来源。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkPushUsesEffective, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <StackPanel Orientation="Horizontal" Spacing="8" Margin="0 16 0 8">
+                <ci:IconText Glyph="&#xF00C;" Text="音频" />
+                <local:ExperimentalBadge />
+            </StackPanel>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1AB;}"
+                                         Header="播放对方的声音"
+                                         Description="把对方设备正在播放的音频放出来。需要先开启「从另一台设备接收」，且媒体信息来源要设为使用对方的信息。开启后本机不再采集自己的输出，因此不会产生回声。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkPlaybackIsEnabled, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1BF;}"
+                                         Header="播放缓冲"
+                                         Description="网络抖动时用来垫底的缓冲长度。有线网络可以调小以降低延迟；无线网络调得太小会断续。修改后会重新开始播放。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown Width="140"
+                                   Minimum="{x:Static models:PluginSettings.PlaybackBufferMsMinimum}"
+                                   Maximum="{x:Static models:PluginSettings.PlaybackBufferMsMaximum}"
+                                   Increment="10"
+                                   FormatString="0 'ms'"
+                                   Value="{Binding Settings.MediaLinkPlaybackBufferMs, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE55F;}"
+                                         Header="对齐出声时刻"
+                                         Description="开启后，本机按发送端声明的播放延迟预算安排出声时刻，两台设备一起放同一路声音时不再一前一后。需要同时开启「播放对方的声音」。条件不满足（预算装不下、对时未就绪）时自动退回普通播放，声音照常，原因记入日志。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.MediaLinkAlignmentIsEnabled, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE29A;}"
+                                         Header="手动出声偏移"
+                                         Description="自动对齐看不见声卡之后的硬件延迟（功放、蓝牙耳机可达一两百毫秒）。这台设备听起来比对面慢就调大，反了就调小，播放中即时生效。按输出设备分别记忆，换设备从 0 开始。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown Width="140"
+                                   Minimum="{x:Static models:PluginSettings.ManualOffsetMsMinimum}"
+                                   Maximum="{x:Static models:PluginSettings.ManualOffsetMsMaximum}"
+                                   Increment="10"
+                                   FormatString="0 'ms'"
+                                   IsEnabled="{Binding HasPlaybackDevice}"
+                                   Value="{Binding MediaLinkManualOffsetMs, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE038;}"
+                                         Header="对齐状态"
+                                         Description="上面三项此刻的实际效果：判定归因、出声误差与缓冲目标深度。校准手动偏移时看着误差数字调即可。页面打开时每秒刷新。">
+                <controls:FASettingsExpander.Footer>
+                    <TextBlock VerticalAlignment="Center"
+                               Text="{Binding MediaLinkAlignmentStatusText}"
+                               TextWrapping="Wrap"
+                               MaxWidth="360" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+        </StackPanel>
+    </ScrollViewer>
+</local:MediaIslandSettingsPage>

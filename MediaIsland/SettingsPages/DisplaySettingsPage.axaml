@@ -1,0 +1,140 @@
+<local:MediaIslandSettingsPage x:Class="MediaIsland.SettingsPages.DisplaySettingsPage"
+                               xmlns="https://github.com/avaloniaui"
+                               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                               xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                               xmlns:controls="using:FluentAvalonia.UI.Controls"
+                               xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                               xmlns:local="clr-namespace:MediaIsland.SettingsPages"
+                               mc:Ignorable="d"
+                               d:DesignHeight="450" d:DesignWidth="800"
+                               TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+                               Background="{DynamicResource MaterialDesignPaper}"
+                               FontFamily="{StaticResource HarmonyOsSans}"
+                               TextElement.FontWeight="Regular"
+                               TextElement.FontSize="14">
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:DisplaySettingsPage}}">
+        <StackPanel Classes="settings-container animated-intro">
+            <ci:IconText Glyph="&#xF306;" Text="歌词" Margin="0 0 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE285;}"
+                                         Header="启用逐字歌词"
+                                         Description="有逐字时间轴时按字推进高亮，关闭则一律逐行展示。展开可调整逐字效果的细节。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEnabled, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+                <controls:FASettingsExpanderItem Content="逐字上浮"
+                                                 Description="逐字推进时，单词内字符依次轻微上浮。"
+                                                 IconSource="{ci:LucideIconSource &#xE61D;}"
+                                                 IsEnabled="{Binding Settings.IsWordLyricsEnabled}">
+                    <controls:FASettingsExpanderItem.Footer>
+                        <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsLiftEnabled, Mode=TwoWay}" />
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+                <controls:FASettingsExpanderItem Content="边缘过渡"
+                                                 Description="在已唱与未唱交界处使用柔和边缘过渡。"
+                                                 IconSource="{ci:LucideIconSource &#xE283;}"
+                                                 IsEnabled="{Binding Settings.IsWordLyricsEnabled}">
+                    <controls:FASettingsExpanderItem.Footer>
+                        <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEdgeFeatherEnabled, Mode=TwoWay}" />
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+                <controls:FASettingsExpanderItem Content="强调效果"
+                                                 Description="任意单词持续超过 1 秒时，呈现缩放与位移效果。"
+                                                 IconSource="{ci:LucideIconSource &#xE29E;}"
+                                                 IsEnabled="{Binding Settings.IsWordLyricsEnabled}">
+                    <controls:FASettingsExpanderItem.Footer>
+                        <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisEnabled, Mode=TwoWay}" />
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+                <controls:FASettingsExpanderItem Content="强调辉光"
+                                                 Description="为强调中的长音字素叠加白色柔光。关闭后仅保留缩放与位移。需要先开启强调效果。"
+                                                 IconSource="{ci:LucideIconSource &#xE299;}">
+                    <controls:FASettingsExpanderItem.IsEnabled>
+                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                            <Binding Path="Settings.IsWordLyricsEnabled" />
+                            <Binding Path="Settings.IsWordLyricsEmphasisEnabled" />
+                        </MultiBinding>
+                    </controls:FASettingsExpanderItem.IsEnabled>
+                    <controls:FASettingsExpanderItem.Footer>
+                        <ToggleSwitch IsChecked="{Binding Settings.IsWordLyricsEmphasisGlowEnabled, Mode=TwoWay}" />
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1C8;}"
+                                         Header="歌词切换过渡"
+                                         Description="切换当前歌词时使用淡入淡出与纵向滑动过渡。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsLyricsTransitionEnabled, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE0BA;}"
+                                         Header="间奏点动画"
+                                         Description="相邻歌词行之间出现超过 4 秒的空档时，以呼吸效果显示三个提示点。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsLyricsInterludeAnimationEnabled, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <ci:IconText Glyph="&#xF26E;" Text="字体" Margin="0 16 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE3DD;}"
+                                         Header="歌词字体"
+                                         Description="分别为原文、翻译、音译设置字体与字重。留空或选择「跟随全局字体」时使用 ClassIsland 的主界面字体。">
+                <controls:FASettingsExpanderItem Content="原文"
+                                                 Description="展示原文歌词时使用的字体与字重。"
+                                                 IconSource="{ci:FluentIconSource &#xF26F;}">
+                    <controls:FASettingsExpanderItem.Footer>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ComboBox MinWidth="220"
+                                      MaxDropDownHeight="360"
+                                      ItemsSource="{Binding FontFamilyOptions}"
+                                      SelectedItem="{Binding LyricsOriginalFontFamilySelection, Mode=TwoWay}" />
+                            <ComboBox MinWidth="140"
+                                      ItemsSource="{Binding FontWeightOptions}"
+                                      SelectedIndex="{Binding Settings.LyricsOriginalFontWeightIndex, Mode=TwoWay}" />
+                        </StackPanel>
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+                <controls:FASettingsExpanderItem Content="翻译"
+                                                 Description="展示翻译歌词时使用的字体与字重；该行没有翻译而回退到原文时，仍按原文设置渲染。"
+                                                 IconSource="{ci:FluentIconSource &#xF375;}">
+                    <controls:FASettingsExpanderItem.Footer>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ComboBox MinWidth="220"
+                                      MaxDropDownHeight="360"
+                                      ItemsSource="{Binding FontFamilyOptions}"
+                                      SelectedItem="{Binding LyricsTranslationFontFamilySelection, Mode=TwoWay}" />
+                            <ComboBox MinWidth="140"
+                                      ItemsSource="{Binding FontWeightOptions}"
+                                      SelectedIndex="{Binding Settings.LyricsTranslationFontWeightIndex, Mode=TwoWay}" />
+                        </StackPanel>
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+                <controls:FASettingsExpanderItem Content="音译"
+                                                 Description="展示音译歌词时使用的字体与字重；该行没有音译而回退到原文时，仍按原文设置渲染。"
+                                                 IconSource="{ci:FluentIconSource &#xF220;}">
+                    <controls:FASettingsExpanderItem.Footer>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <ComboBox MinWidth="220"
+                                      MaxDropDownHeight="360"
+                                      ItemsSource="{Binding FontFamilyOptions}"
+                                      SelectedItem="{Binding LyricsRomanizationFontFamilySelection, Mode=TwoWay}" />
+                            <ComboBox MinWidth="140"
+                                      ItemsSource="{Binding FontWeightOptions}"
+                                      SelectedIndex="{Binding Settings.LyricsRomanizationFontWeightIndex, Mode=TwoWay}" />
+                        </StackPanel>
+                    </controls:FASettingsExpanderItem.Footer>
+                </controls:FASettingsExpanderItem>
+            </controls:FASettingsExpander>
+            <ci:IconText Glyph="&#xEDBA;" Text="正在播放" Margin="0 16 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1DD;}"
+                                         Header="进度条颜色"
+                                         Description="控制「正在播放」组件进度条颜色。可使用 ClassIsland 主题色，或从专辑封面提取主题色（如果可用）。">
+                <controls:FASettingsExpander.Footer>
+                    <ComboBox MinWidth="160" SelectedIndex="{Binding Settings.ProgressBarColorMode, Mode=TwoWay}">
+                        <ComboBoxItem>ClassIsland 主题色</ComboBoxItem>
+                        <ComboBoxItem>封面主题色</ComboBoxItem>
+                    </ComboBox>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+        </StackPanel>
+    </ScrollViewer>
+</local:MediaIslandSettingsPage>

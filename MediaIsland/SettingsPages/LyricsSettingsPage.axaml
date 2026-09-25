@@ -1,0 +1,166 @@
+<local:MediaIslandSettingsPage x:Class="MediaIsland.SettingsPages.LyricsSettingsPage"
+                               xmlns="https://github.com/avaloniaui"
+                               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                               xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+                               xmlns:controls="using:FluentAvalonia.UI.Controls"
+                               xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+                               xmlns:local="clr-namespace:MediaIsland.SettingsPages"
+                               mc:Ignorable="d"
+                               d:DesignHeight="450" d:DesignWidth="800"
+                               TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+                               Background="{DynamicResource MaterialDesignPaper}"
+                               FontFamily="{StaticResource HarmonyOsSans}"
+                               TextElement.FontWeight="Regular"
+                               TextElement.FontSize="14">
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:LyricsSettingsPage}}">
+        <StackPanel Classes="settings-container animated-intro">
+            <ci:IconText Glyph="&#xEEF2;" Text="搜索" Margin="0 0 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE2E0;}"
+                                         Header="歌词来源"
+                                         Description="按列表顺序搜索歌词。「优先逐字」决定从该来源获取逐字还是逐行歌词；是否以逐字效果显示，在「显示效果」页设置。延迟正值提前、负值延后。">
+                <ItemsControl Margin="12,6,12,4" ItemsSource="{Binding LyricsSourceItems}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="8,6"
+                                    Margin="0,0,0,6"
+                                    CornerRadius="4"
+                                    Background="{DynamicResource MaterialDesignCardBackground}">
+                                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="Medium" />
+                                        <TextBlock Text="{Binding Capability}"
+                                                   Margin="0,2,0,0"
+                                                   FontSize="12" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,8,0"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="启用" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <ToggleSwitch IsChecked="{Binding IsEnabled, Mode=TwoWay}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,0,8,0"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="优先逐字" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <ToggleSwitch IsChecked="{Binding UseWordSyncedLyrics, Mode=TwoWay}" />
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="0,0,8,0"
+                                                VerticalAlignment="Center" Spacing="4">
+                                        <TextBlock Text="延迟" VerticalAlignment="Center" />
+                                        <TextBox Width="72"
+                                                 PlaceholderText="0"
+                                                 ToolTip.Tip="毫秒；正值提前、负值延后"
+                                                 Text="{Binding GlobalOffsetMillisecondsText, Mode=TwoWay}" />
+                                        <TextBlock Text="ms" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <Button Grid.Column="4"
+                                            Margin="0,0,4,0"
+                                            Tag="{Binding}"
+                                            ToolTip.Tip="上移"
+                                            Click="MoveLyricsSourceUpOnClick">
+                                        <ci:LucideIcon Glyph="&#xE04E;" />
+                                    </Button>
+                                    <Button Grid.Column="5"
+                                            Tag="{Binding}"
+                                            ToolTip.Tip="下移"
+                                            Click="MoveLyricsSourceDownOnClick">
+                                        <ci:LucideIcon Glyph="&#xE046;" />
+                                    </Button>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE0EC;}"
+                                         Header="AMLL TTML DB 地址"
+                                         Description="AMLL TTML 歌词库的 API 地址。留空表示不使用该来源。">
+                <controls:FASettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox Width="260"
+                                 PlaceholderText="https://amll-ttml-api.example.com"
+                                 Text="{Binding AmllApiBaseUrl, Mode=TwoWay}" />
+                        <Button Content="测试连接" Click="TestAmllConnectionOnClick" />
+                    </StackPanel>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <TextBlock Text="{Binding AmllConnectionStatus}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Margin="0 4 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE42B;}"
+                                         Header="SPlayer-Next 外部 API 地址"
+                                         Description="播放源为 SPlayer-Next 时，优先从这里直接读取歌词。">
+                <controls:FASettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBox Width="260"
+                                 PlaceholderText="http://127.0.0.1:14558"
+                                 Text="{Binding SPlayerNextApiBaseUrl, Mode=TwoWay}" />
+                        <Button Content="测试连接" Click="TestSPlayerNextConnectionOnClick" />
+                    </StackPanel>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <TextBlock Text="{Binding SPlayerNextConnectionStatus}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Margin="0 4 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE510;}"
+                                         Header="歌词缓存"
+                                         Description="搜索到的歌词会缓存到本地，避免重复搜索。清空后下次播放时重新搜索；固定的歌词不受影响。">
+                <controls:FASettingsExpander.Footer>
+                    <Button Content="清空缓存" Click="ClearLyricsCacheOnClick" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <TextBlock Text="{Binding LyricsCacheStatus}"
+                       IsVisible="{Binding HasLyricsCacheStatus}"
+                       FontSize="12"
+                       TextWrapping="Wrap"
+                       Margin="0 4 0 8" />
+            <ci:IconText Glyph="&#xF306;" Text="当前曲目" Margin="0 16 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE259;}"
+                                         Header="固定歌词"
+                                         Description="{Binding CurrentLyricsPinStatus}">
+                <controls:FASettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Button Content="固定当前" Click="PinCurrentLyricsOnClick" />
+                        <Button Content="导入文件" Click="ImportLyricsFileOnClick" />
+                        <Button Content="解除固定" Click="UnpinLyricsOnClick" />
+                    </StackPanel>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1D0;}"
+                                         Header="歌词候选"
+                                         Description="各已启用来源对当前曲目的搜索结果。展开后双击一行即可应用到组件。">
+                <controls:FASettingsExpander.Footer>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <TextBlock Text="{Binding CurrentLyricsSourceDisplay}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center" />
+                        <Button Content="刷新" Click="RefreshLyricsCandidatesOnClick" />
+                    </StackPanel>
+                </controls:FASettingsExpander.Footer>
+                <StackPanel Margin="12,6,12,10" Spacing="8">
+                    <TextBlock Text="{Binding CurrentLyricsCandidatesStatus}"
+                               FontSize="12"
+                               TextWrapping="Wrap" />
+                    <DataGrid ItemsSource="{Binding LyricsCandidateItems}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              CanUserResizeColumns="False"
+                              CanUserReorderColumns="False"
+                              CanUserSortColumns="False"
+                              DoubleTapped="ApplyLyricsCandidateOnDoubleTapped"
+                              Height="220">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="来源" Width="Auto" Binding="{Binding Source}" />
+                            <DataGridTextColumn Header="评分" Width="Auto" Binding="{Binding Score}" />
+                            <DataGridTextColumn Header="标题" Width="*" Binding="{Binding Title}" />
+                            <DataGridTextColumn Header="艺术家" Width="*" Binding="{Binding Artist}" />
+                            <DataGridTextColumn Header="专辑" Width="*" Binding="{Binding Album}" />
+                            <DataGridTextColumn Header="同步" Width="Auto" Binding="{Binding SyncCapability}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </controls:FASettingsExpander>
+        </StackPanel>
+    </ScrollViewer>
+</local:MediaIslandSettingsPage>
