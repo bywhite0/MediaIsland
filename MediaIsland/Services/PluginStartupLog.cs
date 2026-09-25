@@ -26,8 +26,8 @@ internal sealed partial class PluginStartupLog(string version) : IHostedService
         @"|_|  |_\___\__,_|_\__,_|___/__/_\__,_|_||_\__,_|",
     ];
 
-    // 主题色 #00B0F0，取自当前图标的主色。图标只是临时沿用 ClassIsland 图标微调，重新设计后同步修改。
-    internal const string ThemeColorAnsi = "\u001b[38;2;0;176;240m";
+    // 主题色 #DA645F，取自图标左瓣（スリーズブーケ）；三瓣色中只有它在深浅终端上都有足够对比度。换图标时同步修改。
+    internal const string ThemeColorAnsi = "\u001b[38;2;218;100;95m";
 
     private const string ResetAnsi = "\u001b[0m";
 
