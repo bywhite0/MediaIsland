@@ -157,28 +157,8 @@ impl ResyncGate {
 /// 掉最旧那一帧。那一条丢完占用仍等于容量,而容量是目标深度上限的两倍,故它结构上丢
 /// 不穿目标深度——这道钳要守的下界在那一支上自动成立,不是漏了它。
 ///
-/// 「一步最多丢到目标深度」以 `available` 是前跳发生那一刻的占用为前提,不是
-/// 无条件保证:传一份过期快照,下界就松掉快照与前跳之间已经消费掉的那部分。
-/// 两个调用点的新鲜度不同,调用方须自己知道站在哪一侧——门点火块的 `available`
-/// 取自本轮读取之前而丢帧发生在读取之后,故那一处的实际下界是目标深度减去一轮
-/// 消费量;声明预算执行器的前跳发生在本轮读取之前,期间没有任何消费。
-///
-/// 后一处也不是等号,而且两个方向都松:占用可以在快照与前跳之间涨,也可以掉。
-///
-/// 涨的一侧是写入路径,那一侧确实只增不减(逐帧写与补静音都对容量封顶)。掉的一侧
-/// 不是写入而是整清:`PlaybackRing::push_at` 在空档超过整个容量时先 `reset`,`filled`
-/// 归零,于是占用从原值掉到新到那一包的帧数。触发它的是发送端时刻向前跳过整个容量
-/// (卡顿、换歌、续播),该分支自己的注释就把这当真实工况处理。
-///
-/// 故两侧的结论不同。涨的那一侧快照偏小,方向保守——按偏小的占用算出的钳只会剪得
-/// 更少、剪后深度只会更高。掉的那一侧快照偏大,钳据一个已经不存在的盈余去剪,
-/// `drop_oldest` 又是饱和的,读游标可以一路推到占用见底,即剪穿目标深度。
-/// 这个竞态是既有的,门点火块吃的是同一个快照;此处只陈述它,不断言它不发生。
-///
-/// 返回 0 意味着读游标一帧都不会动,故调用方一步都不许清:外环残差、门的持续期、
-/// 外环取斜率的上一次 QPC,依据全都是「误差信号的地基没跳」。此前门点火块正是
-/// 在这里栽的——钳成 0 的那些轮次读游标没动,却把外环攒的亚毫秒残差清了,而残差
-/// 要攒够 1ms 才进位,每 500ms 被清一次就永远进不了位,误差冻结在原处。
+/// `available` 必须与真剪处于同一把 ring 锁内；由 [`apply_read_cursor_shift`] 统一执行。
+/// 旧快照会跨过正常消费或 `push_at` 的整清，不能作为真剪的盈余依据。
 ///
 /// `saturating_sub` 而非裸减:占用低于目标深度时盈余为负,裸减法在 debug 下当场
 /// panic 在实时线程上(带走整个宿主进程),release 下回绕成天文数字、经 min 之后
@@ -187,17 +167,22 @@ pub fn clamp_shift_frames(frames: usize, available: usize, target_ms: u32) -> us
     frames.min(available.saturating_sub(target_frames(target_ms)))
 }
 
-/// 重同步门点火轮该丢的帧数:超额毫秒折 48k 轴帧数,再过 [`clamp_shift_frames`]。
-///
-/// 折算与钳分两层是刻意的:「毫秒怎么折成帧」与「一步最多丢多少」是两条独立的
-/// 性质,合成一层就无法分别钉住——折算率错了与钳失效了会在同一条判据上混成一团。
-///
-/// 负 `excess_ms` 折成 0 帧。点火轮的超额必为正(阈下 `note` 不点火),但本函数
-/// 签名收的是全体 i64,而裸 `as usize` 对负值是静默回绕(-1 变 1.8e19),经饱和乘
-/// 与钳之后表现为「一步把盈余全丢光」。负超额是放早,不是本函数的事。
-pub fn resync_drop_frames(excess_ms: i64, available: usize, target_ms: u32) -> usize {
-    let frames = (OUTPUT_SAMPLE_RATE as usize).saturating_mul(excess_ms.max(0) as usize) / 1_000;
-    clamp_shift_frames(frames, available, target_ms)
+/// 在调用方持有的 ring 锁内取当前盈余、真剪并返回实际位移量。
+pub fn apply_read_cursor_shift(
+    ring: &mut crate::ring::PlaybackRing,
+    want_frames: usize,
+    target_ms: u32,
+) -> usize {
+    let before = ring.available_frames();
+    let allowed = clamp_shift_frames(want_frames, before, target_ms);
+    ring.drop_oldest(allowed);
+    before - ring.available_frames()
+}
+
+/// 将重同步超额毫秒折成 48k 轴上的请求帧数；负超额不请求位移。
+/// 乘法饱和后除以 1000，保留既有的大值折算口径，盈余钳留给应用者。
+pub fn resync_drop_frames(excess_ms: i64) -> usize {
+    (OUTPUT_SAMPLE_RATE as usize).saturating_mul(excess_ms.max(0) as usize) / 1_000
 }
 
 /// 声明预算阶跃的死区,tick。就是外环死区 [`DEAD_ZONE_MS`] 折成 tick,同一个数
@@ -280,44 +265,14 @@ impl SetpointStep {
 /// 去做。它只管 pad_frames 这一个数。
 #[derive(Default)]
 pub struct PendingShift {
-    pad_frames: usize,
+    pad_frames: u64,
 }
 
 impl PendingShift {
-    /// 欠下一笔垫零。只欠缓冲还装得下的量,垫不下的余额交外环慢慢补。
-    ///
-    /// 容量钳的理由:垫零期间不消费而生产继续,占用一路上涨,撞到环形缓冲容量顶时
-    /// 写游标前移即等价于静默丢最旧,恰好抵消垫零的目的——垫零本是为了把占用推高,
-    /// 丢最旧又把它推了回去,一轮白垫还搭上一段可闻的跳跃。显式有界降级优于静默丢弃:
-    /// 垫不下的部分留给外环按它的限速慢慢挪,用户听到的是缓慢收敛而不是当场断音。
-    ///
-    /// 钳的是本次增量,不是累加后的总额,而且每一笔都过钳,不只第一笔。headroom 说的是
-    /// 本次调用那一刻缓冲还空着多少,而已欠未垫的位移尚未发生、占用还没为它涨过,故那笔
-    /// 旧账不该被当次余量二次剪裁。
-    ///
-    /// 单笔请求量本身有界:一串相继的上调在同一根目标深度轴上首尾相接,每笔生效量都相对
-    /// 当时的目标深度算出,故其和望远镜式相消成末值减初值,恒不超过目标深度上下界之差。
-    /// 而缓冲容量取的正是目标深度上界的两倍,故稳态工况下余量充裕,这道钳罕有咬合。
-    ///
-    /// 但它确实会咬,不是理论边角:占用的上限就是容量本身,而卡顿后的整批回灌能在几毫秒
-    /// 墙钟内把占用顶到那里。重同步门此刻拦不住——门的持续期按消费帧数计,即半秒的播放
-    /// 时长,而回灌不消耗播放时长,那半秒里占用可以远高于目标深度加超额阈值而门一动不动;
-    /// 滤掉一个 RTT 内自行排空的突发簇,本就是那个持续期的存在理由。占用越过「容量减去
-    /// 本笔请求量」之后钳即真咬。
-    ///
-    /// 咬掉的量有两处后果,不止一处。一是那一段深度只能按上面那条既定语义交外环慢慢补。
-    /// 二是本件与调用方在此刻不再同步:调用方那侧的目标深度按整笔生效量无条件推到位,
-    /// 而这里只记下钳后的量,于是用户拨回来时 [`PendingShift::owe_trim`] 抵扣不到那么多
-    /// pad,差额全额交真剪——读游标为那次上调一次都没停过,却为这次下调实打实跳了一段,
-    /// 恰好打掉抵扣在先本要防的那件事。
-    ///
-    /// 后者有界,故本件不为它做二次限幅:真剪一律过读游标前跳的上界钳,而那道钳按传进去
-    /// 的占用把剪后深度托在目标深度上——前提是那个占用没有偏大(见 [`clamp_shift_frames`]
-    /// 记的那条整清路径);且只在深度积压时可达,而那时重同步门本来就要剪掉
-    /// 大部分积压,多剪的量与门本要做的事重叠。在本件里补一道限幅,补的是一笔它算不出
-    /// 的账——它不知道调用方把目标深度推了多少——那会是一段无判官的死防御。
-    pub fn owe_pad(&mut self, frames: usize, headroom_frames: usize) {
-        self.pad_frames += frames.min(headroom_frames);
+    /// 完整记录已生效阶跃。生产单笔最多45600帧；保证域要求会话QPC有效单调，
+    /// 且target写者只有声明阶跃与限速外环。公开方法不承诺任意usize无限累加安全。
+    pub fn owe_pad(&mut self, frames: usize) {
+        self.pad_frames += frames as u64;
     }
 
     /// 欠下一笔真剪(读游标前跳、丢最旧),返回抵扣之后还该真剪多少帧。
@@ -329,17 +284,17 @@ impl PendingShift {
     /// 两者各减:抵扣掉的那部分既不再欠垫,也不必真剪。返回值是调用方拿去剪的量,
     /// 怎么剪不归本件知道。
     pub fn owe_trim(&mut self, frames: usize) -> usize {
-        let cancel = frames.min(self.pad_frames);
+        let cancel = (frames as u64).min(self.pad_frames);
         self.pad_frames -= cancel;
-        frames - cancel
+        frames - cancel as usize
     }
 
-    /// 取本轮该垫的帧数并从余额扣除。needed 是本轮的输出帧数——垫零跨轮摊完,一轮
-    /// 垫不下整笔,取多了也无处写。
-    pub fn take_pad(&mut self, needed: usize) -> usize {
-        let taken = self.pad_frames.min(needed);
+    /// 按需求与当刻容量余量支付，只扣实付。无新命令或重置时，累计支付机会
+    /// 达到初始债即偿清；每轮机会至少h、间隔至多δ时，期限为ceil(P/h)*δ。
+    pub fn take_pad(&mut self, needed: usize, headroom: usize) -> usize {
+        let taken = self.pad_frames.min(needed.min(headroom) as u64);
         self.pad_frames -= taken;
-        taken
+        taken as usize
     }
 
     /// 硬重置用:ring 已全清,欠下的位移无所指——它记的是「把现有占用推到某处」,
@@ -347,6 +302,70 @@ impl PendingShift {
     pub fn clear(&mut self) {
         self.pad_frames = 0;
     }
+}
+
+pub struct ShiftRead {
+    pub padded: usize,
+    pub wanted: usize,
+    pub taken: usize,
+}
+
+/// 持同一把锁读取实际余量并消费；全垫轮也取锁，锁内不分配。
+pub fn consume_shifted(
+    ring: &std::sync::Mutex<crate::ring::PlaybackRing>,
+    shift: &mut PendingShift,
+    out: &mut [i16],
+) -> Option<ShiftRead> {
+    let mut ring = ring.lock().ok()?;
+    let channels = usize::from(OUTPUT_CHANNELS);
+    let needed = out.len() / channels;
+    let padded = shift.take_pad(needed, ring.capacity_frames() - ring.available_frames());
+    out[..padded * channels].fill(0);
+    let wanted = needed - padded;
+    let taken = ring.read_into(&mut out[padded * channels..]);
+    Some(ShiftRead {
+        padded,
+        wanted,
+        taken,
+    })
+}
+
+pub struct ResyncObservation {
+    pub applied: i64,
+    pub aligned_error_ticks: Option<i64>,
+    pub available_frames: usize,
+    pub observation_target_ms: u32,
+    pub current_target_ms: u32,
+    pub needed: usize,
+}
+
+/// 阶跃轮舍弃旧观测；只有真实重定位才结算当前动作段未付债。
+pub fn apply_resync_gate(
+    gate: &mut ResyncGate,
+    shift: &mut PendingShift,
+    ring: &std::sync::Mutex<crate::ring::PlaybackRing>,
+    obs: ResyncObservation,
+) -> Option<usize> {
+    if obs.applied != 0 {
+        return Some(0);
+    }
+    let excess_ms = match obs.aligned_error_ticks {
+        Some(error) => error / TICKS_PER_MS,
+        None => frames_to_ms(obs.available_frames) as i64 - i64::from(obs.observation_target_ms),
+    };
+    if !gate.note(excess_ms > i64::from(RESYNC_EXCESS_MS), obs.needed) {
+        return Some(0);
+    }
+    let mut ring = ring.lock().ok()?;
+    let dropped = apply_read_cursor_shift(
+        &mut ring,
+        resync_drop_frames(excess_ms),
+        obs.current_target_ms,
+    );
+    if dropped > 0 {
+        shift.clear();
+    }
+    Some(dropped)
 }
 
 /// 声明预算 D 的有效域闸:offset 不可用时 D 无所指,既不执行也不动锚。
@@ -380,34 +399,17 @@ pub fn live_setpoint_step(
     setpoint.note(alignment.d_ticks(), current_target_ms)
 }
 
-/// 一次声明预算阶跃的位移计划:目标深度推到哪,以及本轮该真剪多少帧。
+/// 一次声明预算阶跃的位移计划:目标深度推到哪,以及抵扣后请求剪多少帧。
 ///
 /// 两个方向是同一根轴上的反向操作。`applied` 为负是下调:读游标前跳、丢最旧,当场
 /// 做得完,故本件把该剪的帧数算出来交调用方去剪。`applied` 为正是上调:读游标暂停,
 /// 某几轮不从缓冲读而直接写零,生产者继续写故占用上涨,跨若干轮摊完,故本件只把欠账
 /// 记进 `shift`、真剪帧数返 0。`applied` 为零两侧都不动,连 `shift` 都不碰。
 ///
-/// 真剪一律过 [`clamp_shift_frames`],且下界取的是新目标深度而不是旧的:本笔阶跃之后
-/// 该守的就是新的那条。取旧的会把该剪的量再钳掉一截,于是下调半天深度下不来。
-///
-/// 一处已裁定保留的不对称:返回的新目标深度按整笔 `applied` 无条件走满,而垫零那一侧
-/// 的欠账可能被容量钳咬成 0。于是用户拨回来时 [`PendingShift::owe_trim`] 抵扣不到那么
-/// 多,差额全额交真剪——读游标为那次上调一次都没停过,却为这次下调实打实跳了一段。
-/// 此处刻意不做二次限幅:本期已裁定接受这条不对称。修它要把容量钳从欠账时点挪到
-/// 摊还时点,那是 [`PendingShift`] 的接口重构,不是这里加一道夹取。真剪那一段的边界
-/// 由 [`clamp_shift_frames`] 定,连它的前提一起,理由住在那里一处。
-///
-/// 两条前提由调用方保证,本件不检查也不饱和。`applied` 须是 [`SetpointStep::note`] 的
-/// 返回值,故其绝对值不超过目标深度上下界之差,裸取负与转 u32 都靠这一条;`available`
-/// 须是环形缓冲某一刻的占用读数,故不超过 [`RING_CAPACITY_FRAMES`](`filled` 的全部
-/// 改动点都在界内,故这一条与快照新不新无关),容量余量那处裸减靠这一条。两处若改成
-/// 饱和运算,得到的是两段可证不可达、也就永远没有判官的分支。
-pub fn plan_setpoint_shift(
-    applied: i64,
-    available: usize,
-    target_ms: u32,
-    shift: &mut PendingShift,
-) -> (u32, usize) {
+/// 下调仅返回抵扣后的请求，调用方在同锁真剪时按新目标与当前占用钳制。
+/// 上调完整记债，容量约束留给消费时点。applied须来自SetpointStep::note，
+/// 因而绝对值不超过目标范围；这里不接纳任意未经验证的i64位移。
+pub fn plan_setpoint_shift(applied: i64, target_ms: u32, shift: &mut PendingShift) -> (u32, usize) {
     if applied == 0 {
         return (target_ms, 0);
     }
@@ -417,16 +419,10 @@ pub fn plan_setpoint_shift(
         // 抵扣在先:pad 是尚未发生的位移,取消它零代价——缓冲里一帧都还没动过。若先把
         // 垫零垫完再去剪,用户来回拨滑块会听到一串本可互相抵消的静音与跳跃。
         let owed = shift.owe_trim(target_frames((-applied) as u32));
-        return (
-            next_target_ms,
-            clamp_shift_frames(owed, available, next_target_ms),
-        );
+        return (next_target_ms, owed);
     }
 
-    shift.owe_pad(
-        target_frames(applied as u32),
-        RING_CAPACITY_FRAMES - available,
-    );
+    shift.owe_pad(target_frames(applied as u32));
     (next_target_ms, 0)
 }
 
@@ -991,12 +987,12 @@ mod wasapi {
     use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 
     use super::{
-        build_resampler, device_latency_us, frames_to_ms, live_setpoint_step,
-        output_frames_at_device_position, plan_setpoint_shift, playing_position_frames,
-        prefill_silence_frames, ratio_to_ppm, resample_ratio, resync_drop_frames, target_frames,
-        AlignmentCell, DeviceFrames, PendingShift, PrefillState, RenderStatsCell, ResamplerState,
-        ResyncGate, SetpointStep, TargetDepthCell, MIN_TARGET_MS, RESYNC_EXCESS_MS,
-        RING_CAPACITY_FRAMES,
+        apply_read_cursor_shift, apply_resync_gate, build_resampler, consume_shifted,
+        device_latency_us, frames_to_ms, live_setpoint_step, output_frames_at_device_position,
+        plan_setpoint_shift, playing_position_frames, prefill_silence_frames, ratio_to_ppm,
+        resample_ratio, target_frames, AlignmentCell, DeviceFrames, PendingShift, PrefillState,
+        RenderStatsCell, ResamplerState, ResyncGate, ResyncObservation, SetpointStep,
+        TargetDepthCell, MIN_TARGET_MS, RING_CAPACITY_FRAMES,
     };
     use crate::convert;
     use crate::convert::MixFormat;
@@ -1090,7 +1086,7 @@ mod wasapi {
         /// 增量」——前者要并进来，后者按不变量 I 仍须丢(理由见执行器写 target 那处)。
         /// 直白的 `fetch_update(|cur| cur + applied)` 拿到的可能正是外环刚写完的值，
         /// 而只要可能就够——那正是那处判为错的写法。(只是可能:外环那次写另要过
-        /// 重采样器在场与上一轮 QPC 在手,而执行器点火只过 offset 可用。)
+        /// 重采样器在场与上一轮 QPC 在手,而执行器点火只过 offset 可用这一闸。)
         pub fn set_target_ms(&self, raw_ms: u32) {
             self.target.set_ms(raw_ms);
         }
@@ -1539,29 +1535,18 @@ mod wasapi {
             // 是几百秒的量级,而用户拨滑块是阶跃。把阶跃塞进一条为准静态残差设计的
             // 通路是用错了通路——慢不是病根。
             //
-            // 当场推到位,不分轮爬升:`SetpointStep::note` 每次读的是当时的目标深度,
-            // 故一串连续同向阶跃的生效量之和望远镜式相消成末值减初值,与拨了几次无关,
-            // 恒不超过目标深度上下界之差。分轮爬升会让第二笔从尚未抬到位的目标出发,
-            // 那条相消性质随之破裂,而 owe_pad 那道容量钳的量级估计整个建在它上面。
+            // 目标当场更新，未付位移留债；外环穿插写target时不能用单向望远镜
+            // 推导常量债界。支付机会不足时不承诺墙钟期限。
             //
             // 闸在 offset 可用性上,理由住在 live_setpoint_step 一处:D 的有效域,
             // 不是防抖动。判定与位移计划都是纯的,理由与判据跟着那两个纯件走;
             // 整枚 cell 交进去而不是在这里读出条件,是为了让「闸绑到哪一项」本身可判。
             let applied = live_setpoint_step(&mut setpoint, &context.alignment, target_ms);
-            let (next_target_ms, drop_frames) =
-                plan_setpoint_shift(applied, available, target_ms, &mut shift);
+            let (next_target_ms, want_frames) = plan_setpoint_shift(applied, target_ms, &mut shift);
 
-            if drop_frames > 0 {
-                // 本轮尚未读取,故 `available` 与真实占用之间没有隔着消费。但它两个方向
-                // 都可能偏:推送线程在这中间写入会让真实占用更高(那一侧保守,钳只会剪
-                // 得更少);而 push_at 在空档超过整个容量时会先整清 ring,那一侧真实占用
-                // 掉到新到那一包,快照偏大,这一剪就可能剪穿目标深度。理由住在
-                // clamp_shift_frames 一处。该竞态是既有的——门点火块吃的是同一个快照,
-                // 且它那份还额外过期了一轮消费量。本笔不改它,只是不再断言它不发生。
-                //
-                // 钳到 0 时根本不到这里来,不白抢一次 ring 锁——锁的另一侧是网络推送线程。
+            if want_frames > 0 {
                 let Ok(mut ring) = ring.lock() else { break };
-                ring.drop_oldest(drop_frames);
+                apply_read_cursor_shift(&mut ring, want_frames, next_target_ms);
             }
 
             if applied != 0 {
@@ -1581,7 +1566,7 @@ mod wasapi {
                 // 哪一条都不该留。取斜率用的上一次 QPC 一并清,它是残差的时间基准。
                 //
                 // 与门点火块那个「真剪了才清」的条件不同,不要照抄过去:那里钳成 0 意味着
-                // 读游标一帧都没动、误差信号的地基没跳;而这里即使两侧的钳都把位移咬成 0,
+                // 读游标一帧都没动、误差信号的地基没跳;而这里即使尚未发生真实位移,
                 // target 与 D 也已经变了,地基照样跳了整整一个 applied。
                 //
                 // 门的持续期也显式归零:「超额已持续多久」是相对旧地基说的。这一处是显式
@@ -1635,19 +1620,12 @@ mod wasapi {
             // 而生产者继续写,占用因此上涨——这正是上调声明预算要的效果。填零逻辑不必
             // 新写一份,`read_into` 取不足时本就填零(重复上一帧会产生蜂鸣);垫零要的
             // 只是「不消费」这一件事。
-            let pad_this = shift.take_pad(needed);
-            staging[..pad_this * channels].fill(0);
-
-            // 轮内混合把子切片交给 `read_into` 天然成立:它按 `out.len()` 自己算 wanted,
-            // 故一轮里垫几帧、读几帧精确到帧,不引入按轮取整的残余。整轮全垫时不去持锁:
-            // 要读的是 0 帧,而锁的另一侧是网络推送线程。
-            let want = needed - pad_this;
-            let taken = if want > 0 {
-                let Ok(mut ring) = ring.lock() else { break };
-                ring.read_into(&mut staging[pad_this * channels..needed * channels])
-            } else {
-                0
+            let Some(read) = consume_shifted(ring, &mut shift, &mut staging[..needed * channels])
+            else {
+                break;
             };
+            let want = read.wanted;
+            let taken = read.taken;
 
             // 欠载判定只对真去读的那部分生效。垫零帧既不计 stats 的欠载数,也不计
             // prefill 的连续欠载:它是用户刻意调设定值的结果,不是数据不够。计进去会让
@@ -1707,24 +1685,24 @@ mod wasapi {
             // 只有正值算超额:负 error 是放早,不是本门的事,i64 除法向零截断天然满足);
             // 对齐不活跃时退回缓冲深度对目标的超出。prefill 轮次在上面 continue,
             // 天然不进门。
-            let excess_ms = match aligned_error_ticks {
-                Some(error_ticks) => error_ticks / TICKS_PER_MS,
-                None => frames_to_ms(available) as i64 - i64::from(target_ms),
+            let Some(dropped) = apply_resync_gate(
+                &mut gate,
+                &mut shift,
+                ring,
+                ResyncObservation {
+                    applied,
+                    aligned_error_ticks,
+                    available_frames: available,
+                    observation_target_ms: target_ms,
+                    current_target_ms: context.target.current_ms(),
+                    needed,
+                },
+            ) else {
+                break;
             };
-            if gate.note(excess_ms > i64::from(RESYNC_EXCESS_MS), needed) {
-                // 点火轮 excess_ms 必为正(over 为假时 note 不点火)。折帧与上界钳的
-                // 理由住在 resync_drop_frames 一处,这里只按它给的结论办。
-                let drop_frames = resync_drop_frames(excess_ms, available, target_ms);
-                // 真剪了才清。钳把该丢的量钳成 0 时读游标一步都没动,误差信号的地基
-                // 没跳,此时清残差等于把外环攒的亚毫秒积分白扔——残差要攒够 1ms 才
-                // 进位,每 500ms 被清一次就永远进不了位,误差冻结在原处。三步与丢帧
-                // 同进一个条件块,让「一帧没丢却清了」成为结构上不可能。
-                if drop_frames > 0 {
-                    {
-                        // 持 ring 锁一次,只做游标回收——丢最旧是 O(1) 的 filled 减法。
-                        let Ok(mut ring) = ring.lock() else { break };
-                        ring.drop_oldest(drop_frames);
-                    }
+            {
+                // 真剪了才清；零位移时仍需保留外环的亚毫秒残差。
+                if dropped > 0 {
                     // 与硬重置共享的两步:读游标跳段之后误差的历史随之失效,残差留着
                     // 会让下一步凭空多走;last_qpc 清空让外环下轮重新取基准。
                     outer.reset();
@@ -2563,12 +2541,9 @@ mod tests {
     }
 
     #[test]
-    fn the_capacity_covers_the_deepest_target_plus_the_largest_pad_debt() {
-        // C1 容量账。垫零期间不消费而生产继续,占用一路涨向「起始占用 + 待垫量」。
-        // 两项各自的上界:占用的上界就是目标深度的上界;单笔待垫量的上界是目标深度
-        // 上下界之差——一串连续同向上调的生效量在同一根目标深度轴上望远镜式相消成
-        // 末值减初值,与拨了几次无关。两者之和仍须装得进环形缓冲,否则写游标前移即
-        // 等价于静默丢最旧,把垫零刚推高的占用又推了回去。
+    fn the_capacity_covers_the_deepest_target_plus_one_largest_step() {
+        // C1 仅核目标上界加单笔最大阶跃的容量账；真实Q可达容量，外环穿插
+        // 时总债也可超过单笔上限，不能据此断言容量钳不会咬或总债恒有界。
         let deepest = target_frames(MAX_TARGET_MS);
         let largest_debt = target_frames(MAX_TARGET_MS - MIN_TARGET_MS);
         assert!(deepest + largest_debt < RING_CAPACITY_FRAMES);
@@ -2685,19 +2660,14 @@ mod tests {
     }
 
     #[test]
-    fn resync_drop_takes_the_whole_excess_when_there_is_room() {
-        // D1 正常剪:缓冲 500ms 深、目标 200ms,盈余恰好放得下 300ms 超额的折帧,
-        // 钳不该动它。等号边界本身是钉点——钳写成严格小于一类的形态会当场红。
-        assert_eq!(
-            resync_drop_frames(300, target_frames(500), 200),
-            target_frames(300)
-        );
+    fn resync_excess_folds_without_an_occupancy_limit() {
+        // D1 请求只折帧，盈余限制由应用者负责。
+        assert_eq!(resync_drop_frames(300), 14_400);
     }
 
     #[test]
     fn no_surplus_over_target_shifts_nothing() {
-        // D2 钳退化到零:占用恰在目标深度上,盈余为零,一帧都不许丢——丢了就是亲手
-        // 制造欠载。返回 0 同时是给调用方的信号:读游标没动,一个累积器都不许清。
+        // D2 占用恰在目标深度上，盈余为零，一帧都不许丢。
         assert_eq!(
             clamp_shift_frames(target_frames(300), target_frames(200), 200),
             0
@@ -2725,9 +2695,8 @@ mod tests {
 
     #[test]
     fn excess_milliseconds_fold_at_the_output_rate() {
-        // D5 折帧率:100ms 在 48k 轴上是 4800 帧,字面钉住时基。盈余给足让钳不参与,
-        // 读到的就是折算本身。
-        assert_eq!(resync_drop_frames(100, target_frames(1_000), 50), 4_800);
+        // D5 100ms 在 48k 轴上是 4800 帧，独立钉住折算时基。
+        assert_eq!(resync_drop_frames(100), 4_800);
     }
 
     #[test]
@@ -2735,7 +2704,78 @@ mod tests {
         // D6 负超额:那是放早,不是本门的事。裸 `as usize` 会把它回绕成天文数字,
         // 经饱和乘与钳之后表现为「一步把盈余全丢光」;折成 0 帧让它什么都不做。
         // 钉的是纯函数的定义域——点火轮的超额恒为正,接线上这一条永不走到。
-        assert_eq!(resync_drop_frames(-300, target_frames(500), 200), 0);
+        assert_eq!(resync_drop_frames(-300), 0);
+    }
+
+    #[test]
+    fn a_read_cursor_shift_obeys_the_current_surplus() {
+        // 等于目标、低于目标、零请求、小请求、超大请求和部分盈余。
+        for (available, want, target, dropped, remaining) in [
+            (16_800, 14_400, 300, 2_400, 14_400),
+            (9_600, 14_400, 200, 0, 9_600),
+            (480, 14_400, 200, 0, 480),
+            (16_800, 0, 300, 0, 16_800),
+            (16_800, 480, 300, 480, 16_320),
+            (16_800, usize::MAX, 300, 2_400, 14_400),
+            (0, usize::MAX, 200, 0, 0),
+        ] {
+            let mut ring = crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES);
+            ring.push(&vec![7; available * 2]);
+            assert_eq!(apply_read_cursor_shift(&mut ring, want, target), dropped);
+            assert_eq!(ring.available_frames(), remaining);
+        }
+    }
+
+    #[test]
+    fn a_timestamp_gap_invalidates_the_old_surplus_before_a_shift() {
+        let mut ring = crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES);
+        ring.push_at(&vec![1; 24_000 * 2], 10_000_000);
+        assert_eq!(ring.available_frames(), 24_000);
+        let mut shift = PendingShift::default();
+        let (next, want) = plan_setpoint_shift(-300, 500, &mut shift);
+        ring.push_at(&vec![9; 480 * 2], 100_000_000);
+        assert_eq!(ring.available_frames(), 480, "真实空档必须已触发整清");
+        assert_eq!(want, 14_400);
+        assert_eq!(apply_read_cursor_shift(&mut ring, want, next), 0);
+        assert_eq!(ring.available_frames(), 480);
+        assert_eq!(
+            ring.sender_ticks_at(ring.read_cursor_frames()),
+            Some(100_000_000)
+        );
+        let mut samples = vec![0; 960];
+        assert_eq!(ring.read_into(&mut samples), 480);
+        assert_eq!(samples, vec![9; 960]);
+    }
+
+    #[test]
+    fn consecutive_shifts_use_the_remaining_occupancy() {
+        let mut ring = crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES);
+        ring.push(&vec![1; 16_800 * 2]);
+        assert_eq!(apply_read_cursor_shift(&mut ring, 1_440, 300), 1_440);
+        assert_eq!(apply_read_cursor_shift(&mut ring, 1_440, 300), 960);
+        assert_eq!(ring.available_frames(), 14_400);
+    }
+
+    #[test]
+    fn a_read_cursor_shift_preserves_samples_and_the_sender_timeline() {
+        let mut ring = crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES);
+        let samples: Vec<i16> = (0..16_800).flat_map(|frame| [frame, -frame]).collect();
+        ring.push_at(&samples, 10_000_000);
+        assert_eq!(apply_read_cursor_shift(&mut ring, 14_400, 300), 2_400);
+        assert_eq!(
+            ring.sender_ticks_at(ring.read_cursor_frames()),
+            Some(10_500_000)
+        );
+        let mut remaining = vec![0; 14_400 * 2];
+        assert_eq!(ring.read_into(&mut remaining), 14_400);
+        assert_eq!(remaining, samples[4_800..]);
+    }
+
+    #[test]
+    fn the_largest_excess_saturates_before_folding_to_frames() {
+        assert_eq!(resync_drop_frames(i64::MAX), usize::MAX / 1_000);
+        assert_eq!(resync_drop_frames(0), 0);
+        assert_eq!(resync_drop_frames(i64::MIN), 0);
     }
 
     /// 声明预算的一个任意起点。绝对值不进任何判据——纯件只看差量。
@@ -2889,6 +2929,447 @@ mod tests {
         assert_eq!(step.note(i64::MIN, SETPOINT_TARGET_MS), -250);
     }
 
+    // 有限的48k/10ms纯组件闭环，不模拟WASAPI padding、rubato或生产循环绑定；
+    // 不建模last_qpc首轮/复位后跳过一次outer.step。
+    struct FiniteShiftTrace {
+        ring: std::sync::Mutex<crate::ring::PlaybackRing>,
+        step: SetpointStep,
+        shift: PendingShift,
+        outer: crate::outer_loop::OuterLoop,
+        gate: ResyncGate,
+        target: u32,
+        now: i64,
+        rounds: usize,
+        padded: usize,
+        trims: Vec<usize>,
+        drops: Vec<(usize, usize)>,
+    }
+
+    impl FiniteShiftTrace {
+        fn new(q_ms: u32) -> Self {
+            let mut ring = crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES);
+            ring.push_at(&vec![7; target_frames(q_ms) * 2], 10_000_000);
+            let mut step = SetpointStep::default();
+            step.note(200 * TICKS_PER_MS, 200);
+            Self {
+                ring: std::sync::Mutex::new(ring),
+                step,
+                shift: PendingShift::default(),
+                outer: crate::outer_loop::OuterLoop::default(),
+                gate: ResyncGate::default(),
+                target: 200,
+                now: 10_000_000 + i64::from(q_ms) * TICKS_PER_MS,
+                rounds: 0,
+                padded: 0,
+                trims: Vec::new(),
+                drops: Vec::new(),
+            }
+        }
+
+        fn tick(&mut self, d_ms: i64) {
+            let (available, sender) = {
+                let ring = self.ring.lock().unwrap();
+                (
+                    ring.available_frames(),
+                    ring.sender_ticks_at(ring.read_cursor_frames()).unwrap(),
+                )
+            };
+            let error = crate::outer_loop::play_time_error_ticks(
+                crate::outer_loop::actual_play_ticks(self.now, 0, 0),
+                crate::outer_loop::target_play_ticks(sender, d_ms * TICKS_PER_MS, 0),
+            );
+            let observed_target = self.target;
+            self.target =
+                self.outer
+                    .step(error as f64 / TICKS_PER_MS as f64, 0.01, observed_target);
+            let applied = self.step.note(d_ms * TICKS_PER_MS, observed_target);
+            let (next, want) = plan_setpoint_shift(applied, observed_target, &mut self.shift);
+            if applied != 0 {
+                self.target = next;
+                self.outer.reset();
+                self.gate = ResyncGate::default();
+                self.trims.push(apply_read_cursor_shift(
+                    &mut self.ring.lock().unwrap(),
+                    want,
+                    next,
+                ));
+            }
+            let read = consume_shifted(&self.ring, &mut self.shift, &mut [99; 960]).unwrap();
+            assert_eq!(read.taken, read.wanted, "有限稳定供给不应欠载");
+            self.padded += read.padded;
+            self.rounds += 1;
+            let dropped = apply_resync_gate(
+                &mut self.gate,
+                &mut self.shift,
+                &self.ring,
+                ResyncObservation {
+                    applied,
+                    aligned_error_ticks: Some(error),
+                    available_frames: available,
+                    observation_target_ms: observed_target,
+                    current_target_ms: self.target,
+                    needed: 480,
+                },
+            )
+            .unwrap();
+            if dropped > 0 {
+                self.drops.push((self.rounds, dropped));
+                self.outer.reset();
+            }
+            self.ring.lock().unwrap().push_at(&[7; 960], self.now);
+            self.now += 10 * TICKS_PER_MS;
+        }
+    }
+
+    #[test]
+    fn finite_high_backlog_step_settles_debt_without_a_second_pad_trim_cycle() {
+        for (q_ms, pad_ms) in [(1950, 50), (2000, 0)] {
+            let mut trace = FiniteShiftTrace::new(q_ms);
+            for _ in 0..150 {
+                trace.tick(900);
+            }
+            assert_eq!(
+                trace.padded,
+                target_frames(pad_ms),
+                "Q={q_ms}:门后不得续付旧债"
+            );
+            assert_eq!(
+                trace.drops,
+                [(51, target_frames(1090))],
+                "阶跃轮不计门持续期"
+            );
+            assert_eq!(trace.shift.pad_frames, 0);
+            assert_eq!(
+                trace.ring.lock().unwrap().available_frames(),
+                target_frames(910)
+            );
+            assert_eq!(trace.target, 900);
+        }
+    }
+
+    #[test]
+    fn finite_normal_step_pays_the_whole_seven_hundred_ms() {
+        let mut trace = FiniteShiftTrace::new(200);
+        for _ in 0..150 {
+            trace.tick(900);
+        }
+        assert_eq!(trace.padded, target_frames(700));
+        assert!(trace.drops.is_empty());
+        assert_eq!(trace.shift.pad_frames, 0);
+        assert_eq!(
+            trace.ring.lock().unwrap().available_frames(),
+            target_frames(900)
+        );
+    }
+
+    #[test]
+    fn finite_reversal_before_resync_trims_only_the_paid_part() {
+        for (q_ms, rounds, paid_ms) in [(2000, 1, 0), (1950, 3, 30)] {
+            let mut trace = FiniteShiftTrace::new(q_ms);
+            for _ in 0..rounds {
+                trace.tick(900);
+            }
+            trace.tick(200);
+            assert_eq!(trace.padded, target_frames(paid_ms));
+            assert_eq!(trace.trims, [0, target_frames(paid_ms)]);
+            assert!(trace.drops.is_empty());
+            assert_eq!(trace.shift.pad_frames, 0);
+            assert_eq!(
+                trace.ring.lock().unwrap().available_frames(),
+                target_frames(q_ms)
+            );
+        }
+    }
+
+    #[test]
+    fn finite_reversal_after_resync_uses_the_new_position() {
+        let mut trace = FiniteShiftTrace::new(1950);
+        for _ in 0..51 {
+            trace.tick(900);
+        }
+        trace.tick(200);
+        for _ in 52..150 {
+            trace.tick(200);
+        }
+        assert_eq!(trace.trims, [0, target_frames(700)]);
+        assert_eq!(trace.drops, [(51, target_frames(1090))]);
+        assert_eq!(trace.padded, target_frames(50));
+        assert_eq!(trace.shift.pad_frames, 0);
+        assert_eq!(
+            trace.ring.lock().unwrap().available_frames(),
+            target_frames(210)
+        );
+    }
+
+    #[test]
+    fn deferred_pad_keeps_unpaid_debt_until_payment_opportunities_arrive() {
+        let mut shift = PendingShift::default();
+        shift.owe_pad(1_000);
+        assert_eq!(shift.take_pad(400, 0), 0);
+        assert_eq!(shift.take_pad(0, 400), 0);
+        assert_eq!(shift.take_pad(400, 400), 400);
+        assert_eq!(shift.take_pad(400, 400), 400);
+        assert_eq!(shift.take_pad(400, 400), 200);
+        assert_eq!(shift.take_pad(400, 400), 0);
+    }
+
+    #[test]
+    fn shifted_consumption_uses_the_locked_actual_capacity_and_samples() {
+        use std::sync::Mutex;
+        let ring = Mutex::new(crate::ring::PlaybackRing::new(6));
+        let mut shift = PendingShift::default();
+        shift.owe_pad(5);
+        ring.lock().unwrap().push(&[7; 8]);
+        let mut out = [99; 8];
+        let read = consume_shifted(&ring, &mut shift, &mut out).unwrap();
+        assert_eq!((read.padded, read.wanted, read.taken), (2, 2, 2));
+        assert_eq!(out, [0, 0, 0, 0, 7, 7, 7, 7]);
+        assert_eq!(shift.pad_frames, 3);
+    }
+
+    #[test]
+    fn a_setpoint_round_skips_the_gate_even_for_a_large_callback() {
+        use std::sync::Mutex;
+        let ring = Mutex::new(crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES));
+        ring.lock()
+            .unwrap()
+            .push(&vec![1; RING_CAPACITY_FRAMES * 2]);
+        for needed in [480, 24_000, 48_000] {
+            let mut gate = ResyncGate::default();
+            let mut shift = PendingShift::default();
+            shift.owe_pad(33_600);
+            let obs = ResyncObservation {
+                applied: 700,
+                aligned_error_ticks: Some(1_100 * TICKS_PER_MS),
+                available_frames: RING_CAPACITY_FRAMES,
+                observation_target_ms: 200,
+                current_target_ms: 900,
+                needed,
+            };
+            assert_eq!(
+                apply_resync_gate(&mut gate, &mut shift, &ring, obs),
+                Some(0)
+            );
+            assert_eq!(gate.sustained_frames, 0, "阶跃轮不得累计旧门观测");
+            assert_eq!(shift.pad_frames, 33_600);
+            let next = ResyncObservation {
+                applied: 0,
+                aligned_error_ticks: Some(1_100 * TICKS_PER_MS),
+                available_frames: RING_CAPACITY_FRAMES,
+                observation_target_ms: 900,
+                current_target_ms: 900,
+                needed,
+            };
+            let dropped = apply_resync_gate(&mut gate, &mut shift, &ring, next).unwrap();
+            if needed == 480 {
+                assert_eq!(dropped, 0);
+                assert_eq!(gate.sustained_frames, 480, "下一轮只累计新观测");
+            } else {
+                assert!(dropped > 0);
+                assert_eq!(shift.pad_frames, 0);
+                ring.lock()
+                    .unwrap()
+                    .push(&vec![1; RING_CAPACITY_FRAMES * 2]);
+            }
+        }
+    }
+
+    #[test]
+    fn resync_settles_only_after_a_real_shift_and_uses_both_targets() {
+        use std::sync::Mutex;
+        for (q, current, expected) in [
+            (43_200, 900, 0),
+            (81_600, 900, 14_400),
+            (96_000, 900, 14_400),
+        ] {
+            let ring = Mutex::new(crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES));
+            ring.lock().unwrap().push(&vec![1; q * 2]);
+            let mut shift = PendingShift::default();
+            shift.owe_pad(33_600);
+            let mut gate = ResyncGate::default();
+            let obs = ResyncObservation {
+                applied: 0,
+                aligned_error_ticks: Some(300 * TICKS_PER_MS),
+                available_frames: 0,
+                observation_target_ms: 200,
+                current_target_ms: current,
+                needed: 24_000,
+            };
+            assert_eq!(
+                apply_resync_gate(&mut gate, &mut shift, &ring, obs),
+                Some(expected)
+            );
+            assert_eq!(
+                shift.pad_frames,
+                if expected == 0 { 33_600 } else { 0 },
+                "只有真实重定位才结算债"
+            );
+        }
+        let ring = Mutex::new(crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES));
+        ring.lock().unwrap().push(&vec![1; 48_000 * 2]);
+        let mut shift = PendingShift::default();
+        shift.owe_pad(100);
+        let obs = ResyncObservation {
+            applied: 0,
+            aligned_error_ticks: None,
+            available_frames: 48_000,
+            observation_target_ms: 200,
+            current_target_ms: 900,
+            needed: 24_000,
+        };
+        assert_eq!(
+            apply_resync_gate(&mut ResyncGate::default(), &mut shift, &ring, obs),
+            Some(4_800),
+            "FIFO按观察target点火，按当前target钳真剪"
+        );
+        assert_eq!(shift.pad_frames, 0);
+    }
+
+    #[test]
+    fn shifted_consumption_observes_pushes_resets_and_real_missing_frames() {
+        use std::sync::Mutex;
+        let ring = Mutex::new(crate::ring::PlaybackRing::new(6));
+        let mut shift = PendingShift::default();
+        shift.owe_pad(10);
+        let early = ring.lock().unwrap().available_frames();
+        assert_eq!(early, 0);
+        ring.lock().unwrap().push_at(&[7; 12], 10_000_000);
+        let mut out = [99; 8];
+        let read = consume_shifted(&ring, &mut shift, &mut out).unwrap();
+        assert_eq!(
+            (read.padded, read.wanted, read.taken),
+            (0, 4, 4),
+            "支付不得使用push之前的空余快照"
+        );
+        ring.lock().unwrap().push_at(&[8; 2], 100_000_000);
+        let read = consume_shifted(&ring, &mut shift, &mut out).unwrap();
+        assert_eq!((read.padded, read.wanted, read.taken), (4, 0, 0));
+        assert_eq!(out, [0; 8], "全垫实际写零");
+        assert_eq!(shift.pad_frames, 6, "push_at整清不擅自清债");
+        shift.clear();
+        let read = consume_shifted(&ring, &mut shift, &mut out).unwrap();
+        assert_eq!((read.padded, read.wanted, read.taken), (0, 4, 1));
+        assert_eq!(
+            read.wanted - read.taken,
+            3,
+            "欠载仅是真正要求读但未读到的帧"
+        );
+        assert_eq!(out, [8, 8, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn pad_representation_keeps_bits_above_u32() {
+        // 表示边界测试，不声称完整闭环能走到该余额。
+        let mut shift = PendingShift {
+            pad_frames: u64::from(u32::MAX) + 100,
+        };
+        assert_eq!(shift.take_pad(40, 40), 40);
+        assert_eq!(shift.owe_trim(60), 0);
+        assert_eq!(shift.pad_frames, u64::from(u32::MAX));
+        assert_eq!(shift.take_pad(1, 1), 1);
+        assert_eq!(shift.pad_frames, u64::from(u32::MAX) - 1);
+    }
+
+    #[test]
+    fn invalid_alignment_preserves_commands_until_payment_or_real_resync() {
+        use std::sync::Mutex;
+        for backlog in [43_200, 96_000] {
+            let mut step = SetpointStep::default();
+            let live = alignment_cell(true, 200 * TICKS_PER_MS, LIVE_OFFSET_TICKS);
+            live_setpoint_step(&mut step, &live, 200);
+            live.set_runtime(900 * TICKS_PER_MS, LIVE_OFFSET_TICKS, 0);
+            let mut shift = PendingShift::default();
+            let applied = live_setpoint_step(&mut step, &live, 200);
+            let (target, _) = plan_setpoint_shift(applied, 200, &mut shift);
+            live.set_runtime(0, 0, 0);
+            assert_eq!(live_setpoint_step(&mut step, &live, target), 0);
+            let ring = Mutex::new(crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES));
+            ring.lock().unwrap().push(&vec![1; backlog * 2]);
+            let dropped = apply_resync_gate(
+                &mut ResyncGate::default(),
+                &mut shift,
+                &ring,
+                ResyncObservation {
+                    applied: 0,
+                    aligned_error_ticks: None,
+                    available_frames: backlog,
+                    observation_target_ms: target,
+                    current_target_ms: target,
+                    needed: 24_000,
+                },
+            )
+            .unwrap();
+            assert_eq!(dropped, if backlog == 96_000 { 52_800 } else { 0 });
+            live.set_runtime(900 * TICKS_PER_MS, LIVE_OFFSET_TICKS, 0);
+            assert_eq!(
+                live_setpoint_step(&mut step, &live, target),
+                0,
+                "恢复同D不重复接债"
+            );
+            live.set_runtime(200 * TICKS_PER_MS, LIVE_OFFSET_TICKS, 0);
+            let reverse = live_setpoint_step(&mut step, &live, target);
+            let (next, want) = plan_setpoint_shift(reverse, target, &mut shift);
+            assert_eq!(want, if dropped > 0 { 33_600 } else { 0 });
+            assert_eq!(
+                apply_read_cursor_shift(&mut ring.lock().unwrap(), want, next),
+                want
+            );
+        }
+    }
+
+    #[test]
+    fn locked_shift_helpers_report_poison_without_consuming_debt() {
+        use std::sync::Mutex;
+        let ring = Mutex::new(crate::ring::PlaybackRing::new(6));
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = ring.lock().unwrap();
+            panic!("测试锁毒化");
+        });
+        let mut shift = PendingShift::default();
+        shift.owe_pad(100);
+        assert!(consume_shifted(&ring, &mut shift, &mut [0; 8]).is_none());
+        let obs = ResyncObservation {
+            applied: 0,
+            aligned_error_ticks: Some(300 * TICKS_PER_MS),
+            available_frames: 0,
+            observation_target_ms: 200,
+            current_target_ms: 200,
+            needed: 24_000,
+        };
+        assert!(apply_resync_gate(&mut ResyncGate::default(), &mut shift, &ring, obs).is_none());
+        assert_eq!(shift.pad_frames, 100);
+    }
+
+    #[test]
+    fn outer_variation_bounds_debt_across_steps_and_resets() {
+        let mut outer = crate::outer_loop::OuterLoop::default();
+        let mut step = SetpointStep::default();
+        let mut shift = PendingShift::default();
+        let mut target = 200;
+        let mut d = 200 * TICKS_PER_MS;
+        let mut downward = 0u64;
+        step.note(d, target);
+        for (error, delta, reset) in [
+            (10_000.0, 700, false),
+            (-10_000.0, -200, false),
+            (10_000.0, 100, true),
+            (10_000.0, -600, false),
+            (-10_000.0, 700, true),
+        ] {
+            let next = outer.step(error, 4.0, target);
+            downward += u64::from(target.saturating_sub(next));
+            target = next;
+            d += delta * TICKS_PER_MS;
+            let applied = step.note(d, target);
+            (target, _) = plan_setpoint_shift(applied, target, &mut shift);
+            assert!(shift.pad_frames <= 48 * (u64::from(target - MIN_TARGET_MS) + downward));
+            if reset {
+                outer.reset();
+                shift.clear();
+            }
+        }
+    }
+
     /// 大到不参与的余量与需求量。给到饱和值是刻意的:这些条要读的是钳与 min 之外的
     /// 那部分语义,让它们在条内恒不触发,红点才不会串到别处去。
     const PLENTY: usize = usize::MAX;
@@ -2898,35 +3379,30 @@ mod tests {
         // P1 余额累加:垫零跨轮摊完,两笔各 4800 帧(48k 轴 100ms)的欠账都得还在。
         // 后一笔若覆盖前一笔,用户连拨两次滑块只有后一次生效。
         let mut shift = PendingShift::default();
-        shift.owe_pad(4_800, PLENTY);
-        shift.owe_pad(4_800, PLENTY);
-        assert_eq!(shift.take_pad(PLENTY), 9_600);
+        shift.owe_pad(4_800);
+        shift.owe_pad(4_800);
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 9_600);
     }
 
     #[test]
-    fn the_headroom_caps_what_can_be_owed() {
-        // P2 容量钳:想垫 9600 帧而缓冲只空得下 2400,就只欠 2400。垫过头会撞容量顶,
-        // 而撞顶时写游标前移即等价于静默丢最旧,恰好抵消垫零的目的。垫不下的部分
-        // 交外环慢慢补——显式有界降级优于静默丢弃。
+    fn the_headroom_caps_payment_without_discarding_debt() {
+        // P2 余量只限制本轮支付，余下7200帧仍在账上。
         let mut shift = PendingShift::default();
-        shift.owe_pad(9_600, 2_400);
-        assert_eq!(shift.take_pad(PLENTY), 2_400);
+        shift.owe_pad(9_600);
+        assert_eq!(shift.take_pad(PLENTY, 2_400), 2_400);
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 7_200);
     }
 
     #[test]
-    fn the_headroom_caps_each_debt_on_its_own_round() {
-        // P9 钳落在每一笔上,各按自己那一轮的 headroom:既不合并成总额去钳,也不是
-        // 只钳第一笔。三种错法一条全封——钳总额得 min(4800+9600, 2400) = 2400;只在
-        // 余额为零时钳得 4800 + 9600 = 14400;整个去掉钳同样 14400。
-        // 第一笔的 headroom 给到不参与,第二笔才让钳真正咬合。这个配法是扫出来的:
-        // P2 让钳咬合但那时余额为零,单靠它看不出「余额非零时钳还在不在」;而两笔都
-        // 钳不动的配法看不出「钳的是当次还是总额」。两处各占一半,得由这一条合起来钉。
-        // 钳当次才对:headroom 说的是本次调用那一刻缓冲还空着多少,已欠未垫的位移
-        // 尚未发生、占用还没为它涨过,把旧账一并压进当次余量等于无故剪掉先欠的那笔。
+    fn the_headroom_is_rechecked_on_each_payment() {
+        // P9 两笔完整累加；容量每轮独立变化，不裁掉未支付余额。
         let mut shift = PendingShift::default();
-        shift.owe_pad(4_800, PLENTY);
-        shift.owe_pad(9_600, 2_400);
-        assert_eq!(shift.take_pad(PLENTY), 7_200);
+        shift.owe_pad(4_800);
+        shift.owe_pad(9_600);
+        assert_eq!(shift.take_pad(PLENTY, 2_400), 2_400);
+        assert_eq!(shift.take_pad(PLENTY, 0), 0);
+        assert_eq!(shift.take_pad(PLENTY, 4_800), 4_800);
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 7_200);
     }
 
     #[test]
@@ -2935,10 +3411,10 @@ mod tests {
         // 无处写,不扣余额则永远垫不完。第三轮的 200 才是这条的钉点——前两轮的 400
         // 在「取了不扣」的写法下碰巧也对。
         let mut shift = PendingShift::default();
-        shift.owe_pad(1_000, PLENTY);
-        assert_eq!(shift.take_pad(400), 400);
-        assert_eq!(shift.take_pad(400), 400);
-        assert_eq!(shift.take_pad(400), 200);
+        shift.owe_pad(1_000);
+        assert_eq!(shift.take_pad(400, PLENTY), 400);
+        assert_eq!(shift.take_pad(400, PLENTY), 400);
+        assert_eq!(shift.take_pad(400, PLENTY), 200);
     }
 
     #[test]
@@ -2947,9 +3423,9 @@ mod tests {
         // 垫零,一帧都不必真剪(返 0),余额剩 600。取消未发生的位移零代价,而先垫
         // 后剪会让来回拨滑块听到一串本可互相抵消的静音与跳跃。
         let mut shift = PendingShift::default();
-        shift.owe_pad(1_000, PLENTY);
+        shift.owe_pad(1_000);
         assert_eq!(shift.owe_trim(400), 0);
-        assert_eq!(shift.take_pad(PLENTY), 600);
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 600);
     }
 
     #[test]
@@ -2958,9 +3434,9 @@ mod tests {
         // 第二条断言钉的是 pad 那一侧也被扣了——只算抵扣量而不扣余额的写法返回值
         // 仍对,却会把已经抵消掉的 400 再垫一次。
         let mut shift = PendingShift::default();
-        shift.owe_pad(400, PLENTY);
+        shift.owe_pad(400);
         assert_eq!(shift.owe_trim(1_000), 600);
-        assert_eq!(shift.take_pad(PLENTY), 0);
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 0);
     }
 
     #[test]
@@ -2976,9 +3452,9 @@ mod tests {
         // P7 硬重置:ring 已全清,欠下的位移无所指——它记的是「把现有占用推到某处」,
         // 而现有占用已经不在了。留着会让重新预填充之后凭空垫上一段静音。
         let mut shift = PendingShift::default();
-        shift.owe_pad(1_000, PLENTY);
+        shift.owe_pad(1_000);
         shift.clear();
-        assert_eq!(shift.take_pad(PLENTY), 0);
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 0);
     }
 
     #[test]
@@ -2986,7 +3462,7 @@ mod tests {
         // P8 空余额:没欠就一帧都不垫。这是渲染循环绝大多数轮次走的路——垫零是例外,
         // 而例外的默认值必须是「什么都不做」。
         let mut shift = PendingShift::default();
-        assert_eq!(shift.take_pad(400), 0);
+        assert_eq!(shift.take_pad(400, PLENTY), 0);
     }
 
     #[test]
@@ -2995,28 +3471,27 @@ mod tests {
         // 都不许碰。若零也走进某一条臂并顺手动了余额,未清完的垫零会被每一轮的零阶跃
         // 反复啃掉,用户上调一次深度只涨一点点就再也不涨。
         let mut shift = PendingShift::default();
-        shift.owe_pad(target_frames(100), PLENTY);
+        shift.owe_pad(target_frames(100));
 
+        assert_eq!(plan_setpoint_shift(0, 300, &mut shift), (300, 0));
         assert_eq!(
-            plan_setpoint_shift(0, target_frames(900), 300, &mut shift),
-            (300, 0)
+            shift.take_pad(PLENTY, PLENTY),
+            target_frames(100),
+            "余额须原封不动"
         );
-        assert_eq!(shift.take_pad(PLENTY), target_frames(100), "余额须原封不动");
     }
 
     #[test]
     fn a_step_up_owes_a_pad_and_cuts_nothing() {
         // R2 上调走垫零臂:读游标暂停,一帧都不剪。剪了就是把刚要推高的占用又推回去。
-        // 余量按「能欠下的最大一笔」留足,故这一条读的是方向路由,不牵扯容量钳。
         let mut shift = PendingShift::default();
-        let available = RING_CAPACITY_FRAMES - target_frames(MAX_TARGET_MS - MIN_TARGET_MS);
 
-        let (next, drop) = plan_setpoint_shift(300, available, 300, &mut shift);
+        let (next, drop) = plan_setpoint_shift(300, 300, &mut shift);
 
         assert_eq!(next, 600);
         assert_eq!(drop, 0, "上调不得真剪");
         assert_eq!(
-            shift.take_pad(PLENTY),
+            shift.take_pad(PLENTY, PLENTY),
             target_frames(300),
             "整笔记成垫零欠账"
         );
@@ -3024,15 +3499,14 @@ mod tests {
 
     #[test]
     fn a_step_down_cuts_now_and_owes_no_pad() {
-        // R3 下调走真剪臂:当场做得完,不留欠账。留成欠账等于让下调也跨轮摊,而下调要
-        // 丢的是已经在缓冲里的最旧样本,拖到下一轮只是让它们更旧。
+        // R3 下调返回原始欠剪量，不留跨轮剪账。
         let mut shift = PendingShift::default();
 
-        let (next, drop) = plan_setpoint_shift(-300, target_frames(900), 600, &mut shift);
+        let (next, drop) = plan_setpoint_shift(-300, 600, &mut shift);
 
         assert_eq!(next, 300);
-        assert_eq!(drop, target_frames(300));
-        assert_eq!(shift.take_pad(PLENTY), 0, "下调不留垫零欠账");
+        assert_eq!(drop, 14_400);
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 0, "下调不留垫零欠账");
     }
 
     #[test]
@@ -3041,12 +3515,12 @@ mod tests {
         // 尚未发生的位移零代价,缓冲里一帧都还没动过——只剩 200ms 交真剪。若先垫完再剪,
         // 用户来回拨滑块会听到一串本可互相抵消的静音与跳跃。
         let mut shift = PendingShift::default();
-        shift.owe_pad(target_frames(100), PLENTY);
+        shift.owe_pad(target_frames(100));
 
-        let (_, drop) = plan_setpoint_shift(-300, target_frames(900), 600, &mut shift);
+        let (_, drop) = plan_setpoint_shift(-300, 600, &mut shift);
 
         assert_eq!(drop, target_frames(200), "抵扣之后才是该真剪的量");
-        assert_eq!(shift.take_pad(PLENTY), 0, "抵扣掉的那部分不再欠垫");
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 0, "抵扣掉的那部分不再欠垫");
     }
 
     #[test]
@@ -3055,13 +3529,13 @@ mod tests {
         // 与 R4 各挡各的:R4 挡「抵扣之后剩下的量交真剪」,这条挡「抵扣够用时不许动
         // 缓冲」——把抵扣写成「先剪了再补记」时,只有这条看得见。
         let mut shift = PendingShift::default();
-        shift.owe_pad(target_frames(300), PLENTY);
+        shift.owe_pad(target_frames(300));
 
-        let (_, drop) = plan_setpoint_shift(-100, target_frames(900), 400, &mut shift);
+        let (_, drop) = plan_setpoint_shift(-100, 400, &mut shift);
 
         assert_eq!(drop, 0, "抵扣够用就一帧都不该剪");
         assert_eq!(
-            shift.take_pad(PLENTY),
+            shift.take_pad(PLENTY, PLENTY),
             target_frames(200),
             "余额只减去抵扣掉的那部分"
         );
@@ -3069,77 +3543,69 @@ mod tests {
 
     #[test]
     fn a_cut_never_digs_below_the_new_target_depth() {
-        // R6 真剪确实过共用上界钳。占用只比新目标深度多 50ms 时下调 300ms:剪得动的
-        // 只有那 50ms 盈余,其余钳掉——丢穿目标深度就是亲手制造欠载。去掉那道钳时
-        // 只有这条红,R3 与 R7 的占用都够高、钳本来就不咬。
+        // R6 计划不吃掉请求，应用者按新目标与当前占用限制实际位移。
         let mut shift = PendingShift::default();
         let available = target_frames(300) + target_frames(50);
+        let mut ring = crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES);
+        ring.push(&vec![1; available * 2]);
 
-        let (next, drop) = plan_setpoint_shift(-300, available, 600, &mut shift);
+        let (next, drop) = plan_setpoint_shift(-300, 600, &mut shift);
 
         assert_eq!(next, 300, "钳咬合不妨碍目标深度走满整笔");
-        assert_eq!(drop, target_frames(50), "只剪得动盈余那一段");
+        assert_eq!(drop, 14_400, "计划返回原始欠剪量，不按快照钳");
+        assert_eq!(apply_read_cursor_shift(&mut ring, drop, next), 2_400);
+        assert_eq!(ring.available_frames(), 14_400);
     }
 
     #[test]
     fn a_comfortable_buffer_takes_the_whole_cut_at_the_new_floor() {
-        // R7 钳的下界取的是新目标深度。600 → 300 那一笔、占用 700ms 是刻意挑的:按新
-        // 下界 300 还剩 400ms 盈余,300ms 全剪得动;下界若误取旧的 600,盈余只剩 100ms,
-        // 这一笔就被钳成 100ms。R3 的占用 900ms 在两种下界之下都够,分不出这件事;
-        // R6 分得出(那一档两种下界给出的量不同),但只有这一档是在「钳本来不该咬」的
-        // 位置上分辨的:这条红意味着钳咬了本不该咬的一口,R6 红只意味着咬的量不对。
+        // R7 600 → 300、占用 700ms：新下界允许整剪 300ms，旧下界只允许 100ms。
         let mut shift = PendingShift::default();
 
-        let (_, drop) = plan_setpoint_shift(-300, target_frames(700), 600, &mut shift);
+        let (next, drop) = plan_setpoint_shift(-300, 600, &mut shift);
+        let mut ring = crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES);
+        ring.push(&vec![1; 33_600 * 2]);
 
-        assert_eq!(drop, target_frames(300), "余量充裕就该整笔剪到位");
+        assert_eq!(drop, 14_400, "计划返回整笔欠剪量");
+        assert_eq!(apply_read_cursor_shift(&mut ring, drop, next), 14_400);
+        assert_eq!(ring.available_frames(), 19_200);
     }
 
     #[test]
-    fn the_pad_debt_is_capped_by_what_the_buffer_can_still_hold() {
-        // R8 容量余量只够一部分时,欠账按余量记。全记会在垫到一半时撞顶,那时写游标
-        // 前移即等价于静默丢最旧,一轮白垫还搭上一段可闻跳跃;不记则用户的上调完全
-        // 不生效。取中间那条:显式有界降级,垫不下的交外环慢慢挪。
+    fn the_pad_debt_survives_a_partial_capacity_payment() {
+        // R8 请求完整记债，本轮只能支付100ms，余下200ms保留。
         let mut shift = PendingShift::default();
-        let available = RING_CAPACITY_FRAMES - target_frames(100);
-
-        let (next, _) = plan_setpoint_shift(300, available, 300, &mut shift);
-
+        let (next, _) = plan_setpoint_shift(300, 300, &mut shift);
         assert_eq!(next, 600);
-        assert_eq!(
-            shift.take_pad(PLENTY),
-            target_frames(100),
-            "只欠缓冲还装得下的量"
-        );
+        assert_eq!(shift.take_pad(PLENTY, target_frames(100)), 4_800);
+        assert_eq!(shift.take_pad(PLENTY, PLENTY), 9_600);
     }
 
     #[test]
-    fn a_capped_pad_still_moves_the_target_the_whole_way() {
-        // R9 那条已裁定保留的不对称,从注释变成判据。占用顶到容量时上调:容量钳把欠账
-        // 咬成 0,而目标深度照样走满整笔 applied——两侧就此不同步,这正是不对称的定义。
-        //
-        // 这一条是给将来「顺手修好」它的人留的。本期已裁定接受不修:后果见 R10,
-        // 且唯一干净的修法要作废一个已过复审的部件连同它的判据。要改,先来红这一条。
+    fn a_blocked_pad_keeps_the_whole_step_as_debt() {
+        // R9 无余量时目标仍走满，债不会因暂时无法支付而丢失。
         let mut shift = PendingShift::default();
-
-        let (next, drop) = plan_setpoint_shift(300, RING_CAPACITY_FRAMES, 300, &mut shift);
-
-        assert_eq!(next, 600, "目标深度无条件走满整笔");
+        let (next, drop) = plan_setpoint_shift(700, 200, &mut shift);
+        assert_eq!(next, 900);
         assert_eq!(drop, 0);
-        assert_eq!(shift.take_pad(PLENTY), 0, "而位移账一帧都没记下");
+        assert_eq!(shift.take_pad(PLENTY, 0), 0);
+        assert_eq!(shift.pad_frames, 33_600);
     }
 
     #[test]
-    fn the_capped_pad_leaves_the_matching_step_back_to_a_full_cut() {
-        // R10 不对称的后果。承 R9:上调那笔的欠账被咬成 0,故用户拨回来时抵扣不到任何
-        // 东西,300ms 全额交真剪——读游标为那次上调一次都没停过,却为这次下调实打实跳了
-        // 一段。这一段的边界由 clamp_shift_frames 定,连它的前提一起,理由住在那里一处。
-        let mut shift = PendingShift::default();
-        plan_setpoint_shift(300, RING_CAPACITY_FRAMES, 300, &mut shift);
-
-        let (_, drop) = plan_setpoint_shift(-300, RING_CAPACITY_FRAMES, 600, &mut shift);
-
-        assert_eq!(drop, target_frames(300), "抵扣不到,全额交真剪");
+    fn a_reverse_cuts_only_the_already_paid_part() {
+        // R10 同一动作段反向先抵未付债，只剪实际已经垫过的量。
+        for paid in [0, 9_600] {
+            let mut shift = PendingShift::default();
+            plan_setpoint_shift(700, 200, &mut shift);
+            assert_eq!(shift.take_pad(paid, PLENTY), paid);
+            let (next, drop) = plan_setpoint_shift(-700, 900, &mut shift);
+            let mut ring = crate::ring::PlaybackRing::new(RING_CAPACITY_FRAMES);
+            ring.push(&vec![1; RING_CAPACITY_FRAMES * 2]);
+            assert_eq!(drop, paid);
+            assert_eq!(apply_read_cursor_shift(&mut ring, drop, next), paid);
+            assert_eq!(shift.pad_frames, 0);
+        }
     }
 
     /// 一个可用的跨机 offset。取非零即可:0 是「不可用」的编码约定,不兼作别的。

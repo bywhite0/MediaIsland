@@ -10,12 +10,14 @@ using Xunit.Abstractions;
 namespace MediaIsland.Tests.RealDevice;
 
 /// <summary>
-/// 跨机对齐的真机判据。七条门控，逐条按它自己的核心断言记，条目间以分号分隔：
+/// 跨机对齐的真机判据。八条门控，逐条按它自己的核心断言记，条目间以分号分隔：
 /// 稳态时刻误差进单端预算；设备会话事实被量到且对齐关闭时原路径不动；亚硬重置域
 /// 重同步把占用剪回 target 带（硬重置恒零）；长闸域同样剪回 target 带（硬重置恰
 /// 一次）；声明预算运行时下调后占用被当场剪到新 target 带；上调后占用被跨轮垫零
 /// 垫到新 target 带且垫零帧不计欠载（硬重置恒零）；超额持续而盈余为零时外环残差
-/// 不被清掉、目标深度因此持续下行。
+/// 不被清掉、目标深度因此持续下行；高积压下上调在1500ms观测窗内入带。
+/// 三条阶跃（下调、上调、高积压上调）共用同一期限窗：1500ms 内须入带，入带后窗内
+/// 逐样本不得出带，窗后另取稳定窗核跟随。
 ///
 /// 为何必须真机：误差信号的两个端点——IAudioClock::GetPosition 的位置/QPC 对与
 /// 设备尾段延迟估计——只在真实 WASAPI 会话上存在。控制律本身已有仿真判据
@@ -860,13 +862,6 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         const int stepMs = 300;
         const int newTargetMs = targetMs - stepMs;
 
-        // 跟随容差。对齐臂上 OutputLatency 取的是 D 加误差，等价于占用加设备 padding
-        // 加设备尾段（手动偏移为 0），故它与占用中位的差就是那两段之和，再叠一层死区
-        // 25ms 即结构性上界。成分账：死区 25 + 本机 padding 约 11 + 本机尾段 10 ≈ 46，
-        // 对 50 的纸面余量只有 4ms —— 而那 4ms 挂在本机端点属性上，不是结构常数：
-        // DeviceLatencyUs 报得大的端点（蓝牙一档）会把上界顶过 50。本机实测这个差是
-        // 12 到 22ms，当前形态是绿的；它要挡的病灶量级是 300ms，离 50 有六倍。
-        const double followToleranceMs = 50;
 
         playback.ConfigureAlignment(
             enabled: true,
@@ -915,22 +910,25 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         var atStep = played.Snapshot();
 
         // 阶跃：D 降 300ms。执行器当场把目标深度推到新值并真剪 300ms 占用。
+        var atStepStats = renderer.ReadStats();
+        var stepClock = Stopwatch.StartNew();
         playback.ConfigureAlignment(
             enabled: true,
             dTicks: (newTargetMs + LinkTailEstimateMs) * TicksPerMs,
             offsetTicks: 1,
             manualOffsetTicks: 0);
-        await Task.Delay(1_500);
+        await ObserveStepDeadlineAsync(renderer, stepClock, newTargetMs, atStepStats);
 
-        var settledRingMs = await SampleRingMsAsync(renderer, seconds: 3);
+        var followToleranceMs = EndpointFollowTolerance(baseline, stepMs);
+        var follow = await SampleAlignmentFollowAsync(renderer, playback, newTargetMs, seconds: 3);
+        var settledRingMs = follow.RingMedianMs;
         var settledErrorMs = MedianMs(await SampleErrorUsAsync(renderer, seconds: 2));
-        var latencyMs = playback.OutputLatency.TotalMilliseconds;
         var settled = renderer.ReadStats();
         var playedFinal = played.Snapshot();
 
         output.WriteLine($"阶跃后目标深度  : {settled.TargetMsCurrent} ms（期望 {newTargetMs}ms）");
         output.WriteLine($"阶跃后占用中位  : {settledRingMs:F1} ms");
-        output.WriteLine($"阶跃后输出延迟  : {latencyMs:F1} ms");
+        output.WriteLine($"同窗配对跟随    : 差中位 {follow.DifferenceMedianMs:F3}ms，最大 {follow.DifferenceMaxMs:F3}ms，样本 {follow.Count}，容差 {followToleranceMs:F3}ms");
         output.WriteLine($"阶跃后误差中位  : {settledErrorMs:F1} ms（前馈 1:1，故应仍约零）");
         output.WriteLine($"欠载 / 硬重置   : {settled.UnderrunCount} / {settled.HardResetCount}");
 
@@ -964,8 +962,8 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         Assert.Equal(0, settled.HardResetCount);
 
         Assert.True(
-            Math.Abs(latencyMs - settledRingMs) <= followToleranceMs,
-            $"|OutputLatency {latencyMs:F1} − 占用中位 {settledRingMs:F1}| 超 {followToleranceMs}ms：输出延迟没跟上执行器的真剪");
+            AlignmentFollowTolerance.IsFollowing(follow, followToleranceMs),
+            $"同窗配对差中位 {follow.DifferenceMedianMs:F3}ms 超 {followToleranceMs:F3}ms：输出延迟没跟上执行器的真剪");
 
         await sine.StopAsync(CancellationToken.None);
         playback.Configure(enabled: false, targetBufferMs: targetMs);
@@ -986,8 +984,8 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
     /// 垫零即便被整笔误计成欠载也攒不到阈值，硬重置不会发生，那条断言在「隔离生效」
     /// 与「隔离撤回」两态下同为绿，判别力恰好为零。700ms 留 40% 的余量。两条上界
     /// 也核过：200 + 700 = 900 在 native 目标深度上界之内，占用峰值 900ms 在环形
-    /// 缓冲容量（目标深度上界的两倍）之内，故垫零欠账不撞容量钳、R18 那条不对称
-    /// 不在本判据的域里。
+    /// 缓冲容量（目标深度上界的两倍）之内，故正常水位下每轮余量都够当轮支付，
+    /// 高积压下欠账跨轮挂起（R18）不在本判据的域里，由高积压那条覆盖。
     ///
     /// 欠载计数另设一条判别：若垫零帧计进 stats 的欠载数，增量等于 500ms 除以一轮
     /// 时长（攒到 500ms 那一刻已硬重置），而一轮时长是端点属性 —— 本机一轮约 9.8ms，
@@ -1012,8 +1010,6 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         const int stepMs = 700;
         const int newTargetMs = targetMs + stepMs;
 
-        // 跟随容差与判据一同一个数、同一个理由，含那笔只剩 4ms 纸面余量的成分账。
-        const double followToleranceMs = 50;
 
         // 欠载增量的判别线。取这个数的理由、以及垫零被误计时那个增量的量级，
         // 都写在本方法的 doc 里。
@@ -1067,22 +1063,25 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
 
         // 阶跃：D 升 700ms。执行器把目标深度推到新值并欠下 700ms 的垫零，跨约 63 轮
         // 摊完；垫零轮不从缓冲读，生产者继续写，故占用一路涨到新目标深度。
+        var atStepStats = renderer.ReadStats();
+        var stepClock = Stopwatch.StartNew();
         playback.ConfigureAlignment(
             enabled: true,
             dTicks: (newTargetMs + LinkTailEstimateMs) * TicksPerMs,
             offsetTicks: 1,
             manualOffsetTicks: 0);
-        await Task.Delay(1_500);
+        await ObserveStepDeadlineAsync(renderer, stepClock, newTargetMs, atStepStats);
 
-        var settledRingMs = await SampleRingMsAsync(renderer, seconds: 3);
+        var followToleranceMs = EndpointFollowTolerance(baseline, stepMs);
+        var follow = await SampleAlignmentFollowAsync(renderer, playback, newTargetMs, seconds: 3);
+        var settledRingMs = follow.RingMedianMs;
         var settledErrorMs = MedianMs(await SampleErrorUsAsync(renderer, seconds: 2));
-        var latencyMs = playback.OutputLatency.TotalMilliseconds;
         var settled = renderer.ReadStats();
         var playedFinal = played.Snapshot();
 
         output.WriteLine($"阶跃后目标深度  : {settled.TargetMsCurrent} ms（期望 {newTargetMs}ms）");
         output.WriteLine($"阶跃后占用中位  : {settledRingMs:F1} ms");
-        output.WriteLine($"阶跃后输出延迟  : {latencyMs:F1} ms");
+        output.WriteLine($"同窗配对跟随    : 差中位 {follow.DifferenceMedianMs:F3}ms，最大 {follow.DifferenceMaxMs:F3}ms，样本 {follow.Count}，容差 {followToleranceMs:F3}ms");
         output.WriteLine($"阶跃后误差中位  : {settledErrorMs:F1} ms（前馈 1:1，故应仍约零）");
         output.WriteLine($"欠载 / 硬重置   : {settled.UnderrunCount} / {settled.HardResetCount}（垫零 {stepMs}ms 跨约 63 轮）");
 
@@ -1120,8 +1119,8 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
             $"欠载计数跨阶跃增了 {settled.UnderrunCount - baseline.UnderrunCount}（允许 {jitterUnderrunAllowance}）：垫零帧疑似被计进欠载");
 
         Assert.True(
-            Math.Abs(latencyMs - settledRingMs) <= followToleranceMs,
-            $"|OutputLatency {latencyMs:F1} − 占用中位 {settledRingMs:F1}| 超 {followToleranceMs}ms：输出延迟没跟上跨轮垫零");
+            AlignmentFollowTolerance.IsFollowing(follow, followToleranceMs),
+            $"同窗配对差中位 {follow.DifferenceMedianMs:F3}ms 超 {followToleranceMs:F3}ms：输出延迟没跟上跨轮垫零");
 
         await sine.StopAsync(CancellationToken.None);
         playback.Configure(enabled: false, targetBufferMs: targetMs);
@@ -1335,7 +1334,7 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         // 都在本方法的 doc 里。
         Assert.True(
             trajectory.All(point => point.ErrorUs > 250_000),
-            $"窗内误差最小 {trajectory.Min(point => point.ErrorUs)}us 未过 250ms 超额阈：门不点火，本判据测不到那个域");
+            $"窗内误差最小 {trajectory.Min(point => point.ErrorUs)}us 未过 250ms 超额阈：点火不再有保证，本判据测不到那个域");
 
         // 域的前提：盈余恒负 → 丢帧量恒被钳成 0。占用取逐秒的瞬时样本而不是中位，
         // 锯齿的峰也要落在目标深度以下。
@@ -1361,6 +1360,159 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
 
         await sine.StopAsync(CancellationToken.None);
         playback.Configure(enabled: false, targetBufferMs: targetMs);
+    }
+
+    // RingMs是回调快照，期限是可观测进入目标带且入带后窗内不再出带，不是D消费当刻水位的证明。
+    private async Task ObserveStepDeadlineAsync(
+        WasapiRenderer renderer, Stopwatch clock, int targetMs, AudioRenderStats atStep)
+    {
+        double? firstInBandMs = null;
+        var samples = 0;
+        while (clock.Elapsed.TotalMilliseconds <= 1_500)
+        {
+            var stats = renderer.ReadStats();
+            var elapsed = clock.Elapsed.TotalMilliseconds;
+            if (elapsed > 1_500) break;
+            samples++;
+            output.WriteLine($"期限 t={elapsed:F3}ms Q={stats.RingMs:F3}ms target={stats.TargetMsCurrent}ms offset={stats.ClockOffsetAvailable} reset={stats.HardResetCount} underrun={stats.UnderrunCount}");
+            Assert.True(stats.HasStarted && stats.DeviceClockAvailable && stats.ClockOffsetAvailable,
+                "期限窗内对齐地基丢失");
+            Assert.Equal(atStep.HardResetCount, stats.HardResetCount);
+            var inBand = Math.Abs(stats.TargetMsCurrent - targetMs) <= 5 && Math.Abs(stats.RingMs - targetMs) <= 50;
+            // 入带后须留带：瞬时穿过再出带（如第二次垫剪循环）不算达成期限。
+            Assert.True(inBand || !firstInBandMs.HasValue,
+                $"首次入带 {firstInBandMs:F3}ms 后于 t={elapsed:F3}ms 出带：Q={stats.RingMs:F3}ms target={stats.TargetMsCurrent}ms（带 {targetMs}±50 / ±5）");
+            if (inBand)
+                firstInBandMs ??= elapsed;
+            await Task.Delay(10);
+        }
+        output.WriteLine($"首次入带={firstInBandMs?.ToString("F3") ?? "未观测"}ms，窗内样本={samples}；计时从ConfigureAlignment调用前开始");
+        Assert.True(firstInBandMs.HasValue,
+            "1500ms截止前未采到目标带内样本；调度漏采同样不满足本次期限验证，不重试筛样");
+    }
+
+    /// <summary>
+    /// 高积压下声明预算 D 上调的真机期限门控：1500ms 内进入新 target 带并留在带内。
+    ///
+    /// 构造：先正常供音，再断供 3.5s 把帧压住，随后一次性回灌，ring 占用被灌到约
+    /// 1900ms 以上；此后 D 从 200ms 上调到 900ms。断供必然触发一次硬重置，故硬重置与
+    /// 欠载都以阶跃前快照为基线。
+    ///
+    /// 判据：期限窗内首次入带且其后不出带（同一带宽 ±5 / ±50），硬重置跨阶跃不增，
+    /// 欠载增量不超过抖动余量，非零声音恢复，稳定窗占用在带内且同窗配对跟随。
+    ///
+    /// 边界：RingMs 是回调快照，不能证明 D 消费当刻 Q 在旧钳域；那一域的鉴别力由
+    /// native 的 finite_* 有限轨迹测试承担，本条只是端到端工况测试。
+    /// </summary>
+    [RealAudioFact]
+    public async Task HighBacklogDeclaredBudgetStepUp_EntersTargetBandWithinDeadline()
+    {
+        // 同 DeclaredBudgetStepUp_… 的 jitterUnderrunAllowance，取同值不另造阈值。
+        const long jitterUnderrunAllowance = 10;
+        AudioRenderNative.ResetForTesting();
+        using var renderer = new WasapiRenderer();
+        Assert.True(renderer.IsAvailable, $"播放不可用：{renderer.FailureReason}");
+        var played = new PlayedPcmRecorder();
+        using var playback = new AudioPlaybackService(played, renderer);
+        const int targetMs = 200;
+        const int newTargetMs = 900;
+        playback.ConfigureAlignment(true, (targetMs + LinkTailEstimateMs) * TicksPerMs, 1, 0);
+        playback.Configure(true, targetMs);
+        Assert.True(playback.IsPlaying, $"起播失败：{playback.LastError}");
+        var gate = new object();
+        var held = new List<AudioFrame>();
+        var closed = false;
+        var stamper = new SenderTimelineStamper();
+        using var sine = new SineFrameSource(ToneHz, Amplitude);
+        sine.FrameAvailable += frame =>
+        {
+            lock (gate)
+            {
+                var stamped = stamper.Stamp(frame);
+                if (closed) held.Add(stamped);
+                else playback.Submit(stamped);
+            }
+        };
+        await sine.StartAsync(CancellationToken.None);
+        await Task.Delay(3_000);
+        var baseline = renderer.ReadStats();
+        var early = played.Snapshot();
+        Assert.True(early.Peak >= AudioAlignmentThresholds.PeakAmplitudeLowerBound);
+        Assert.True(NonZeroRatio(early) >= AudioAlignmentThresholds.NonZeroFrameRatioLowerBound);
+        Assert.True(baseline.HasStarted && baseline.DeviceClockAvailable && baseline.ClockOffsetAvailable);
+        Assert.True(baseline.DevicePositionFrames > 0 && baseline.DevicePositionQpc > 0);
+        Assert.InRange(baseline.TargetMsCurrent, targetMs - 5, targetMs + 5);
+        var tolerance = EndpointFollowTolerance(baseline, 700);
+        lock (gate) { closed = true; }
+        await Task.Delay(3_500);
+        lock (gate)
+        {
+            foreach (var frame in held) playback.Submit(frame);
+            held.Clear();
+            closed = false;
+        }
+        var probe = Stopwatch.StartNew();
+        var atStep = renderer.ReadStats();
+        while (atStep.RingMs < 1_900 && probe.ElapsedMilliseconds < 300)
+        {
+            await Task.Delay(10);
+            atStep = renderer.ReadStats();
+        }
+        output.WriteLine($"高积压快照Q={atStep.RingMs:F3}ms target={atStep.TargetMsCurrent} offset={atStep.ClockOffsetAvailable} reset={atStep.HardResetCount}；不能证明D消费当刻Q进入旧钳域，此为端到端工况测试");
+        Assert.True(atStep.RingMs >= 1_900, "回灌未观测到高积压，构造不成立");
+        Assert.True(atStep.ClockOffsetAvailable);
+        var atStepPlayed = played.Snapshot();
+        var stepClock = Stopwatch.StartNew();
+        playback.ConfigureAlignment(true, (newTargetMs + LinkTailEstimateMs) * TicksPerMs, 1, 0);
+        await ObserveStepDeadlineAsync(renderer, stepClock, newTargetMs, atStep);
+        var follow = await SampleAlignmentFollowAsync(renderer, playback, newTargetMs, seconds: 3);
+        var settled = renderer.ReadStats();
+        Assert.True(played.Snapshot().NonZeroCount > atStepPlayed.NonZeroCount, "阶跃后非零声音未恢复");
+        Assert.Equal(atStep.HardResetCount, settled.HardResetCount);
+        output.WriteLine($"阶跃后欠载增量={settled.UnderrunCount - atStep.UnderrunCount}，跟随差中位={follow.DifferenceMedianMs:F3}ms，容差={tolerance:F3}ms");
+        Assert.True(
+            settled.UnderrunCount - atStep.UnderrunCount <= jitterUnderrunAllowance,
+            $"欠载计数跨阶跃增了 {settled.UnderrunCount - atStep.UnderrunCount}（允许 {jitterUnderrunAllowance}）：垫零帧疑似被计进欠载");
+        Assert.InRange(follow.RingMedianMs, newTargetMs - 50, newTargetMs + 50);
+        Assert.True(AlignmentFollowTolerance.IsFollowing(follow, tolerance));
+        await sine.StopAsync(CancellationToken.None);
+        playback.Configure(false, targetMs);
+    }
+
+    private double EndpointFollowTolerance(AudioRenderStats stats, int stepMs)
+    {
+        Assert.True(stats.DeviceSampleRate > 0, "设备采样率无效");
+        Assert.True(stats.DeviceBufferFrames > 0, "设备缓冲无效");
+        Assert.True(stats.DeviceLatencyUs >= 0, "设备尾段无效");
+        var tolerance = AlignmentFollowTolerance.Calculate(stats);
+        output.WriteLine($"端点跟随容差    : rate={stats.DeviceSampleRate}Hz buffer={stats.DeviceBufferFrames}帧 tail={stats.DeviceLatencyUs}us tolerance={tolerance:F3}ms");
+        Assert.True(AlignmentFollowTolerance.IsDiscriminating(tolerance, stepMs),
+            $"端点不适合此判据：容差 {tolerance:F3}ms 不小于阶跃 {stepMs}ms");
+        return tolerance;
+    }
+
+    private async Task<AlignmentFollowSummary> SampleAlignmentFollowAsync(
+        WasapiRenderer renderer, AudioPlaybackService playback, int targetMs, int seconds)
+    {
+        var samples = new List<(double LatencyMs, double RingMs)>();
+        var clock = Stopwatch.StartNew();
+        var opening = renderer.ReadStats();
+        while (clock.Elapsed.TotalSeconds < seconds)
+        {
+            // 相邻读取不是原子同轮快照；只验证本端点本次有限窗，不保证所有调度下无假红。
+            var latency = playback.OutputLatency.TotalMilliseconds;
+            var stats = renderer.ReadStats();
+            Assert.True(stats.HasStarted && stats.DeviceClockAvailable && stats.ClockOffsetAvailable,
+                "配对窗内对齐可用性丢失");
+            Assert.InRange(stats.TargetMsCurrent, targetMs - 5, targetMs + 5);
+            Assert.Equal(opening.HardResetCount, stats.HardResetCount);
+            samples.Add((latency, stats.RingMs));
+            output.WriteLine($"配对 t={clock.Elapsed.TotalMilliseconds:F1}ms latency={latency:F3}ms ring={stats.RingMs:F3}ms diff={Math.Abs(latency - stats.RingMs):F3}ms");
+            // 生产节流常量私有：测试策略取其当前100ms周期；调度与快照新鲜度不构成硬保证。
+            await Task.Delay(100);
+        }
+
+        return AlignmentFollowTolerance.Summarize(samples);
     }
 
     private async Task<List<long>> SampleErrorUsAsync(WasapiRenderer renderer, int seconds)

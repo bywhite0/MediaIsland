@@ -49,6 +49,10 @@ impl PlaybackRing {
         }
     }
 
+    pub fn capacity_frames(&self) -> usize {
+        self.capacity_frames
+    }
+
     pub fn available_frames(&self) -> usize {
         self.filled
     }
