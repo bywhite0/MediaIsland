@@ -99,6 +99,12 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
     /// </summary>
     private const int LinkTailEstimateMs = 20;
 
+    /// <summary>
+    /// 阶跃判据的欠载增量判别线。取这个数的理由、以及垫零被误计时那个增量的量级，
+    /// 写在 DeclaredBudgetStepUp_PadsOccupancyToNewTargetBandWithoutHardReset 的 doc 里。
+    /// </summary>
+    private const long JitterUnderrunAllowance = 10;
+
     [RealAudioFact]
     public async Task SteadyStateAlignmentError_StaysWithinPerEndBudget()
     {
@@ -1011,9 +1017,6 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         const int newTargetMs = targetMs + stepMs;
 
 
-        // 欠载增量的判别线。取这个数的理由、以及垫零被误计时那个增量的量级，
-        // 都写在本方法的 doc 里。
-        const long jitterUnderrunAllowance = 10;
 
         playback.ConfigureAlignment(
             enabled: true,
@@ -1115,8 +1118,8 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         // 同一条隔离的另一半：垫零帧也不计 stats 的欠载数。硬重置那条断言只看得见
         // 累计过阈的后果，这条直接看计数本身。
         Assert.True(
-            settled.UnderrunCount - baseline.UnderrunCount <= jitterUnderrunAllowance,
-            $"欠载计数跨阶跃增了 {settled.UnderrunCount - baseline.UnderrunCount}（允许 {jitterUnderrunAllowance}）：垫零帧疑似被计进欠载");
+            settled.UnderrunCount - baseline.UnderrunCount <= JitterUnderrunAllowance,
+            $"欠载计数跨阶跃增了 {settled.UnderrunCount - baseline.UnderrunCount}（允许 {JitterUnderrunAllowance}）：垫零帧疑似被计进欠载");
 
         Assert.True(
             AlignmentFollowTolerance.IsFollowing(follow, followToleranceMs),
@@ -1407,8 +1410,6 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
     [RealAudioFact]
     public async Task HighBacklogDeclaredBudgetStepUp_EntersTargetBandWithinDeadline()
     {
-        // 同 DeclaredBudgetStepUp_… 的 jitterUnderrunAllowance，取同值不另造阈值。
-        const long jitterUnderrunAllowance = 10;
         AudioRenderNative.ResetForTesting();
         using var renderer = new WasapiRenderer();
         Assert.True(renderer.IsAvailable, $"播放不可用：{renderer.FailureReason}");
@@ -1471,8 +1472,8 @@ public class PlaybackAlignmentChecks(ITestOutputHelper output)
         Assert.Equal(atStep.HardResetCount, settled.HardResetCount);
         output.WriteLine($"阶跃后欠载增量={settled.UnderrunCount - atStep.UnderrunCount}，跟随差中位={follow.DifferenceMedianMs:F3}ms，容差={tolerance:F3}ms");
         Assert.True(
-            settled.UnderrunCount - atStep.UnderrunCount <= jitterUnderrunAllowance,
-            $"欠载计数跨阶跃增了 {settled.UnderrunCount - atStep.UnderrunCount}（允许 {jitterUnderrunAllowance}）：垫零帧疑似被计进欠载");
+            settled.UnderrunCount - atStep.UnderrunCount <= JitterUnderrunAllowance,
+            $"欠载计数跨阶跃增了 {settled.UnderrunCount - atStep.UnderrunCount}（允许 {JitterUnderrunAllowance}）：垫零帧疑似被计进欠载");
         Assert.InRange(follow.RingMedianMs, newTargetMs - 50, newTargetMs + 50);
         Assert.True(AlignmentFollowTolerance.IsFollowing(follow, tolerance));
         await sine.StopAsync(CancellationToken.None);
