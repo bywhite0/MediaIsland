@@ -260,4 +260,46 @@ public class QrcKanaParserTests
             span => Assert.Equal((6, "ひ"), (span.BaseStart, span.Reading)),
             span => Assert.Equal((7, "び"), (span.BaseStart, span.Reading)));
     }
+
+    [Fact]
+    public void Parse_MaruIsNotABaseCharacter()
+    {
+        // 「無様に〇ねる」：〇 不占基字符位，下一个读音直接落在下一行的「苦」上，实测自 KING 的 QRC（#43）。
+        const string content = """
+            [kana:1ぶ1ざま1にが1おも]
+            [0,1000]無(0,100)様(100,100)に(200,100)〇(300,100)ね(400,100)る(500,500)
+            [1000,1000]苦(1000,250)い(1250,250)思(1500,250)い(1750,250)
+            """;
+
+        var lines = QrcLyricsParser.Parse(content);
+        Assert.Collection(
+            lines[0].RubySpans!,
+            span => Assert.Equal((0, "ぶ"), (span.BaseStart, span.Reading)),
+            span => Assert.Equal((1, "ざま"), (span.BaseStart, span.Reading)));
+        Assert.Collection(
+            lines[1].RubySpans!,
+            span => Assert.Equal((0, "にが"), (span.BaseStart, span.Reading)),
+            span => Assert.Equal((2, "おも"), (span.BaseStart, span.Reading)));
+    }
+
+    [Fact]
+    public void Parse_IterationMarkAndMaruInSameTrack_StillAligns()
+    {
+        // 々 占位而 〇 不占位：两者同处一轨时，把 〇 与 々 视作同类的口径无论取舍都对不上校验和。
+        const string content = """
+            [kana:1ひ1び1ぶ1ざま]
+            [0,1000]日(0,500)々(500,500)
+            [1000,1000]無(1000,100)様(1100,100)に(1200,100)〇(1300,100)ね(1400,100)る(1500,500)
+            """;
+
+        var lines = QrcLyricsParser.Parse(content);
+        Assert.Collection(
+            lines[0].RubySpans!,
+            span => Assert.Equal((0, "ひ"), (span.BaseStart, span.Reading)),
+            span => Assert.Equal((1, "び"), (span.BaseStart, span.Reading)));
+        Assert.Collection(
+            lines[1].RubySpans!,
+            span => Assert.Equal((0, "ぶ"), (span.BaseStart, span.Reading)),
+            span => Assert.Equal((1, "ざま"), (span.BaseStart, span.Reading)));
+    }
 }

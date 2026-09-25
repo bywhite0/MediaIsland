@@ -15,7 +15,7 @@ namespace MediaIsland.Services.Lyrics.Parsers;
 /// The stream carries no anchors, so it only lines up if our notion of "base character" matches
 /// the producer's exactly — a single extra or missing base character shifts every later reading.
 /// Verified against real QQ Music payloads: a base character is a CJK ideograph, or a maximal run
-/// of digits (<c>27</c> and <c>0</c> each count as one). Kana and Latin are never base characters.
+/// of digits (<c>27</c> and <c>0</c> each count as one). Kana, Latin and <c>〇</c> are never base characters.
 /// A base character the producer could not read still consumes a slot with an empty reading, so
 /// "unannotated" never means "unconsumed".
 /// </para>
@@ -274,7 +274,8 @@ internal static class LyricsKanaRubyParser
     private static bool IsDigit(char value) => value is (>= '0' and <= '9') or (>= '０' and <= '９');
 
     /// <summary>Iteration/abbreviation marks that live outside the ideograph blocks.</summary>
-    private static bool IsIterationMark(char value) => value is '々' or '〇' or '〆';
+    /// <remarks><c>〇</c> is deliberately absent: the producer never gives it a slot (KING, #43).</remarks>
+    private static bool IsIterationMark(char value) => value is '々' or '〆';
 
     /// <param name="CharLength">1 for an ideograph; the run length for a digit run.</param>
     private readonly record struct BasePosition(int LineIndex, int CharIndex, int CharLength);
