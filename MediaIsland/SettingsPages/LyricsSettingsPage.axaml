@@ -25,7 +25,7 @@
                             <Border Padding="8,6"
                                     Margin="0,0,0,6"
                                     CornerRadius="4"
-                                    Background="{DynamicResource MaterialDesignCardBackground}">
+                                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
                                 <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto,Auto">
                                     <StackPanel Grid.Column="0" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding DisplayName}" FontWeight="Medium" />
@@ -129,7 +129,7 @@
             </controls:FASettingsExpander>
             <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE1D0;}"
                                          Header="歌词候选"
-                                         Description="各已启用来源对当前曲目的搜索结果。展开后双击一行即可应用到组件。">
+                                         Description="各已启用来源对当前曲目的搜索结果，按得分从高到低排列。展开后点「应用」或双击一行即可应用到组件。">
                 <controls:FASettingsExpander.Footer>
                     <StackPanel Orientation="Horizontal" Spacing="8">
                         <TextBlock Text="{Binding CurrentLyricsSourceDisplay}"
@@ -149,14 +149,41 @@
                               CanUserReorderColumns="False"
                               CanUserSortColumns="False"
                               DoubleTapped="ApplyLyricsCandidateOnDoubleTapped"
-                              Height="220">
+                              MaxHeight="320">
                         <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="歌曲" Width="*" MinWidth="200">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="8,4" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Title}"
+                                                       FontWeight="Medium"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding Title}" />
+                                            <TextBlock Text="{Binding Subtitle}"
+                                                       FontSize="12"
+                                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       ToolTip.Tip="{Binding Subtitle}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="来源" Width="Auto" Binding="{Binding Source}" />
-                            <DataGridTextColumn Header="评分" Width="Auto" Binding="{Binding Score}" />
-                            <DataGridTextColumn Header="标题" Width="*" Binding="{Binding Title}" />
-                            <DataGridTextColumn Header="艺术家" Width="*" Binding="{Binding Artist}" />
-                            <DataGridTextColumn Header="专辑" Width="*" Binding="{Binding Album}" />
                             <DataGridTextColumn Header="同步" Width="Auto" Binding="{Binding SyncCapability}" />
+                            <DataGridTextColumn Header="评分" Width="Auto" Binding="{Binding Score}" />
+                            <DataGridTemplateColumn Header="操作" Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Margin="4,0,8,0"
+                                                Padding="12,4"
+                                                VerticalAlignment="Center"
+                                                Click="ApplyLyricsCandidateOnClick"
+                                                ToolTip.Tip="把这份歌词应用到组件">
+                                            <ci:IconText Glyph="&#xE424;" Text="应用" />
+                                        </Button>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                 </StackPanel>

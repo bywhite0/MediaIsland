@@ -116,6 +116,9 @@ public sealed class LyricsCandidateItemViewModel
         SyncCapability = candidate.SupportsWordSync ? "支持逐字" : "行级歌词";
     }
 
+    /// <summary>表格副行：艺术家 · 专辑；无专辑时只显示艺术家。</summary>
+    public string Subtitle => Album == "-" ? Artist : $"{Artist} · {Album}";
+
     public string Source { get; }
 
     public LyricsCandidate Candidate { get; }

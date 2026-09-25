@@ -19,13 +19,13 @@
             <Border Margin="0 0 0 8"
                     Padding="14"
                     CornerRadius="4"
-                    Background="{DynamicResource MaterialDesignCardBackground}">
+                    Background="{DynamicResource CardBackgroundFillColorDefaultBrush}">
                 <Grid ColumnDefinitions="Auto,*">
                     <Border Width="64"
                             Height="64"
                             CornerRadius="4"
                             ClipToBounds="True"
-                            Background="{DynamicResource MaterialDesignDivider}">
+                            Background="{DynamicResource SubtleFillColorSecondaryBrush}">
                         <Grid>
                             <Image Source="{Binding CurrentMediaThumbnail}"
                                    Stretch="UniformToFill"
@@ -34,7 +34,7 @@
                                            FontSize="28"
                                            HorizontalAlignment="Center"
                                            VerticalAlignment="Center"
-                                           Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                            IsVisible="{Binding !HasCurrentMediaThumbnail}" />
                         </Grid>
                     </Border>
@@ -45,22 +45,22 @@
                                    TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding CurrentMediaArtistAlbum}"
                                    Margin="0 4 0 0"
-                                   Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                    TextTrimming="CharacterEllipsis" />
                         <StackPanel Orientation="Horizontal" Margin="0 8 0 0">
                             <ci:FluentIcon Glyph="{Binding CurrentMediaStatusGlyph}"
                                            FontSize="14"
                                            Margin="0 0 4 0"
-                                           Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                            VerticalAlignment="Center" />
                             <TextBlock Text="{Binding CurrentMediaPlaybackStatus}"
-                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                        VerticalAlignment="Center" />
                             <TextBlock Text=" · "
-                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                        VerticalAlignment="Center" />
                             <TextBlock Text="{Binding CurrentMediaTimeline}"
-                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                        VerticalAlignment="Center" />
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0 4 0 0">
@@ -75,7 +75,7 @@
                                        IsVisible="{Binding HasCurrentMediaSourceIcon}" />
                             </Border>
                             <TextBlock Text="{Binding CurrentMediaSourceDisplay}"
-                                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                        TextTrimming="CharacterEllipsis"
                                        ToolTip.Tip="{Binding CurrentMediaSourceId}" />
                         </StackPanel>
@@ -85,92 +85,104 @@
             <ci:IconText Glyph="&#xEDBA;" Text="播放源" Margin="0 16 0 8" />
             <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE561;}"
                                          Header="播放源列表"
-                                         Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息、是否搜索歌词，并可自定义显示名称；留空时自动识别。需要重载组件才能生效。">
+                                         Description="插件监听的播放源列表，可控制是否显示来自特定播放源的信息、是否搜索歌词，并可自定义显示名称与图标。修改后点「保存」，重载组件后生效。">
                 <StackPanel Orientation="Vertical">
-                    <DataGrid Margin="12,6,70,6"
-                              IsReadOnly="False"
+                    <DataGrid Margin="12,6,12,6"
+                              IsReadOnly="True"
                               AutoGenerateColumns="False"
                               CanUserResizeColumns="False"
                               CanUserReorderColumns="False"
-                              Height="240"
-                              ItemsSource="{Binding Settings.MediaSourceList, Mode=TwoWay}">
+                              CanUserSortColumns="False"
+                              MaxHeight="320"
+                              ItemsSource="{Binding Settings.MediaSourceList}">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="播放源" Width="Auto" MinWidth="120" MaxWidth="400"
-                                                Binding="{Binding Source}" />
-                            <DataGridTemplateColumn Header="显示名称" Width="Auto">
+                            <DataGridTemplateColumn Header="播放源" Width="*" MinWidth="200">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center" />
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellTemplate>
-                                <DataGridTemplateColumn.CellEditingTemplate>
-                                    <DataTemplate>
-                                        <TextBox
-                                            Text="{Binding CustomDisplayName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                            PlaceholderText="留空时自动识别"
-                                            ToolTip.Tip="自定义播放源名称，留空时自动识别"
-                                            LostFocus="CustomDisplayNameTextBoxOnLostFocus" />
-                                    </DataTemplate>
-                                </DataGridTemplateColumn.CellEditingTemplate>
-                            </DataGridTemplateColumn>
-                            <DataGridCheckBoxColumn Header="启用" Width="Auto"
-                                                    Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                            <DataGridCheckBoxColumn Header="歌词搜索" Width="Auto"
-                                                    Binding="{Binding IsLyricsSearchEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                            <DataGridTemplateColumn Header="图标状态" Width="Auto">
-                                <DataGridTemplateColumn.CellTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" Spacing="6"
-                                                    ToolTip.Tip="{Binding IconStatus}">
-                                            <Border Width="20" Height="20" CornerRadius="3" ClipToBounds="True">
+                                        <Grid ColumnDefinitions="Auto,*" Margin="8,4">
+                                            <Border Width="24"
+                                                    Height="24"
+                                                    CornerRadius="4"
+                                                    ClipToBounds="True"
+                                                    VerticalAlignment="Center"
+                                                    Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                                    ToolTip.Tip="{Binding IconStatus, StringFormat='图标：{0}'}">
                                                 <Image Source="{Binding DisplayIcon}" Stretch="UniformToFill" />
                                             </Border>
-                                            <TextBlock Text="{Binding IconStatus}" VerticalAlignment="Center" />
-                                        </StackPanel>
+                                            <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding DisplayName}"
+                                                           FontWeight="Medium"
+                                                           TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Text="{Binding Source}"
+                                                           FontSize="12"
+                                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           ToolTip.Tip="{Binding Source}" />
+                                            </StackPanel>
+                                        </Grid>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
-                            <DataGridTemplateColumn Header="图标操作" Width="Auto">
+                            <DataGridTemplateColumn Header="自定义名称" Width="160">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <StackPanel Orientation="Horizontal" Spacing="2">
-                                            <Button Width="20"
-                                                    Height="20"
-                                                    Margin="0"
-                                                    Padding="4 0"
-                                                    Background="Transparent"
-                                                    BorderBrush="Transparent"
-                                                    Click="ChooseIconButtonOnClick"
-                                                    ToolTip.Tip="自定义图标">
-                                                <ci:FluentIcon Glyph="&#xE9C4;" />
-                                            </Button>
-                                            <Button Width="20"
-                                                    Height="20"
-                                                    Margin="0"
-                                                    Padding="4 0"
-                                                    Background="Transparent"
-                                                    BorderBrush="Transparent"
-                                                    Click="ClearIconButtonOnClick"
-                                                    ToolTip.Tip="清除自定义图标">
-                                                <ci:FluentIcon Glyph="&#xE7FF;" />
-                                            </Button>
-                                        </StackPanel>
+                                        <TextBox Margin="4,0"
+                                                 VerticalAlignment="Center"
+                                                 Text="{Binding CustomDisplayName, Mode=TwoWay}"
+                                                 PlaceholderText="留空时自动识别"
+                                                 LostFocus="CustomDisplayNameTextBoxOnLostFocus" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="启用" Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox HorizontalAlignment="Center"
+                                                  IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                                                  ToolTip.Tip="显示来自该播放源的媒体信息" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTemplateColumn Header="歌词搜索" Width="Auto">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox HorizontalAlignment="Center"
+                                                  IsChecked="{Binding IsLyricsSearchEnabled, Mode=TwoWay}"
+                                                  ToolTip.Tip="为该播放源搜索歌词" />
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTemplateColumn Header="操作" Width="Auto">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
-                                        <Button Width="20"
-                                                Height="20"
-                                                Margin="0"
-                                                Padding="4 0"
-                                                Background="Transparent"
-                                                BorderBrush="Transparent"
-                                                Click="DeleteButtonOnClick"
-                                                ToolTip.Tip="移除播放源">
-                                            <ci:FluentIcon Glyph="&#xE61C;" Foreground="Red" />
-                                        </Button>
+                                        <StackPanel Orientation="Horizontal" Spacing="4" Margin="4,0,8,0">
+                                            <Button Width="32"
+                                                    Height="32"
+                                                    Padding="0"
+                                                    Theme="{StaticResource TransparentButton}"
+                                                    Click="ChooseIconButtonOnClick"
+                                                    ToolTip.Tip="自定义图标">
+                                                <ci:FluentIcon Glyph="&#xE9C4;" />
+                                            </Button>
+                                            <Button Width="32"
+                                                    Height="32"
+                                                    Padding="0"
+                                                    Theme="{StaticResource TransparentButton}"
+                                                    IsEnabled="{Binding IconPath, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                    Click="ClearIconButtonOnClick"
+                                                    ToolTip.Tip="清除自定义图标">
+                                                <ci:FluentIcon Glyph="&#xE7FF;" />
+                                            </Button>
+                                            <Button Width="32"
+                                                    Height="32"
+                                                    Padding="0"
+                                                    Theme="{StaticResource TransparentButton}"
+                                                    Click="DeleteButtonOnClick"
+                                                    ToolTip.Tip="移除播放源">
+                                                <ci:FluentIcon Glyph="&#xE61C;"
+                                                               Foreground="{DynamicResource SystemFillColorCriticalBrush}" />
+                                            </Button>
+                                        </StackPanel>
                                     </DataTemplate>
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>

@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using ClassIsland.Core.Attributes;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
@@ -310,10 +311,27 @@ public partial class LyricsSettingsPage : MediaIslandSettingsPage
         _ = RefreshLyricsCandidatesAsync(_mediaService.CurrentMediaInfo);
     }
 
-    private async void ApplyLyricsCandidateOnDoubleTapped(object? sender, TappedEventArgs e)
+    private void ApplyLyricsCandidateOnDoubleTapped(object? sender, TappedEventArgs e)
     {
-        if (e.Source is not Control { DataContext: LyricsCandidateItemViewModel item } ||
-            _mediaService.CurrentMediaInfo is not { } mediaInfo)
+        // 双击落在「应用」按钮上时按钮自己已处理，不再重复应用。
+        if (e.Source is Control { DataContext: LyricsCandidateItemViewModel item } source &&
+            source.FindAncestorOfType<Button>(includeSelf: true) is null)
+        {
+            _ = ApplyLyricsCandidateAsync(item);
+        }
+    }
+
+    private void ApplyLyricsCandidateOnClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: LyricsCandidateItemViewModel item })
+        {
+            _ = ApplyLyricsCandidateAsync(item);
+        }
+    }
+
+    private async Task ApplyLyricsCandidateAsync(LyricsCandidateItemViewModel item)
+    {
+        if (_mediaService.CurrentMediaInfo is not { } mediaInfo)
         {
             return;
         }

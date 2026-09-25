@@ -16,7 +16,7 @@
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:MediaLinkShareSettingsPage}}">
         <StackPanel Classes="settings-container animated-intro">
             <TextBlock Text="发送端：把本机正在播放的歌曲、歌词与音频共享给其它程序（如 OBS 字幕、自制歌词条）或另一台电脑上的 ClassIsland。接收方的设置在「Link-Like MediaLink」页。"
-                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        TextWrapping="Wrap"
                        Margin="0 0 0 16" />
             <ci:IconText Glyph="&#xEF38;" Text="共享服务" Margin="0 0 0 8" />

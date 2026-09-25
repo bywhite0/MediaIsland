@@ -17,7 +17,7 @@
     <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:MediaLinkReceiveSettingsPage}}">
         <StackPanel Classes="settings-container animated-intro">
             <TextBlock Text="接收端：显示并播放另一台设备或外部程序共享过来的歌曲、歌词与音频。对方需要先在「Link to the MEDIA」页开启共享。"
-                       Foreground="{DynamicResource MaterialDesignBodyLight}"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        TextWrapping="Wrap"
                        Margin="0 0 0 16" />
             <ci:IconText Glyph="&#xEDC6;" Text="连接" Margin="0 0 0 8" />

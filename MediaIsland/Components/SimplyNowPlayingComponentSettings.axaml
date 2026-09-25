@@ -83,7 +83,7 @@
                     </StackPanel>
                 </controls:FASettingsExpander.Footer>
             </controls:FASettingsExpander>
-            <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
+            <Label HorizontalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
                 Powered by MediaIsland
             </Label>
         </StackPanel>

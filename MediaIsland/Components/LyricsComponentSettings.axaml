@@ -128,10 +128,10 @@
                     </StackPanel>
                 </controls:FASettingsExpander.Footer>
             </controls:FASettingsExpander>
-            <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
+            <Label HorizontalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
                 Powered by MediaIsland
             </Label>
-            <Label HorizontalAlignment="Center" Foreground="{DynamicResource MaterialDesignBodyLight}">
+            <Label HorizontalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}">
                 Lyrics powered by LttF.
             </Label>
         </StackPanel>
