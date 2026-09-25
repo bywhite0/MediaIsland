@@ -119,7 +119,7 @@ public sealed class MediaSourceDisplayService(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Failed to resolve media source info for {SourceApp}.", sourceApp);
+            logger.LogDebug(ex, "[媒体] 解析播放源信息失败：{SourceApp}", sourceApp);
             return null;
         }
     }
@@ -138,7 +138,7 @@ public sealed class MediaSourceDisplayService(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Failed to load configured media source icon: {IconPath}", iconPath);
+            logger.LogDebug(ex, "[媒体] 加载自定义播放源图标失败：{IconPath}", iconPath);
             return null;
         }
     }
@@ -157,7 +157,7 @@ public sealed class MediaSourceDisplayService(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Failed to load bundled media source icon for {SourceApp}.", sourceApp);
+            logger.LogDebug(ex, "[媒体] 加载内置播放源图标失败：{SourceApp}", sourceApp);
             return null;
         }
     }

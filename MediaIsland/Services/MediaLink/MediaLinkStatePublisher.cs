@@ -247,7 +247,7 @@ public sealed class MediaLinkStatePublisher : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "MediaLink media broadcast failed.");
+            _logger?.LogDebug(ex, "[MediaLink] 广播媒体信息失败");
         }
     }
 
@@ -267,7 +267,7 @@ public sealed class MediaLinkStatePublisher : IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "MediaLink lyrics broadcast failed.");
+            _logger?.LogDebug(ex, "[MediaLink] 广播歌词失败");
         }
     }
 

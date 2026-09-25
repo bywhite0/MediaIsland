@@ -243,7 +243,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             catch (Exception ex)
             {
                 LastError = ex.Message;
-                _logger?.LogWarning(ex, "MediaLink 上游配置热更新失败");
+                _logger?.LogWarning(ex, "[MediaLink:上游] 配置热更新失败");
             }
         });
     }
@@ -265,7 +265,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             if (!TryBuildEndpoint(settings.MediaLinkUpstreamEndpoint, out var uri, out var error))
             {
                 LastError = error;
-                _logger?.LogWarning("MediaLink 上游地址无效：{Error}", error);
+                _logger?.LogWarning("[MediaLink:上游] 地址无效：{Error}", error);
                 RaiseStateChanged();
                 return;
             }
@@ -338,7 +338,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         catch (Exception ex)
         {
             LastError = ex.Message;
-            _logger?.LogError(ex, "MediaLink 上游客户端启动失败");
+            _logger?.LogError(ex, "[MediaLink:上游] 客户端启动失败");
             RaiseStateChanged();
         }
         finally
@@ -411,11 +411,11 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
                 return;
             }
 
-            _logger?.LogDebug("上游媒体注入被拒绝：{Error}", error);
+            _logger?.LogDebug("[MediaLink:上游] 媒体注入被拒绝：{Error}", error);
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "处理上游媒体失败");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 处理媒体失败");
         }
     }
 
@@ -429,11 +429,11 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
                 return;
             }
 
-            _logger?.LogDebug("上游歌词注入被拒绝：{Error}", error);
+            _logger?.LogDebug("[MediaLink:上游] 歌词注入被拒绝：{Error}", error);
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "处理上游歌词失败");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 处理歌词失败");
         }
     }
 
@@ -497,12 +497,12 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             {
                 // 失配即这份封面已经过期（回复在途中又切了歌）。丢弃即可：
                 // 新曲目那条 media.updated 已经或即将触发它自己的请求。
-                _logger?.LogDebug("丢弃过期的上游封面：{Token}", e.TrackToken);
+                _logger?.LogDebug("[MediaLink:上游] 丢弃过期的封面：{Token}", e.TrackToken);
             }
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "处理上游封面失败");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 处理封面失败");
         }
     }
 
@@ -524,7 +524,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "上游封面解码失败");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 封面解码失败");
             return null;
         }
     }
@@ -590,7 +590,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "切换上游音频订阅失败");
+                _logger?.LogDebug(ex, "[MediaLink:上游] 切换音频订阅失败");
             }
             finally
             {
@@ -651,7 +651,7 @@ public sealed class MediaLinkUpstreamHostedService : IHostedService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "停止上游客户端时出错");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 停止客户端时出错");
         }
 
         _lifecycleLock.Dispose();

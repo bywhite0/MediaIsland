@@ -553,7 +553,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
                             // 对端可能已经走了，也可能是上面那个超时到了。握手回不去不是错误，
                             // 收循环照常退出。这里必须自己接住 OperationCanceledException——
                             // 最外层的 catch 过滤器把它排除在外。
-                            _logger?.LogDebug(ex, "回应关闭握手失败");
+                            _logger?.LogDebug(ex, "[MediaLink] 回应关闭握手失败");
                         }
                     }
 
@@ -571,7 +571,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger?.LogDebug(ex, "MediaLink session ended with error.");
+            _logger?.LogDebug(ex, "[MediaLink] 会话异常结束");
         }
         finally
         {
@@ -602,7 +602,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "MediaLink 音频采集需求重算失败");
+            _logger?.LogDebug(ex, "[MediaLink] 音频采集需求重算失败");
         }
     }
 
@@ -772,7 +772,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
         var decoded = TryDecodeCopy(data, out var decodeError);
         if (decoded is null)
         {
-            _logger?.LogDebug("丢弃无法解码的二进制帧：{Error}", decodeError);
+            _logger?.LogDebug("[MediaLink] 丢弃无法解码的二进制帧：{Error}", decodeError);
             return;
         }
 
@@ -939,7 +939,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
                 _closed = true;
                 _outbound.Complete();
                 _audioOutbound.Complete();
-                _logger?.LogDebug("MediaLink 出站写超时，终止会话");
+                _logger?.LogDebug("[MediaLink] 出站写超时，终止会话");
             }
         }
         finally
@@ -1128,7 +1128,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "MediaLink WS 缩略图编码失败");
+                _logger?.LogDebug(ex, "[MediaLink] WS 缩略图编码失败");
                 await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, "thumbnail encode failed", cancellationToken);
                 return;
             }
@@ -1399,7 +1399,7 @@ public sealed class MediaLinkSession : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "MediaLink platform playback command failed.");
+            _logger?.LogDebug(ex, "[MediaLink] 平台播放控制命令执行失败");
             await SendErrorAsync(message.Id, MediaLinkProtocol.ErrorInternal, ex.Message, cancellationToken);
             return;
         }

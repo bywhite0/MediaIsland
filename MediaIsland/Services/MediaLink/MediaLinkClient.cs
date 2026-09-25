@@ -335,7 +335,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
             catch (Exception ex)
             {
                 LastError = ex.Message;
-                _logger?.LogDebug(ex, "MediaLink 客户端连接中断");
+                _logger?.LogDebug(ex, "[MediaLink:上游] 客户端连接中断");
             }
             finally
             {
@@ -487,12 +487,12 @@ public sealed class MediaLinkClient : IAsyncDisposable
                     _audioClockWindowConsistent = consistent;
                     if (consistent)
                     {
-                        _logger?.LogDebug("对时窗口恢复一致");
+                        _logger?.LogDebug("[MediaLink:上游] 对时窗口恢复一致");
                     }
                     else
                     {
                         _logger?.LogDebug(
-                            "对时窗口不一致，offset 报不可用，等坏样本流出窗口，累计 {InconsistentWindows} 次",
+                            "[MediaLink:上游] 对时窗口不一致，offset 报不可用，等坏样本流出窗口，累计 {InconsistentWindows} 次",
                             _audioClockProbe.InconsistentWindows);
                     }
                 }
@@ -508,7 +508,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
         catch (Exception ex)
         {
             // 对时只服务于对齐播放；它的意外不该拖垮共用这条连接的 media / lyrics / 转发。
-            _logger?.LogDebug(ex, "对时探测循环意外终止");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 对时探测循环意外终止");
         }
     }
 
@@ -605,7 +605,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
         catch (Exception ex)
         {
             // 发送失败即连接已坏，重连逻辑会带着新意愿重新握手，不必在此重试。
-            _logger?.LogDebug(ex, "切换音频订阅失败");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 切换音频订阅失败");
         }
     }
 
@@ -638,7 +638,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
         catch (Exception ex)
         {
             // 发送失败即连接已坏，重连后下一条 media.updated 会再问一次，不必在此重试。
-            _logger?.LogDebug(ex, "请求封面失败");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 请求封面失败");
         }
     }
 
@@ -715,7 +715,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "对时状态事件的订阅方抛出异常");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 对时状态事件的订阅方抛出异常");
         }
     }
 
@@ -746,7 +746,7 @@ public sealed class MediaLinkClient : IAsyncDisposable
         }
         catch (JsonException ex)
         {
-            _logger?.LogDebug(ex, "MediaLink 客户端收到无法解析的消息");
+            _logger?.LogDebug(ex, "[MediaLink:上游] 收到无法解析的消息");
             return;
         }
 

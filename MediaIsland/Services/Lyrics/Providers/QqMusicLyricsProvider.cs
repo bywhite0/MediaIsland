@@ -38,7 +38,7 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
         {
             cancellationToken.ThrowIfCancellationRequested();
             var page = await SearchSongsAsync(query, cancellationToken);
-            logger?.LogDebug("[歌词:QqMusic] 查询 {Query} 返回 {Count} 个歌曲候选。", query, page.Count);
+            logger?.LogDebug("[歌词:QqMusic] 查询 {Query} 返回 {Count} 个歌曲候选", query, page.Count);
             if (page.Count == 0)
             {
                 continue;
@@ -137,7 +137,7 @@ public sealed class QqMusicLyricsProvider(ILogger<QqMusicLyricsProvider>? logger
             if (attempt < MaxSearchRequestAttempts)
             {
                 logger?.LogDebug(
-                    "[歌词:QqMusic] 查询 {Query} 未返回候选，将进行第 {Attempt}/{Total} 次请求。",
+                    "[歌词:QqMusic] 查询 {Query} 未返回候选，将进行第 {Attempt}/{Total} 次请求",
                     query,
                     attempt + 1,
                     MaxSearchRequestAttempts);

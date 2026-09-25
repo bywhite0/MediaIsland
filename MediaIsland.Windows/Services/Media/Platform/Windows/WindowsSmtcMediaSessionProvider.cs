@@ -87,7 +87,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Failed to resolve focused SMTC control session.");
+            logger.LogDebug(ex, "[媒体:SMTC] 解析焦点 SMTC 控制会话失败");
             return null;
         }
     }
@@ -96,7 +96,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
     {
         try
         {
-            logger.LogDebug("SMTC session opened: {SessionId}", session.Id);
+            logger.LogDebug("[媒体:SMTC] SMTC 会话已打开：{SessionId}", session.Id);
 
             if (!IsFocusedSession(session))
             {
@@ -109,28 +109,28 @@ public sealed class WindowsSmtcMediaSessionProvider(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "处理 SMTC 会话打开事件失败：{SessionId}", session.Id);
+            logger.LogWarning(ex, "[媒体:SMTC] 处理 SMTC 会话打开事件失败：{SessionId}", session.Id);
         }
     }
 
     private void OnAnySessionClosed(MediaManager.MediaSession session)
     {
         // Non-focused session close must not clear CurrentMediaInfo; wait for platform focus change.
-        logger.LogDebug("SMTC session closed: {SessionId}", session.Id);
+        logger.LogDebug("[媒体:SMTC] SMTC 会话已关闭：{SessionId}", session.Id);
     }
 
     private async void OnFocusedSessionChanged(MediaManager.MediaSession session)
     {
         try
         {
-            logger.LogDebug("SMTC focused session changed: {SessionId}", session?.Id);
+            logger.LogDebug("[媒体:SMTC] SMTC 焦点会话已切换：{SessionId}", session?.Id);
             var snapshot = await BuildSnapshotAsync(session, CancellationToken.None);
             CurrentSnapshot = snapshot;
             Raise(FocusedSessionChanged, snapshot);
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "处理 SMTC 焦点会话改变事件失败：{SessionId}", session?.Id);
+            logger.LogWarning(ex, "[媒体:SMTC] 处理 SMTC 焦点会话改变事件失败：{SessionId}", session?.Id);
         }
     }
 
@@ -151,7 +151,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "处理 SMTC 播放状态改变事件失败：{SessionId}", session.Id);
+            logger.LogWarning(ex, "[媒体:SMTC] 处理 SMTC 播放状态改变事件失败：{SessionId}", session.Id);
         }
     }
 
@@ -172,7 +172,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "处理 SMTC 媒体属性改变事件失败：{SessionId}", session.Id);
+            logger.LogWarning(ex, "[媒体:SMTC] 处理 SMTC 媒体属性改变事件失败：{SessionId}", session.Id);
         }
     }
 
@@ -193,7 +193,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "处理 SMTC 时间轴改变事件失败：{SessionId}", session.Id);
+            logger.LogWarning(ex, "[媒体:SMTC] 处理 SMTC 时间轴改变事件失败：{SessionId}", session.Id);
         }
     }
 
@@ -211,7 +211,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Failed to check focused SMTC session.");
+            logger.LogDebug(ex, "[媒体:SMTC] 检查焦点 SMTC 会话失败");
             return false;
         }
     }
@@ -265,7 +265,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "无法生成 SMTC 媒体会话快照：{SessionId}", session.Id);
+            logger.LogWarning(ex, "[媒体:SMTC] 无法生成 SMTC 媒体会话快照：{SessionId}", session.Id);
             return null;
         }
     }
@@ -281,7 +281,7 @@ public sealed class WindowsSmtcMediaSessionProvider(
         catch (Exception ex) when (IsIgnorableMediaPropertiesException(ex))
         {
             // Real SMTC quirk from some apps: RPC unavailable / device not ready.
-            logger.LogWarning(ex, "忽略 SMTC 媒体属性读取错误：{SourceApp}", sourceApp);
+            logger.LogWarning(ex, "[媒体:SMTC] 忽略 SMTC 媒体属性读取错误：{SourceApp}", sourceApp);
             return null;
         }
     }

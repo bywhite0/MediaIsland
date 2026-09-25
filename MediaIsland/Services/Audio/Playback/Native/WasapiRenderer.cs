@@ -91,7 +91,7 @@ internal sealed class WasapiRenderer : IAudioRenderer
             _alignmentManualOffsetTicks);
         if (status != 0)
         {
-            _logger?.LogDebug("[音频:播放] 下发对齐参数失败，状态 {Status}，按不对齐继续。", status);
+            _logger?.LogDebug("[音频:播放] 下发对齐参数失败，状态 {Status}，按不对齐继续", status);
         }
     }
 
@@ -164,7 +164,7 @@ internal sealed class WasapiRenderer : IAudioRenderer
 
             _running = true;
             _logger?.LogInformation(
-                "[音频:播放] 已启动 WASAPI 播放，目标缓冲 {TargetMs}ms，对齐 {Alignment}。",
+                "[音频:播放] 已启动 WASAPI 播放，目标缓冲 {TargetMs}ms，对齐 {Alignment}",
                 targetBufferMs,
                 alignmentEnabled ? "开" : "关");
         }
@@ -192,7 +192,7 @@ internal sealed class WasapiRenderer : IAudioRenderer
             }
             else
             {
-                _logger?.LogInformation("[音频:播放] 已停止 WASAPI 播放。");
+                _logger?.LogInformation("[音频:播放] 已停止 WASAPI 播放");
             }
         }
     }

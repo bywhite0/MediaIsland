@@ -8,6 +8,7 @@ using ClassIsland.Core.Extensions.Registry;
 using ClassIsland.Shared.Helpers;
 using MediaIsland.Components;
 using MediaIsland.Models;
+using MediaIsland.Services;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Storage;
 using MediaIsland.Services.Lyrics.Models;
@@ -21,6 +22,7 @@ using MediaIsland.Services.MediaLink;
 using MediaIsland.SettingsPages;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace MediaIsland
 {
@@ -33,9 +35,16 @@ namespace MediaIsland
         public override void Initialize(HostBuilderContext context, IServiceCollection services)
         {
             Instance = this;
-            Console.WriteLine("[MI]正在加载 MediaIsland...");
+            PluginStartupLog.WriteBanner();
+            // 最先注册：托管服务按注册顺序启动，标志因此排在本插件其它运行日志之前。
+            var startupLog = new PluginStartupLog(Info.Manifest.Version);
+            services.AddHostedService(provider =>
+            {
+                startupLog.Logger = provider.GetService<ILogger<PluginStartupLog>>();
+                return startupLog;
+            });
             services.AddSingleton<NoOpMediaSourceInfoProvider>();
-            RegisterPlatformProviders(services);
+            RegisterPlatformProviders(services, startupLog);
             services.AddSingleton<IMediaPlatformProvider, NoOpMediaPlatformProvider>();
             services.AddSingleton<MediaPlatformProviderResolver>();
             services.AddSingleton<MediaService>();
@@ -97,10 +106,9 @@ namespace MediaIsland
             // };
             }
 #endif
-            Console.WriteLine("[MI]MediaIsland 加载成功");
         }
 
-        private static void RegisterPlatformProviders(IServiceCollection services)
+        private static void RegisterPlatformProviders(IServiceCollection services, PluginStartupLog startupLog)
         {
             if (!OperatingSystem.IsWindows())
             {
@@ -119,16 +127,16 @@ namespace MediaIsland
 
                 if (registrationMethod == null)
                 {
-                    Console.WriteLine("[MI]Windows media provider registration method not found.");
+                    startupLog.Defer(LogLevel.Error, "未找到 Windows 媒体提供程序的注册方法");
                     return;
                 }
 
                 registrationMethod.Invoke(null, new object[] { services });
-                Console.WriteLine("[MI]Windows media provider registered.");
+                startupLog.Defer(LogLevel.Information, "已注册 Windows 媒体提供程序");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[MI]Failed to register Windows media provider: {ex.Message}");
+                startupLog.Defer(LogLevel.Error, "注册 Windows 媒体提供程序失败", ex);
             }
         }
 

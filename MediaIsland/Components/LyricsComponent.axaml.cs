@@ -143,7 +143,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[歌词] 启动媒体服务失败。");
+            _logger.LogError(ex, "[歌词] 启动媒体服务失败");
             ClearLyrics("无法获取媒体信息");
         }
     }
@@ -492,7 +492,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
             return;
         }
 
-        _logger.LogInformation("当前媒体会话 [{SourceApp}] {Reason}，跳过歌词搜索", info.SourceApp, reason);
+        _logger.LogInformation("[歌词] 当前媒体会话 [{SourceApp}] {Reason}，跳过歌词搜索", info.SourceApp, reason);
         ClearLyrics(status);
     }
 
@@ -734,7 +734,7 @@ public partial class LyricsComponent : ComponentBase<LyricsComponentConfig>
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[歌词] 处理媒体信息时发生错误。");
+            _logger.LogError(ex, "[歌词] 处理媒体信息时发生错误");
             ClearLyrics("查找歌词失败");
         }
     }

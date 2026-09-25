@@ -58,7 +58,7 @@ public sealed class WindowsMediaSourceInfoProvider(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "无法解析封装应用媒体源信息：{SourceApp}", sourceApp);
+            logger.LogDebug(ex, "[媒体] 无法解析封装应用媒体源信息：{SourceApp}", sourceApp);
             return null;
         }
     }
@@ -135,7 +135,7 @@ public sealed class WindowsMediaSourceInfoProvider(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "无法读取文件缩略图：{FilePath}", filePath);
+            logger.LogDebug(ex, "[媒体] 无法读取文件缩略图：{FilePath}", filePath);
         }
 
         cancellationToken.ThrowIfCancellationRequested();

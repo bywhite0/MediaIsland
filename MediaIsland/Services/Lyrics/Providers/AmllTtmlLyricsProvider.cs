@@ -133,7 +133,7 @@ public sealed class AmllTtmlLyricsProvider(
             if (candidates.Count > 0)
             {
                 logger?.LogInformation(
-                    "[歌词:Amll] 第 {Attempt}/{Total} 次搜索成功，找到 {Count} 个候选项。",
+                    "[歌词:Amll] 第 {Attempt}/{Total} 次搜索成功，找到 {Count} 个候选项",
                     attempt + 1,
                     searchQueries.Count,
                     candidates.Count);
@@ -144,7 +144,7 @@ public sealed class AmllTtmlLyricsProvider(
         if (candidates.Count == 0)
         {
             logger?.LogInformation(
-                "[歌词:Amll] 完成 {Count} 次元数据搜索后，没有找到可接受的候选项。",
+                "[歌词:Amll] 完成 {Count} 次元数据搜索后，没有找到可接受的候选项",
                 searchQueries.Count);
         }
 
@@ -271,7 +271,7 @@ public sealed class AmllTtmlLyricsProvider(
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "[歌词:Amll] 解析 get 响应封装失败。");
+            logger?.LogWarning(ex, "[歌词:Amll] 解析 get 响应封装失败");
         }
 
         return null;
@@ -464,7 +464,7 @@ public sealed class AmllTtmlLyricsProvider(
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             response?.Dispose();
-            logger?.LogWarning("[歌词:Amll] 请求超时，将继续后续来源或重试。");
+            logger?.LogWarning("[歌词:Amll] 请求超时，将继续后续来源或重试");
             return null;
         }
         catch (OperationCanceledException)
@@ -475,7 +475,7 @@ public sealed class AmllTtmlLyricsProvider(
         catch (Exception ex)
         {
             response?.Dispose();
-            logger?.LogWarning(ex, "[歌词:Amll] 传输失败。");
+            logger?.LogWarning(ex, "[歌词:Amll] 传输失败");
             return null;
         }
     }

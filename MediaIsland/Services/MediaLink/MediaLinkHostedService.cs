@@ -158,12 +158,12 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             _appStoppingTarget = appInstance;
             _appStoppingEvent = appStoppingEvent;
 
-            _logger?.LogDebug("MediaLink 已订阅 AppBase.AppStopping");
+            _logger?.LogDebug("[MediaLink] 已订阅 AppBase.AppStopping");
             return true;
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "MediaLink 未能订阅 AppStopping，将仅依赖 IHostedService.StopAsync");
+            _logger?.LogDebug(ex, "[MediaLink] 未能订阅 AppStopping，将仅依赖 IHostedService.StopAsync");
             return false;
         }
     }
@@ -180,7 +180,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "MediaLink 取消 AppStopping 订阅失败");
+            _logger?.LogDebug(ex, "[MediaLink] 取消 AppStopping 订阅失败");
         }
         finally
         {
@@ -222,7 +222,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "MediaLink AppStopping 发送 1001 失败");
+                _logger?.LogDebug(ex, "[MediaLink] AppStopping 发送 1001 失败");
             }
         });
 
@@ -304,7 +304,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         catch (Exception ex)
         {
             LastError = ex.Message;
-            _logger?.LogWarning(ex, "MediaLink 配置热更新失败");
+            _logger?.LogWarning(ex, "[MediaLink] 配置热更新失败");
         }
     }
 
@@ -354,7 +354,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             if (!_audioSource.IsAvailable)
             {
                 _logger?.LogInformation(
-                    "[音频] 采集不可用（{Reason}），MediaLink 其余频道不受影响。",
+                    "[音频] 采集不可用（{Reason}），MediaLink 其余频道不受影响",
                     _audioSource.FailureReason);
             }
 
@@ -375,7 +375,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                     }
                     catch (Exception ex)
                     {
-                        _logger?.LogDebug(ex, "MediaLink PlaybackController resolve failed");
+                        _logger?.LogDebug(ex, "[MediaLink] 解析 PlaybackController 失败");
                         return null;
                     }
                 },
@@ -400,7 +400,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         {
             LastError = ex.Message;
             NotifyGatewayChanged();
-            _logger?.LogError(ex, "MediaLink 服务启动失败");
+            _logger?.LogError(ex, "[MediaLink] 服务启动失败");
             await StopCoreAsync(CancellationToken.None);
         }
         finally
@@ -502,7 +502,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "[音频] 采集重启失败且未被内部处理，已就地观察；设备再变时会重试。");
+            logger?.LogWarning(ex, "[音频] 采集重启失败且未被内部处理，已就地观察；设备再变时会重试");
         }
     }
 
@@ -591,7 +591,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         {
             if (!_lifecycleLock.Wait(DisposeStopTimeout))
             {
-                _logger?.LogWarning("MediaLink Dispose 等待生命周期锁超时");
+                _logger?.LogWarning("[MediaLink] Dispose 等待生命周期锁超时");
             }
             else
             {
@@ -602,7 +602,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                 }
                 catch (Exception ex)
                 {
-                    _logger?.LogDebug(ex, "MediaLink Dispose 停止服务时出错");
+                    _logger?.LogDebug(ex, "[MediaLink] Dispose 停止服务时出错");
                 }
                 finally
                 {

@@ -74,7 +74,7 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
             }
 
             logger?.LogInformation(
-                "[歌词:SPlayerNext] 第 {Attempt}/{MaxAttempts} 次未获取到可用歌词，{DelaySeconds} 秒后重试。",
+                "[歌词:SPlayerNext] 第 {Attempt}/{MaxAttempts} 次未获取到可用歌词，{DelaySeconds} 秒后重试",
                 attempt,
                 MaxFetchAttempts,
                 FetchRetryDelay.TotalSeconds);
@@ -82,7 +82,7 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
         }
 
         logger?.LogInformation(
-            "[歌词:SPlayerNext] 已尝试 {MaxAttempts} 次仍无可用歌词。",
+            "[歌词:SPlayerNext] 已尝试 {MaxAttempts} 次仍无可用歌词",
             MaxFetchAttempts);
         return null;
     }
@@ -111,7 +111,7 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
                 .ConfigureAwait(false);
             if (snapshot?.Lyric is not { Count: > 0 })
             {
-                logger?.LogInformation("[歌词:SPlayerNext] 外部 API 当前无歌词。");
+                logger?.LogInformation("[歌词:SPlayerNext] 外部 API 当前无歌词");
                 return null;
             }
 
@@ -120,7 +120,7 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
             if (nowPlaying?.Track != null && !IsSameTrack(media, nowPlaying.Track))
             {
                 logger?.LogInformation(
-                    "[歌词:SPlayerNext] 跳过：API 曲目与当前媒体不一致（{ApiTitle} vs {MediaTitle}）。",
+                    "[歌词:SPlayerNext] 跳过：API 曲目与当前媒体不一致（{ApiTitle} vs {MediaTitle}）",
                     nowPlaying.Track.Title,
                     media.Title);
                 return null;
@@ -182,7 +182,7 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "[歌词:SPlayerNext] 获取外部 API 歌词失败。");
+            logger?.LogWarning(ex, "[歌词:SPlayerNext] 获取外部 API 歌词失败");
             return null;
         }
     }

@@ -313,7 +313,7 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
         catch (Exception ex)
         {
             LastError = ex.Message;
-            _logger?.LogWarning(ex, "[音频:播放] 启动失败，回落到不播放。");
+            _logger?.LogWarning(ex, "[音频:播放] 启动失败，回落到不播放");
         }
     }
 
@@ -449,7 +449,7 @@ public sealed class AudioPlaybackService : IAudioFrameSubmitter, IAudioOutputLat
         if (count == 1)
         {
             _logger?.LogWarning(
-                "[音频:播放] 丢弃格式失配的帧：{Rate}Hz/{Channels} 声道，播放器只接 {RequiredRate}Hz/{RequiredChannels} 声道。",
+                "[音频:播放] 丢弃格式失配的帧：{Rate}Hz/{Channels} 声道，播放器只接 {RequiredRate}Hz/{RequiredChannels} 声道",
                 frame.SampleRate,
                 frame.Channels,
                 RequiredSampleRate,

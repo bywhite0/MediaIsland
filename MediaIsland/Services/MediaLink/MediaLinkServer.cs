@@ -166,7 +166,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         _acceptCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var ct = _acceptCts.Token;
         _acceptLoop = Task.Run(() => AcceptLoopAsync(token, ct), CancellationToken.None);
-        _logger?.LogInformation("MediaLink WS 已监听 {Endpoint}", Endpoint);
+        _logger?.LogInformation("[MediaLink] WS 已监听 {Endpoint}", Endpoint);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -195,7 +195,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
             if (await TaskDraining.DrainAsync([_acceptLoop], ShutdownDrainTimeout, cancellationToken) > 0)
             {
                 _logger?.LogWarning(
-                    "MediaLink 停服：accept 循环未在 {Ms}ms 内退出",
+                    "[MediaLink] 停服：accept 循环未在 {Ms}ms 内退出",
                     ShutdownDrainTimeout.TotalMilliseconds);
             }
 
@@ -212,13 +212,13 @@ public sealed class MediaLinkServer : IAsyncDisposable
         var unfinished = await TaskDraining.DrainAsync(sessions, ShutdownDrainTimeout, cancellationToken);
         if (unfinished > 0)
         {
-            _logger?.LogWarning("MediaLink 停服：{Count} 个会话未在期限内结束", unfinished);
+            _logger?.LogWarning("[MediaLink] 停服：{Count} 个会话未在期限内结束", unfinished);
         }
 
         // 排水超时不抛、也不跳过后面的清理：停服不能因为没排干就漏掉释放。
         if (await TaskDraining.DrainAsync([_hub.DisposeAllAsync()], ShutdownDrainTimeout, cancellationToken) > 0)
         {
-            _logger?.LogWarning("MediaLink 停服：会话释放未在期限内完成");
+            _logger?.LogWarning("[MediaLink] 停服：会话释放未在期限内完成");
         }
 
         _acceptCts?.Dispose();
@@ -245,14 +245,14 @@ public sealed class MediaLinkServer : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Accept 失败");
+                _logger?.LogWarning(ex, "[MediaLink] Accept 失败");
                 continue;
             }
 
             if (Volatile.Read(ref _activeSessions) >= MaxConcurrentSessions)
             {
                 _logger?.LogWarning(
-                    "MediaLink 会话数已达上限 {Max}，拒绝新连接",
+                    "[MediaLink] 会话数已达上限 {Max}，拒绝新连接",
                     MaxConcurrentSessions);
                 try { client.Close(); } catch { /* ignore */ }
                 continue;
@@ -260,7 +260,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
 
             if (GetRemoteIp(client) is { } remoteIp && IsAuthRateLimited(remoteIp))
             {
-                _logger?.LogWarning("MediaLink 认证失败次数超限，暂时拒绝来自 {Ip} 的连接", remoteIp);
+                _logger?.LogWarning("[MediaLink] 认证失败次数超限，暂时拒绝来自 {Ip} 的连接", remoteIp);
                 try { client.Close(); } catch { /* ignore */ }
                 continue;
             }
@@ -375,7 +375,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger?.LogDebug(ex, "MediaLink 连接处理失败");
+                _logger?.LogDebug(ex, "[MediaLink] 连接处理失败");
             }
             finally
             {
@@ -820,7 +820,7 @@ public sealed class MediaLinkServer : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger?.LogDebug(ex, "MediaLink 缩略图编码失败");
+            _logger?.LogDebug(ex, "[MediaLink] 缩略图编码失败");
             await WriteSimpleResponseAsync(stream, "500 Internal Server Error", cancellationToken);
             return;
         }

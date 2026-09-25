@@ -220,7 +220,7 @@ public sealed class LyricsSearchService
             // 若把 pin 放在门禁之前，用户为 VLC 关掉歌词后播放已 pin 曲目的 MV 会突然冒出歌词。
             if (!allowProviderSearch)
             {
-                _logger?.LogInformation("[歌词] 已禁用歌词搜索，跳过本机歌词解析。");
+                _logger?.LogInformation("[歌词] 已禁用歌词搜索，跳过本机歌词解析");
                 return null;
             }
 
@@ -271,7 +271,7 @@ public sealed class LyricsSearchService
 
             if (orderedProviders.Length == 0)
             {
-                _logger?.LogInformation("[歌词] 没有启用的歌词来源。");
+                _logger?.LogInformation("[歌词] 没有启用的歌词来源");
                 return PublishFallback(staleFallback, cacheKey, searchVersion);
             }
 
@@ -293,7 +293,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[歌词] 搜索歌词时发生错误。");
+            _logger?.LogWarning(ex, "[歌词] 搜索歌词时发生错误");
             PublishCurrentResult(null, searchVersion);
             return null;
         }
@@ -309,7 +309,7 @@ public sealed class LyricsSearchService
             return null;
         }
 
-        _logger?.LogInformation("[歌词] 重新搜索未果，回落到设置变更前的缓存歌词。");
+        _logger?.LogInformation("[歌词] 重新搜索未果，回落到设置变更前的缓存歌词");
         Cache(cacheKey, fallback);
         PublishCurrentResult(fallback, searchVersion);
         return fallback;
@@ -338,7 +338,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[歌词] 读取本地歌词条目失败，按未命中处理。");
+            _logger?.LogWarning(ex, "[歌词] 读取本地歌词条目失败，按未命中处理");
             return null;
         }
     }
@@ -353,7 +353,7 @@ public sealed class LyricsSearchService
         var parser = _parsers.FirstOrDefault(item => item.CanParse(payload.Format));
         if (parser == null)
         {
-            _logger?.LogWarning("[歌词] 没有适用于格式 {Format} 的解析器，跳过本地条目。", payload.Format);
+            _logger?.LogWarning("[歌词] 没有适用于格式 {Format} 的解析器，跳过本地条目", payload.Format);
             return null;
         }
 
@@ -368,7 +368,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[歌词] 解析本地歌词条目失败。");
+            _logger?.LogWarning(ex, "[歌词] 解析本地歌词条目失败");
             return null;
         }
 
@@ -424,7 +424,7 @@ public sealed class LyricsSearchService
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "[歌词] 写入本地歌词缓存失败。");
+                _logger?.LogWarning(ex, "[歌词] 写入本地歌词缓存失败");
             }
         });
     }
@@ -444,7 +444,7 @@ public sealed class LyricsSearchService
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "[歌词] 更新歌词缓存使用时间失败。");
+                _logger?.LogDebug(ex, "[歌词] 更新歌词缓存使用时间失败");
             }
         });
     }
@@ -681,7 +681,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[歌词] 解除固定失败。");
+            _logger?.LogWarning(ex, "[歌词] 解除固定失败");
             return false;
         }
     }
@@ -719,7 +719,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[歌词] 清空歌词缓存失败。");
+            _logger?.LogWarning(ex, "[歌词] 清空歌词缓存失败");
         }
 
         // 清缓存必须一并清 L1，否则界面还会继续显示刚被删掉的条目。
@@ -740,7 +740,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[歌词] 保存固定歌词失败。");
+            _logger?.LogWarning(ex, "[歌词] 保存固定歌词失败");
             Volatile.Write(ref _lastPinError, "保存固定歌词失败，请检查配置目录是否可写。");
             return null;
         }
@@ -865,7 +865,7 @@ public sealed class LyricsSearchService
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _logger?.LogWarning("[歌词:{Provider}] 搜索超时。", provider.Id);
+            _logger?.LogWarning("[歌词:{Provider}] 搜索超时", provider.Id);
             return [];
         }
         catch (OperationCanceledException)
@@ -874,7 +874,7 @@ public sealed class LyricsSearchService
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[歌词:{Provider}] 搜索失败。", provider.Id);
+            _logger?.LogWarning(ex, "[歌词:{Provider}] 搜索失败", provider.Id);
             return [];
         }
     }
@@ -968,7 +968,7 @@ public sealed class LyricsSearchService
             var parser = _parsers.FirstOrDefault(item => item.CanParse(payload.Format));
             if (parser == null)
             {
-                _logger?.LogWarning("[歌词:{Provider}] 没有适用于格式 {Format} 的解析器。", provider.Id, payload.Format);
+                _logger?.LogWarning("[歌词:{Provider}] 没有适用于格式 {Format} 的解析器", provider.Id, payload.Format);
                 continue;
             }
 

@@ -160,23 +160,23 @@ namespace MediaIsland.Components
             try
             {
                 await _mediaService.EnsureStartedAsync();
-                Logger.LogInformation("尝试获取媒体会话信息");
+                Logger.LogInformation("[媒体] 尝试获取媒体会话信息");
                 var mediaInfo = CurrentUiMediaInfo;
                 if (mediaInfo != null)
                 {
-                    Logger.LogInformation("存在媒体会话信息");
-                    Logger.LogDebug("刷新【正在播放】组件内容");
+                    Logger.LogInformation("[媒体] 存在媒体会话信息");
+                    Logger.LogDebug("[媒体] 刷新「正在播放(简)」组件内容");
                     await RefreshMediaInfo(mediaInfo);
                 }
                 else
                 {
-                    Logger.LogInformation("不存在媒体会话信息，隐藏组件 UI");
+                    Logger.LogInformation("[媒体] 不存在媒体会话信息，隐藏组件 UI");
                     await HideMediaGridAsync();
                 }
             }
             catch (Exception ex)
             {
-                Logger.LogError("获取媒体会话时发生错误: {ExMessage}", ex.Message);
+                Logger.LogError(ex, "[媒体] 获取媒体会话时发生错误");
                 await HideMediaGridAsync();
             }
         }
@@ -198,7 +198,7 @@ namespace MediaIsland.Components
 
             if (!MediaSourceFilter.IsEnabled(e.MediaInfo.SourceApp, globalSettings.MediaSourceList))
             {
-                Logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", e.MediaInfo.SourceApp);
+                Logger.LogInformation("[媒体] 当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", e.MediaInfo.SourceApp);
                 await HideMediaGridAsync();
                 return;
             }
@@ -232,13 +232,13 @@ namespace MediaIsland.Components
             {
                 if (!MediaSourceFilter.IsEnabled(mediaInfo.SourceApp, globalSettings.MediaSourceList))
                 {
-                    Logger.LogInformation("当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", mediaInfo.SourceApp);
+                    Logger.LogInformation("[媒体] 当前媒体会话 [{SourceApp}] 已禁用，自动隐藏", mediaInfo.SourceApp);
                     await HideMediaGridAsync();
                     return;
                 }
 
                 Logger.LogTrace(
-                    "当前媒体信息：{Artist} - {Title} ({PlaybackStatus}) [{TimelinePosition} / {TimelineEndTime}]",
+                    "[媒体] 当前媒体信息：{Artist} - {Title} ({PlaybackStatus}) [{TimelinePosition} / {TimelineEndTime}]",
                     mediaInfo.Artist,
                     mediaInfo.Title,
                     mediaInfo.PlaybackInfo.PlaybackState,
@@ -259,7 +259,7 @@ namespace MediaIsland.Components
             }
             catch (Exception ex)
             {
-                Logger.LogError("获取媒体信息失败：{ExMessage}", ex.Message);
+                Logger.LogError(ex, "[媒体] 获取媒体信息失败");
             }
         }
 

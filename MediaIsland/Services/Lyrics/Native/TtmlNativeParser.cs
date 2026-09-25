@@ -72,12 +72,12 @@ public sealed partial class TtmlNativeParser
         {
             _available = false;
             _failureReason = ex.Message;
-            _logger?.LogWarning(ex, "[歌词:原生TTML] 缺少原生库。");
+            _logger?.LogWarning(ex, "[歌词:原生TTML] 缺少原生库");
             return null;
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "[歌词:原生TTML] 解析时发生未知错误。");
+            _logger?.LogWarning(ex, "[歌词:原生TTML] 解析时发生未知错误");
             return null;
         }
         finally
@@ -135,7 +135,7 @@ public sealed partial class TtmlNativeParser
             {
                 _available = false;
                 _failureReason = ex.Message;
-                _logger?.LogWarning(ex, "[歌词:原生TTML] 无法解析原生库。");
+                _logger?.LogWarning(ex, "[歌词:原生TTML] 无法解析原生库");
             }
         }
     }

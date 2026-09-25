@@ -64,7 +64,7 @@ internal sealed class WasapiLoopbackFrameSource : IAudioFrameSource, IDisposable
             }
 
             _running = true;
-            _logger?.LogInformation("[音频:采集] 已启动 WASAPI loopback 采集。");
+            _logger?.LogInformation("[音频:采集] 已启动 WASAPI loopback 采集");
             return Task.CompletedTask;
         }
     }
@@ -92,7 +92,7 @@ internal sealed class WasapiLoopbackFrameSource : IAudioFrameSource, IDisposable
             }
             else
             {
-                _logger?.LogInformation("[音频:采集] 已停止 WASAPI loopback 采集。");
+                _logger?.LogInformation("[音频:采集] 已停止 WASAPI loopback 采集");
             }
 
             return Task.CompletedTask;

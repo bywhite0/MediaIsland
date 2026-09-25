@@ -192,14 +192,14 @@ public sealed class DefaultEndpointWatcher : IDisposable
 
             if (changed)
             {
-                _logger?.LogInformation("[音频] 默认渲染端点已变化，重启在播会话以跟随新设备。");
+                _logger?.LogInformation("[音频] 默认渲染端点已变化，重启在播会话以跟随新设备");
                 DefaultEndpointChanged?.Invoke(this, EventArgs.Empty);
             }
         }
         catch (Exception ex)
         {
             // 处理器炸了不能带崩计时器线程。重启通道各自有错误出口，这里只记账。
-            _logger?.LogWarning(ex, "[音频] 设备变化的跟随处理失败，设备再变时会重试。");
+            _logger?.LogWarning(ex, "[音频] 设备变化的跟随处理失败，设备再变时会重试");
         }
         finally
         {

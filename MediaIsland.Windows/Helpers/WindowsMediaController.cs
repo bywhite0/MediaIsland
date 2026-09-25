@@ -144,7 +144,7 @@ namespace WindowsMediaController
             }
             catch (Exception exception)
             {
-                Logger?.LogError(exception, "Error in OnFocusedSessionChanged Invoke");
+                Logger?.LogError(exception, "[媒体:SMTC] OnFocusedSessionChanged 回调出错");
             }
         }
 
@@ -157,7 +157,7 @@ namespace WindowsMediaController
             }
             catch (Exception exception)
             {
-                Logger?.LogError(exception, "Error when getting CurrentSession");
+                Logger?.LogError(exception, "[媒体:SMTC] 获取 CurrentSession 出错");
             }
 
             if (currentSession != null && _CurrentMediaSessions.TryGetValue(currentSession.SourceAppUserModelId, out MediaSession mediaSession))
@@ -177,7 +177,7 @@ namespace WindowsMediaController
             }
             catch (Exception exception)
             {
-                Logger?.LogError(exception, "Error when getting Sessions");
+                Logger?.LogError(exception, "[媒体:SMTC] 获取 Sessions 出错");
                 return;
             }
 
@@ -195,7 +195,7 @@ namespace WindowsMediaController
                     }
                     catch (Exception exception)
                     {
-                        Logger?.LogError(exception, "Error in OnAnySessionOpened Invoke");
+                        Logger?.LogError(exception, "[媒体:SMTC] OnAnySessionOpened 回调出错");
                     }
 
                     mediaSession.OnTimelinePropertiesChanged(controlSession);
@@ -238,7 +238,7 @@ namespace WindowsMediaController
                 }
                 catch (Exception exception)
                 {
-                    Logger?.LogError(exception, "Error in OnAnySessionClosed Invoke");
+                    Logger?.LogError(exception, "[媒体:SMTC] OnAnySessionClosed 回调出错");
                 }
 
                 return true;
@@ -333,7 +333,7 @@ namespace WindowsMediaController
                         }
                         catch (Exception exception)
                         {
-                            MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error in OnPlaybackStateChanged Invoke", Id);
+                            MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] {MediaId} 的 OnPlaybackStateChanged 回调出错", Id);
                         }
 
                         try
@@ -342,13 +342,13 @@ namespace WindowsMediaController
                         }
                         catch (Exception exception)
                         {
-                            MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error in OnAnyPlaybackStateChanged Invoke", Id);
+                            MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] {MediaId} 的 OnAnyPlaybackStateChanged 回调出错", Id);
                         }
                     }
                 }
                 catch (Exception exception)
                 {
-                    MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error when getting PlaybackInfo", Id);
+                    MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] 获取 {MediaId} 的 PlaybackInfo 出错", Id);
                 }
             }
 
@@ -364,7 +364,7 @@ namespace WindowsMediaController
                     }
                     catch (Exception exception)
                     {
-                        MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error in OnMediaPropertyChanged Invoke", Id);
+                        MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] {MediaId} 的 OnMediaPropertyChanged 回调出错", Id);
                     }
 
                     try
@@ -373,7 +373,7 @@ namespace WindowsMediaController
                     }
                     catch (Exception exception)
                     {
-                        MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error in OnAnyMediaPropertyChanged Invoke", Id);
+                        MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] {MediaId} 的 OnAnyMediaPropertyChanged 回调出错", Id);
                     }
                 }
                 catch (Exception exception)
@@ -381,11 +381,11 @@ namespace WindowsMediaController
                     // Silence "The RPC server is unavailable. (0x800706BA)" and "The device is not ready. (0x80070015)"
                     if (IsIgnorableMediaPropertiesException(exception))
                     {
-                        MediaManagerInstance.Logger?.LogWarning(exception, "[{mediaId}] Ignorable error when getting MediaProperties", Id);
+                        MediaManagerInstance.Logger?.LogWarning(exception, "[媒体:SMTC] 获取 {MediaId} 的 MediaProperties 出错，可忽略", Id);
                     }
                     else
                     {
-                        MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error when getting MediaProperties", Id);
+                        MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] 获取 {MediaId} 的 MediaProperties 出错", Id);
                     }
                 }
             }
@@ -407,7 +407,7 @@ namespace WindowsMediaController
                     }
                     catch (Exception exception)
                     {
-                        MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error in OnTimelinePropertyChanged Invoke", Id);
+                        MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] {MediaId} 的 OnTimelinePropertyChanged 回调出错", Id);
                     }
 
                     try
@@ -416,12 +416,12 @@ namespace WindowsMediaController
                     }
                     catch (Exception exception)
                     {
-                        MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error in OnAnyTimelinePropertyChanged Invoke", Id);
+                        MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] {MediaId} 的 OnAnyTimelinePropertyChanged 回调出错", Id);
                     }
                 }
                 catch (Exception exception)
                 {
-                    MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error when getting TimelineProperties", Id);
+                    MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] 获取 {MediaId} 的 TimelineProperties 出错", Id);
                 }
             }
 
@@ -443,7 +443,7 @@ namespace WindowsMediaController
                     }
                     catch (Exception exception)
                     {
-                        MediaManagerInstance.Logger?.LogError(exception, "[{mediaId}] Error in OnSessionClosed Invoke", Id);
+                        MediaManagerInstance.Logger?.LogError(exception, "[媒体:SMTC] {MediaId} 的 OnSessionClosed 回调出错", Id);
                     }
                 }
             }

@@ -40,7 +40,7 @@ internal static class WinRtThumbnailHelper
         }
         catch (Exception ex) when (ex is IOException or COMException)
         {
-            logger.LogError(ex, "处理封面时发生错误。");
+            logger.LogError(ex, "[媒体] 处理封面时发生错误");
             return null;
         }
     }
@@ -66,7 +66,7 @@ internal static class WinRtThumbnailHelper
         }
         catch (Exception ex) when (ex is IOException or COMException)
         {
-            logger.LogDebug(ex, "读取 Windows 图标缩略图时发生错误。");
+            logger.LogDebug(ex, "[媒体] 读取 Windows 图标缩略图时发生错误");
             return null;
         }
     }

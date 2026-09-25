@@ -127,7 +127,7 @@ public sealed class MediaService(
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to refresh media info.");
+            logger.LogError(ex, "[媒体] 刷新媒体信息失败");
         }
         finally
         {
@@ -203,7 +203,7 @@ public sealed class MediaService(
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "A media service subscriber failed.");
+                logger.LogError(ex, "[媒体] 媒体服务的订阅方处理失败");
             }
         }
     }

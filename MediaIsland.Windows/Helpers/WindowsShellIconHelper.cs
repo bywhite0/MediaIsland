@@ -33,7 +33,7 @@ internal static class WindowsShellIconHelper
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "无法读取 Windows Shell 图标：{FilePath}", filePath);
+            logger.LogDebug(ex, "[媒体] 无法读取 Windows Shell 图标：{FilePath}", filePath);
             return null;
         }
         finally

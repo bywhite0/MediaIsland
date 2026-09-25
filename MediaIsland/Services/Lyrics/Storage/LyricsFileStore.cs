@@ -143,7 +143,7 @@ internal sealed class LyricsFileStore : ILyricsStore
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger?.LogWarning(ex, "[歌词] 清空歌词缓存失败。");
+            _logger?.LogWarning(ex, "[歌词] 清空歌词缓存失败");
         }
     }
 
@@ -211,7 +211,7 @@ internal sealed class LyricsFileStore : ILyricsStore
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                _logger?.LogWarning(ex, "[歌词] 读取歌词索引失败。");
+                _logger?.LogWarning(ex, "[歌词] 读取歌词索引失败");
                 return [];
             }
             finally
@@ -406,11 +406,11 @@ internal sealed class LyricsFileStore : ILyricsStore
             }
 
             await WriteIndexNoLockAsync(index, cancellationToken).ConfigureAwait(false);
-            _logger?.LogInformation("[歌词] 歌词缓存已淘汰 {Count} 条最久未使用的条目。", victims.Length);
+            _logger?.LogInformation("[歌词] 歌词缓存已淘汰 {Count} 条最久未使用的条目", victims.Length);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger?.LogWarning(ex, "[歌词] 淘汰歌词缓存失败。");
+            _logger?.LogWarning(ex, "[歌词] 淘汰歌词缓存失败");
         }
         finally
         {
@@ -447,7 +447,7 @@ internal sealed class LyricsFileStore : ILyricsStore
             catch (Exception ex) when (ex is JsonException or ArgumentException or IOException
                 or UnauthorizedAccessException)
             {
-                _logger?.LogWarning(ex, "[歌词] 歌词索引损坏，将从目录重建。");
+                _logger?.LogWarning(ex, "[歌词] 歌词索引损坏，将从目录重建");
             }
         }
 

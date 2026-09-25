@@ -166,7 +166,7 @@ internal static partial class AudioRenderNative
             {
                 _available = false;
                 _failureReason = ex.Message;
-                logger?.LogWarning(ex, "[音频:原生] 无法解析原生库。");
+                logger?.LogWarning(ex, "[音频:原生] 无法解析原生库");
             }
             finally
             {

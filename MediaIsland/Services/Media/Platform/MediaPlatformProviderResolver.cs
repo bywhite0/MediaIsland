@@ -20,7 +20,7 @@ public sealed class MediaPlatformProviderResolver(
             .OrderByDescending(provider => provider.Priority)
             .First();
 
-        logger.LogInformation("Selected media platform provider: {ProviderId}", _resolvedProvider.Id);
+        logger.LogInformation("[媒体] 已选择媒体平台提供程序：{ProviderId}", _resolvedProvider.Id);
         return _resolvedProvider;
     }
 }

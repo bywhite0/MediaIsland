@@ -126,7 +126,7 @@ internal sealed class MediaLinkAlignmentCoordinator
                 // 对齐是增强项。重算的意外（读设备事实撞上任何异常）不该沿着触发它的
                 // 事件链上溯——那条链的另一端是音源仲裁与连接生命周期，炸在那里
                 // 的症状与对齐毫无关联。
-                _logger?.LogDebug(ex, "[音频:对齐] 重算失败，保持上一次下发的参数。");
+                _logger?.LogDebug(ex, "[音频:对齐] 重算失败，保持上一次下发的参数");
             }
         }
     }
@@ -250,7 +250,7 @@ internal sealed class MediaLinkAlignmentCoordinator
         {
             _logger?.LogWarning(
                 "[音频:对齐] 外环饱和：目标深度 {TargetMs}ms 已贴住区间 {MinMs}-{MaxMs}ms 端点，"
-                + "误差仍有 {ErrorUs}us，偏差超出外环能力，可能预示硬重置。",
+                + "误差仍有 {ErrorUs}us，偏差超出外环能力，可能预示硬重置",
                 facts.TargetMsCurrent,
                 bounds.MinTargetMs,
                 bounds.MaxTargetMs,
@@ -258,7 +258,7 @@ internal sealed class MediaLinkAlignmentCoordinator
         }
         else
         {
-            _logger?.LogInformation("[音频:对齐] 外环饱和解除。");
+            _logger?.LogInformation("[音频:对齐] 外环饱和解除");
         }
     }
 }
