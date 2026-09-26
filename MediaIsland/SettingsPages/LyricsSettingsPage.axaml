@@ -115,6 +115,42 @@
                        FontSize="12"
                        TextWrapping="Wrap"
                        Margin="0 4 0 8" />
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE28F;}"
+                                         Header="排除制作人员与版权信息"
+                                         Description="去掉歌词里的作词、作曲、编曲、制作人、版权声明等非歌词行。修改在下一次加载歌词时生效。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding StripCreditLines, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+                <StackPanel Margin="12,6,12,10" Spacing="8" IsEnabled="{Binding StripCreditLines}">
+                    <TextBlock Text="追加关键词（每行一条，匹配冒号前的职务名，如「监修」）" FontSize="12" />
+                    <TextBox AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64"
+                             Text="{Binding CreditKeywordsText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="追加正则（每行一条，不区分大小写）" FontSize="12" />
+                    <TextBox AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64"
+                             Text="{Binding CreditRegexesText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="{Binding CreditRegexErrors}" IsVisible="{Binding HasCreditRegexErrors}"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource SystemFillColorCriticalBrush}" />
+                </StackPanel>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE0BF;}"
+                                         Header="屏蔽词遮盖"
+                                         Description="把歌词、翻译和音译中的屏蔽词替换为等长的 *。词表由你自己填写。修改在下一次加载歌词时生效。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding MaskEnabled, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+                <StackPanel Margin="12,6,12,10" Spacing="8" IsEnabled="{Binding MaskEnabled}">
+                    <TextBlock Text="屏蔽词（每行一条，不区分大小写；英文词只匹配完整单词）" FontSize="12" />
+                    <TextBox AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64"
+                             Text="{Binding MaskWordsText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="屏蔽正则（每行一条，不区分大小写）" FontSize="12" />
+                    <TextBox AcceptsReturn="True" TextWrapping="Wrap" MinHeight="64"
+                             Text="{Binding MaskRegexesText, Mode=TwoWay, UpdateSourceTrigger=LostFocus}" />
+                    <TextBlock Text="{Binding MaskRegexErrors}" IsVisible="{Binding HasMaskRegexErrors}"
+                               FontSize="12" TextWrapping="Wrap"
+                               Foreground="{DynamicResource SystemFillColorCriticalBrush}" />
+                </StackPanel>
+            </controls:FASettingsExpander>
             <ci:IconText Glyph="&#xF306;" Text="当前曲目" Margin="0 16 0 8" />
             <controls:FASettingsExpander IconSource="{ci:LucideIconSource &#xE259;}"
                                          Header="固定歌词"

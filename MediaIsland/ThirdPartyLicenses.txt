@@ -2015,3 +2015,22 @@ The LRC, QRC and KRC lyric parsers under MediaIsland/Services/Lyrics/Parsers are
 independent MediaIsland implementations and are not derived from this project.
 
 A copy of the Apache License 2.0 is reproduced above under the lx-music-desktop entry.
+
+============================================================
+lyric-kit
+============================================================
+Repository: https://github.com/SPlayer-Dev/lyric-kit
+License: AGPL-3.0
+Version: 0.6.0
+
+MediaIsland does not reference the lyric-kit npm package. Its credit-line detection rules
+and algorithm were ported into the following files:
+
+  - MediaIsland/Services/Lyrics/Cleanup/LyricsCreditRules.cs
+      generated verbatim from src/clean/excludeRules.ts (defaultKeywords, defaultRegexes)
+  - MediaIsland/Services/Lyrics/Cleanup/LyricsTextCleaner.cs
+      StripCredits derived from src/clean/stripper.ts (stripLyricMetadata, isMetadataLine)
+
+Modifications include: restructuring into MediaIsland naming and types, requiring a
+title/artist line to contain nothing but punctuation besides the names, and treating
+user regexes that match the empty string as invalid.

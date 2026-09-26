@@ -64,6 +64,7 @@ MediaIsland 是一款 [ClassIsland](https://classisland.tech) 插件，用于在
 - [Dubya.WindowsMediaController](https://www.nuget.org/packages/Dubya.WindowsMediaController)
 
 QQ 音乐 QRC 与酷狗 KRC 的解密算法移植自 [Lyricify.Lyrics.Helper](https://github.com/WXRIW/Lyricify-Lyrics-Helper)（Apache-2.0），详见 `MediaIsland/ThirdPartyLicenses.txt`。
+歌词中制作人员与版权信息的识别规则移植自 [lyric-kit](https://github.com/SPlayer-Dev/lyric-kit)（AGPL-3.0），详见 `MediaIsland/ThirdPartyLicenses.txt`。
 
 ## 许可
 

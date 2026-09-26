@@ -11,6 +11,7 @@ using ClassIsland.Core.Attributes;
 using MediaIsland.Helpers;
 using MediaIsland.Models;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink;
@@ -38,6 +39,14 @@ public partial class LyricsSettingsPage : MediaIslandSettingsPage
     private CancellationTokenSource? _lyricsCandidateApplyCancellation;
     private long _lyricsCandidatesSearchVersion;
     private bool _suppressLyricsSave;
+    private bool _stripCreditLines = true;
+    private string _creditKeywordsText = string.Empty;
+    private string _creditRegexesText = string.Empty;
+    private string _creditRegexErrors = string.Empty;
+    private bool _maskEnabled;
+    private string _maskWordsText = string.Empty;
+    private string _maskRegexesText = string.Empty;
+    private string _maskRegexErrors = string.Empty;
 
     public ObservableCollection<LyricsSourceItemViewModel> LyricsSourceItems { get; } = [];
 
@@ -78,6 +87,106 @@ public partial class LyricsSettingsPage : MediaIslandSettingsPage
         get => _sPlayerNextConnectionStatus;
         private set => SetProperty(ref _sPlayerNextConnectionStatus, value);
     }
+
+    public bool StripCreditLines
+    {
+        get => _stripCreditLines;
+        set
+        {
+            if (SetProperty(ref _stripCreditLines, value))
+            {
+                PersistCleanupSettings();
+            }
+        }
+    }
+
+    public string CreditKeywordsText
+    {
+        get => _creditKeywordsText;
+        set
+        {
+            if (SetProperty(ref _creditKeywordsText, value))
+            {
+                PersistCleanupSettings();
+            }
+        }
+    }
+
+    public string CreditRegexesText
+    {
+        get => _creditRegexesText;
+        set
+        {
+            if (SetProperty(ref _creditRegexesText, value))
+            {
+                PersistCleanupSettings();
+            }
+        }
+    }
+
+    public string CreditRegexErrors
+    {
+        get => _creditRegexErrors;
+        private set
+        {
+            if (SetProperty(ref _creditRegexErrors, value))
+            {
+                OnPropertyChanged(nameof(HasCreditRegexErrors));
+            }
+        }
+    }
+
+    public bool HasCreditRegexErrors => !string.IsNullOrEmpty(_creditRegexErrors);
+
+    public bool MaskEnabled
+    {
+        get => _maskEnabled;
+        set
+        {
+            if (SetProperty(ref _maskEnabled, value))
+            {
+                PersistCleanupSettings();
+            }
+        }
+    }
+
+    public string MaskWordsText
+    {
+        get => _maskWordsText;
+        set
+        {
+            if (SetProperty(ref _maskWordsText, value))
+            {
+                PersistCleanupSettings();
+            }
+        }
+    }
+
+    public string MaskRegexesText
+    {
+        get => _maskRegexesText;
+        set
+        {
+            if (SetProperty(ref _maskRegexesText, value))
+            {
+                PersistCleanupSettings();
+            }
+        }
+    }
+
+    public string MaskRegexErrors
+    {
+        get => _maskRegexErrors;
+        private set
+        {
+            if (SetProperty(ref _maskRegexErrors, value))
+            {
+                OnPropertyChanged(nameof(HasMaskRegexErrors));
+            }
+        }
+    }
+
+    public bool HasMaskRegexErrors => !string.IsNullOrEmpty(_maskRegexErrors);
 
     /// <summary>清空缓存后的反馈；为空时不显示。</summary>
     public string LyricsCacheStatus
@@ -550,6 +659,18 @@ public partial class LyricsSettingsPage : MediaIslandSettingsPage
         OnPropertyChanged(nameof(AmllApiBaseUrl));
         _sPlayerNextApiBaseUrl = Settings.Lyrics.SPlayerNextApiBaseUrl;
         OnPropertyChanged(nameof(SPlayerNextApiBaseUrl));
+        _stripCreditLines = Settings.Lyrics.StripCreditLines;
+        _creditKeywordsText = LyricsCleanupRuleText.Format(Settings.Lyrics.CreditKeywords);
+        _creditRegexesText = LyricsCleanupRuleText.Format(Settings.Lyrics.CreditRegexes);
+        _maskEnabled = Settings.Lyrics.MaskEnabled;
+        _maskWordsText = LyricsCleanupRuleText.Format(Settings.Lyrics.MaskWords);
+        _maskRegexesText = LyricsCleanupRuleText.Format(Settings.Lyrics.MaskRegexes);
+        OnPropertyChanged(nameof(StripCreditLines));
+        OnPropertyChanged(nameof(CreditKeywordsText));
+        OnPropertyChanged(nameof(CreditRegexesText));
+        OnPropertyChanged(nameof(MaskEnabled));
+        OnPropertyChanged(nameof(MaskWordsText));
+        OnPropertyChanged(nameof(MaskRegexesText));
         _suppressLyricsSave = false;
     }
 
@@ -559,6 +680,11 @@ public partial class LyricsSettingsPage : MediaIslandSettingsPage
         {
             return;
         }
+
+        var creditRegexes = LyricsCleanupRuleText.PartitionRegexes(LyricsCleanupRuleText.ParseLines(CreditRegexesText));
+        var maskRegexes = LyricsCleanupRuleText.PartitionRegexes(LyricsCleanupRuleText.ParseLines(MaskRegexesText));
+        CreditRegexErrors = FormatRegexErrors(creditRegexes.Invalid);
+        MaskRegexErrors = FormatRegexErrors(maskRegexes.Invalid);
 
         Settings.Lyrics = LyricsSourceSettings.Normalize(new LyricsSourceSettings
         {
@@ -570,10 +696,31 @@ public partial class LyricsSettingsPage : MediaIslandSettingsPage
                 IsEnabled = item.IsEnabled,
                 UseWordSyncedLyrics = item.UseWordSyncedLyrics,
                 GlobalOffsetMilliseconds = item.GlobalOffsetMilliseconds
-            }).ToList()
+            }).ToList(),
+            StripCreditLines = StripCreditLines,
+            CreditKeywords = LyricsCleanupRuleText.ParseLines(CreditKeywordsText),
+            CreditRegexes = creditRegexes.Valid,
+            MaskEnabled = MaskEnabled,
+            MaskWords = LyricsCleanupRuleText.ParseLines(MaskWordsText),
+            MaskRegexes = maskRegexes.Valid
         });
         SaveSettings();
     }
+
+    /// <summary>清理规则不进设置指纹（否则改词表会让整库磁盘缓存失效），故须手动清内存缓存。</summary>
+    private void PersistCleanupSettings()
+    {
+        if (_suppressLyricsSave)
+        {
+            return;
+        }
+
+        PersistLyricsSettings();
+        _lyricsSearchService.InvalidateCache();
+    }
+
+    private static string FormatRegexErrors(IReadOnlyCollection<string> invalid) =>
+        invalid.Count == 0 ? string.Empty : $"以下正则无效或会匹配空行，未保存：{string.Join("、", invalid)}";
 
     private void MoveLyricsSourceUpOnClick(object? sender, RoutedEventArgs e)
     {
