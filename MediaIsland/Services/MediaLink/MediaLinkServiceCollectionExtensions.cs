@@ -1,4 +1,6 @@
 using MediaIsland.Models;
+using MediaIsland.Services.Audio;
+using MediaIsland.Services.Audio.Native;
 using MediaIsland.Services.Audio.Playback;
 using MediaIsland.Services.Audio.Playback.Native;
 using MediaIsland.Services.Audio.Visualization;
@@ -44,6 +46,13 @@ public static class MediaLinkServiceCollectionExtensions
         services.AddSingleton<AudioVisualizationDemand>();
         services.AddSingleton<AudioSpectrumAnalyzer>();
         services.AddSingleton<AudioVisualizationService>();
+
+        // 本机采集随插件常驻，不随共享服务端生死：关掉共享也要能在岛上画本机的声音。
+        services.AddSingleton<LocalAudioCapture>(provider => new LocalAudioCapture(
+            new WasapiLoopbackFrameSource(
+                provider.GetService<ILoggerFactory>()?.CreateLogger<WasapiLoopbackFrameSource>()),
+            provider.GetRequiredService<AudioVisualizationService>(),
+            provider.GetService<ILoggerFactory>()));
 
         // 播放层：renderer 是可选能力（缺 native 库时自行降级），装饰器包住可视化服务，
         // 让「viz 游标随播放开关切换」成为装饰器内部的状态转移。
@@ -91,7 +100,7 @@ public static class MediaLinkServiceCollectionExtensions
             settingsAccessor,
             provider.GetService<ILoggerFactory>(),
             provider.GetRequiredService<AudioVisualizationDemand>(),
-            provider.GetRequiredService<AudioVisualizationService>(),
+            provider.GetRequiredService<LocalAudioCapture>(),
             // 仲裁锚点是生效媒体来源，不是连接态：连着上游不等于该用上游的声音。
             // 用 lambda 延迟解析，与下面上游服务的接线同理。
             () => provider.GetRequiredService<MediaSourceCoordinator>().IsExternalMediaEffective));

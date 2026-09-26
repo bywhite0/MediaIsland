@@ -1,6 +1,5 @@
 using MediaIsland.Models;
 using MediaIsland.Services.Audio;
-using MediaIsland.Services.Audio.Native;
 using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Media;
@@ -28,10 +27,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     private MediaLinkSessionHub? _hub;
     private MediaLinkStatePublisher? _publisher;
     private MediaLinkServer? _server;
-    private AudioFrameHub? _audioHub;
-    private WasapiLoopbackFrameSource? _audioSource;
-    private IDisposable? _audioSinkSubscription;
-    private IDisposable? _visualizationSinkSubscription;
+    private IDisposable? _broadcasterSubscription;
     private PluginSettings? _boundSettings;
     private CancellationTokenSource? _debounceCts;
     private bool _disposed;
@@ -56,7 +52,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         Func<PluginSettings> settingsFactory,
         ILoggerFactory? loggerFactory = null,
         AudioVisualizationDemand? visualizationDemand = null,
-        AudioVisualizationService? visualization = null,
+        LocalAudioCapture? localCapture = null,
         Func<bool>? externalMediaEffectiveAccessor = null)
     {
         // mediaService/lyricsSearchService retained in signature for DI call sites / future use;
@@ -71,12 +67,17 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         _loggerFactory = loggerFactory;
         _logger = loggerFactory?.CreateLogger<MediaLinkHostedService>();
         _visualizationDemand = visualizationDemand;
-        _visualization = visualization;
+        _localCapture = localCapture;
         _externalMediaEffective = externalMediaEffectiveAccessor;
+
+        if (_visualizationDemand is not null)
+        {
+            _visualizationDemand.DemandChanged += OnVisualizationDemandChanged;
+        }
     }
 
     private readonly AudioVisualizationDemand? _visualizationDemand;
-    private readonly AudioVisualizationService? _visualization;
+    private readonly LocalAudioCapture? _localCapture;
     private readonly Func<bool>? _externalMediaEffective;
 
     public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
@@ -94,11 +95,6 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        if (_visualizationDemand is not null)
-        {
-            _visualizationDemand.DemandChanged += OnVisualizationDemandChanged;
-        }
-
         var settings = _settingsFactory();
         BindSettings(settings);
         await ApplySettingsAsync(settings, cancellationToken);
@@ -308,7 +304,17 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         }
     }
 
+    /// <summary>
+    /// 应用设置后必重算一次采集需求：停服后协议需求归零，只剩协议需求在要采集时必须停掉。
+    /// 放在外壳而不是 Core 末尾——Core 在共享关闭时会在 try 里早 return，末尾的代码走不到。
+    /// </summary>
     private async Task ApplySettingsAsync(PluginSettings settings, CancellationToken cancellationToken)
+    {
+        await ApplySettingsCoreAsync(settings, cancellationToken);
+        await RecomputeAudioCaptureDemandAsync();
+    }
+
+    private async Task ApplySettingsCoreAsync(PluginSettings settings, CancellationToken cancellationToken)
     {
         await _lifecycleLock.WaitAsync(cancellationToken);
         try
@@ -336,26 +342,13 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
                 logger: _loggerFactory?.CreateLogger<MediaLinkStatePublisher>());
             _publisher.Start();
 
-            // 音频采集链路：native 源 → AudioFrameHub（按需启停）→ 广播器 → 订阅 audio 的会话。
-            // native 不可用时全链路照常构建，只是永远采不到帧——接收、转发与其余频道不受影响。
-            _audioSource = new WasapiLoopbackFrameSource(_loggerFactory?.CreateLogger<WasapiLoopbackFrameSource>());
-            _audioHub = new AudioFrameHub(_audioSource, _loggerFactory?.CreateLogger<AudioFrameHub>());
-            _audioSinkSubscription = _audioHub.AddSink(new MediaLinkAudioBroadcaster(
-                _hub,
-                () => _coordinator.GetMediaForPush(),
-                logger: _loggerFactory?.CreateLogger<MediaLinkAudioBroadcaster>()));
-
-            // 本机采集帧同样驱动可视化：单机用户没有第二台设备，岛上的频谱只能来自这里。
-            if (_visualization is not null)
+            // 采集归 LocalAudioCapture，服务端只在运行期间把广播器挂上去。
+            if (_localCapture is not null)
             {
-                _visualizationSinkSubscription = _audioHub.AddSink(_visualization);
-            }
-
-            if (!_audioSource.IsAvailable)
-            {
-                _logger?.LogInformation(
-                    "[音频] 采集不可用（{Reason}），MediaLink 其余频道不受影响",
-                    _audioSource.FailureReason);
+                _broadcasterSubscription = _localCapture.AttachSink(new MediaLinkAudioBroadcaster(
+                    _hub,
+                    () => _coordinator.GetMediaForPush(),
+                    logger: _loggerFactory?.CreateLogger<MediaLinkAudioBroadcaster>()));
             }
 
             _server = new MediaLinkServer(
@@ -423,7 +416,7 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     /// <summary>
     /// 重算音频采集需求。需求有两个来源：协议层（谁订阅了 audio、谁 play_start）
     /// 与本地可视化（岛上有没有频谱组件）。两者取并集后再交给仲裁，
-    /// 判据见 <see cref="ShouldCaptureLocally"/>。
+    /// 判据见 <see cref="LocalAudioCapture.ShouldCaptureLocally"/>。
     ///
     /// 提升为 public：上游服务的音源仲裁结果变化时要能从外部触发重算，
     /// 而两个宿主服务互相注入会形成构造期循环依赖，只能由 Plugin 在外面接线。
@@ -432,18 +425,15 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     {
         NotifyIfDownstreamAudioDemandChanged();
 
-        var audioHub = _audioHub;
-        if (audioHub is null)
+        if (_localCapture is null)
         {
             return;
         }
 
-        await audioHub.SetCaptureDemandAsync(
-            ShouldCaptureLocally(
-                _hub?.HasDownstreamAudioDemand ?? false,
-                _visualizationDemand?.IsDemanded == true,
-                _externalMediaEffective?.Invoke() == true),
-            CancellationToken.None);
+        await _localCapture.SetDemandAsync(
+            _hub?.HasDownstreamAudioDemand ?? false,
+            _visualizationDemand?.IsDemanded == true,
+            _externalMediaEffective?.Invoke() == true);
     }
 
     /// <summary>
@@ -476,18 +466,15 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
     public bool HasDownstreamAudioDemand => _hub?.HasDownstreamAudioDemand ?? false;
 
     /// <summary>本机采集是否进行中。默认设备 watcher 的轮询门控读它——有采集会话就得盯着设备。</summary>
-    public bool IsAudioCapturing => _audioHub?.IsCapturing ?? false;
+    public bool IsAudioCapturing => _localCapture?.IsCapturing ?? false;
 
     /// <summary>
-    /// 默认渲染端点变化后的采集跟随入口。hub 实例随服务端生命周期私有重建，
-    /// 外部接线只能经本服务转发；服务端没起来时无采集可重启，空操作。
+    /// 默认渲染端点变化后的采集跟随入口，转交 LocalAudioCapture。
     /// 调用侧是 fire-and-forget（丢弃返回任务），faulted 在此就地观察，
     /// 返回任务不再上抛。
     /// </summary>
     public Task RestartAudioCaptureAsync() =>
-        ObserveCaptureRestartFaults(
-            _audioHub?.RestartCaptureAsync(CancellationToken.None) ?? Task.CompletedTask,
-            _logger);
+        ObserveCaptureRestartFaults(_localCapture?.RestartAsync() ?? Task.CompletedTask, _logger);
 
     /// <summary>
     /// 兜底观察：等待重启任务，faulted 记一行 Warning 后吞掉。RestartCaptureAsync
@@ -511,19 +498,6 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         _hub?.BroadcastAudioFrameAsync(frame, cancellationToken) ?? Task.CompletedTask;
 
     /// <summary>
-    /// 采集需求的全部逻辑。两个需求来源取并集，再整体减去「当前生效的媒体来自上游」。
-    ///
-    /// 协议需求不再无条件成立——这是本期相对上一期的推翻点。下游订阅者要的是
-    /// 本机认定的当前曲目的声音；那首歌来自上游时，本机该转发而不是采集自己的输出，
-    /// 否则下游收到的是本机的 PCM 配上游的曲目标识，校验能过但内容错配。
-    ///
-    /// 第三个入参是仲裁结果而非连接态：连着上游不等于该用上游的声音。
-    /// </summary>
-    internal static bool ShouldCaptureLocally(
-        bool protocolDemand, bool visualizationDemand, bool externalMediaEffective) =>
-        (protocolDemand || visualizationDemand) && !externalMediaEffective;
-
-    /// <summary>
     /// 可视化需求或音源仲裁变化时重算。不 await：需求由组件的 Loaded/Unloaded 触发，
     /// 那是 UI 线程，而重算内含音频设备的启停。
     /// </summary>
@@ -538,16 +512,9 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
             _server = null;
         }
 
-        // 无条件停采集：插件禁用或重载后音频端点不该继续被占着。
-        // Dispose 内含同步等待采集线程退出，故必须在此完成而非 fire-and-forget。
-        _audioSinkSubscription?.Dispose();
-        _audioSinkSubscription = null;
-        _visualizationSinkSubscription?.Dispose();
-        _visualizationSinkSubscription = null;
-        _audioHub?.Dispose();
-        _audioHub = null;
-        _audioSource?.Dispose();
-        _audioSource = null;
+        // 只摘广播器：采集归 LocalAudioCapture 的需求决定，停服不等于没人要看频谱。
+        _broadcasterSubscription?.Dispose();
+        _broadcasterSubscription = null;
 
         _publisher?.Dispose();
         _publisher = null;

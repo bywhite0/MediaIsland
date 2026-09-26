@@ -1,3 +1,4 @@
+using MediaIsland.Services.Audio;
 using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.MediaLink;
 using Xunit;
@@ -83,7 +84,7 @@ public class AudioSourceArbitrationTests
     {
         Assert.Equal(
             expected,
-            MediaLinkHostedService.ShouldCaptureLocally(
+            LocalAudioCapture.ShouldCaptureLocally(
                 protocolDemand, visualizationDemand, externalMediaEffective));
     }
 
@@ -92,8 +93,8 @@ public class AudioSourceArbitrationTests
     {
         // 生效媒体切回本机 → 仲裁转假 → 本机采集自动接上，无需任何显式的「回落」代码路径。
         // 这正是把两者都写成状态函数的收益：上游断连只需经由仲裁让这一个入参变假。
-        Assert.False(MediaLinkHostedService.ShouldCaptureLocally(false, true, externalMediaEffective: true));
-        Assert.True(MediaLinkHostedService.ShouldCaptureLocally(false, true, externalMediaEffective: false));
+        Assert.False(LocalAudioCapture.ShouldCaptureLocally(false, true, externalMediaEffective: true));
+        Assert.True(LocalAudioCapture.ShouldCaptureLocally(false, true, externalMediaEffective: false));
     }
 
     [Fact]
@@ -109,7 +110,7 @@ public class AudioSourceArbitrationTests
             upstreamEnabled: true, connected: true, supportsAudio: true, externalMediaEffective: true,
             visualizationDemanded: demand.IsDemanded, downstreamAudioDemanded: false,
             playbackEnabled: false));
-        Assert.False(MediaLinkHostedService.ShouldCaptureLocally(
+        Assert.False(LocalAudioCapture.ShouldCaptureLocally(
             protocolDemand: false, visualizationDemand: demand.IsDemanded, externalMediaEffective: false));
     }
 }
