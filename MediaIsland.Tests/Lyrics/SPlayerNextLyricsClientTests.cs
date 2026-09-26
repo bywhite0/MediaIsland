@@ -548,7 +548,7 @@ public class SPlayerNextLyricsSearchIntegrationTests
     {
         public bool CanParse(LyricsFormat format) => true;
 
-        public ValueTask<LyricsDocument> ParseAsync(LyricsPayload payload, CancellationToken cancellationToken)
+        public ValueTask<LyricsDocument> ParseAsync(LyricsPayload payload, CancellationToken cancellationToken, Services.Lyrics.Cleanup.LyricsCleanupOptions? cleanup = null)
         {
             var document = LyricsDocumentNormalizer.Create(
             [

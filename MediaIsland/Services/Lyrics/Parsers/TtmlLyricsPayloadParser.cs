@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Lyrics.Native;
 
@@ -8,7 +9,7 @@ public sealed class TtmlLyricsPayloadParser(TtmlNativeParser nativeParser) : ILy
 {
     public bool CanParse(LyricsFormat format) => format == LyricsFormat.Ttml;
 
-    public ValueTask<LyricsDocument> ParseAsync(LyricsPayload payload, CancellationToken cancellationToken)
+    public ValueTask<LyricsDocument> ParseAsync(LyricsPayload payload, CancellationToken cancellationToken, LyricsCleanupOptions? cleanup = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (!nativeParser.IsAvailable)
@@ -25,7 +26,8 @@ public sealed class TtmlLyricsPayloadParser(TtmlNativeParser nativeParser) : ILy
             payload.Metadata,
             payload.Source,
             payload.ProviderItemId,
-            preferWordSync: true);
+            preferWordSync: true,
+            cleanup);
         return ValueTask.FromResult(document);
     }
 }
@@ -37,7 +39,8 @@ internal static class AmllJsonConverter
         LyricsMetadata metadata,
         LyricsSourceId source,
         string providerItemId,
-        bool preferWordSync)
+        bool preferWordSync,
+        LyricsCleanupOptions? cleanup = null)
     {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -102,7 +105,8 @@ internal static class AmllJsonConverter
             source,
             providerItemId,
             LyricsFormat.Ttml,
-            preferWordSync);
+            preferWordSync,
+            cleanup);
     }
 
     private static JsonElement FindLines(JsonElement root)

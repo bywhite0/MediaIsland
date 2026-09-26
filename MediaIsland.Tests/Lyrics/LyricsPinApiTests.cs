@@ -285,7 +285,8 @@ public class LyricsPinApiTests : IDisposable
 
         public ValueTask<LyricsDocument> ParseAsync(
             LyricsPayload payload,
-            CancellationToken cancellationToken) =>
-            _inner.ParseAsync(payload, cancellationToken);
+            CancellationToken cancellationToken,
+            Services.Lyrics.Cleanup.LyricsCleanupOptions? cleanup = null) =>
+            _inner.ParseAsync(payload, cancellationToken, cleanup);
     }
 }

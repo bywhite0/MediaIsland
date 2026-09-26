@@ -1,3 +1,4 @@
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 
@@ -22,7 +23,9 @@ public interface ILyricsPayloadParser
 {
     bool CanParse(LyricsFormat format);
 
+    /// <param name="cleanup">歌词清理规则；null 表示不清理。</param>
     ValueTask<LyricsDocument> ParseAsync(
         LyricsPayload payload,
-        CancellationToken cancellationToken);
+        CancellationToken cancellationToken,
+        LyricsCleanupOptions? cleanup = null);
 }

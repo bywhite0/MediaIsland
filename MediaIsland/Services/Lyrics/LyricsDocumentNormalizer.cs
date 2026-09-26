@@ -1,3 +1,4 @@
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 
 namespace MediaIsland.Services.Lyrics;
@@ -10,9 +11,11 @@ public static class LyricsDocumentNormalizer
         LyricsSourceId source,
         string providerItemId,
         LyricsFormat format,
-        bool preferWordSync)
+        bool preferWordSync,
+        LyricsCleanupOptions? cleanup = null)
     {
-        var normalized = NormalizeLines(lines, metadata.Duration).ToList();
+        // 「歌名 - 歌手」行按歌词来源自报的元数据识别：那正是会被写进歌词正文的那一份。
+        var normalized = NormalizeLines(lines, metadata.Duration, cleanup?.WithMetadataIfMissing(metadata)).ToList();
         if (!preferWordSync)
         {
             normalized = normalized.Select(line => line with { Words = Array.Empty<LyricsWord>() }).ToList();
@@ -27,7 +30,10 @@ public static class LyricsDocumentNormalizer
         return new LyricsDocument(metadata, normalized, syncMode, source, providerItemId, format);
     }
 
-    public static IReadOnlyList<LyricsLine> NormalizeLines(IEnumerable<LyricsLine> lines, TimeSpan? trackDuration)
+    public static IReadOnlyList<LyricsLine> NormalizeLines(
+        IEnumerable<LyricsLine> lines,
+        TimeSpan? trackDuration,
+        LyricsCleanupOptions? cleanup = null)
     {
         var ordered = lines
             .Select(line => line with
@@ -80,6 +86,13 @@ public static class LyricsDocumentNormalizer
             }
 
             ordered[i] = line with { EndTime = end, Words = words };
+        }
+
+        // 清理放在行尾推断之后：被删行仍为前一行提供结束时间；
+        // 放在配对与提前量之前：被删行不再压住下一行的提前量。
+        if (cleanup != null)
+        {
+            ordered = LyricsTextCleaner.Apply(ordered, cleanup).ToList();
         }
 
         // AMLL-style presentation tuning: pair main/BG windows, then advance starts for smoother switches.

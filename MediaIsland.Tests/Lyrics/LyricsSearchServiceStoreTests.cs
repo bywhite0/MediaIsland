@@ -339,7 +339,8 @@ public class LyricsSearchServiceStoreTests
 
         public ValueTask<LyricsDocument> ParseAsync(
             LyricsPayload payload,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken,
+            Services.Lyrics.Cleanup.LyricsCleanupOptions? cleanup = null) =>
             ValueTask.FromResult(LyricsDocumentNormalizer.Create(
                 [new LyricsLine(TimeSpan.Zero, TimeSpan.FromSeconds(1), payload.Content, [])],
                 payload.Metadata,

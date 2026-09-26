@@ -1,5 +1,6 @@
 using Xunit;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 
 namespace MediaIsland.Tests.Lyrics;
@@ -146,4 +147,77 @@ public class LyricsDocumentNormalizerTests
         Assert.True(normalized[1].StartTime < TimeSpan.FromMilliseconds(3000));
     }
 
+    private static readonly LyricsCleanupOptions StripOnly = new() { StripCredits = true };
+
+    private static LyricsLine TimedLine(int startMs, int endMs, string text) =>
+        new(TimeSpan.FromMilliseconds(startMs), TimeSpan.FromMilliseconds(endMs), text, Array.Empty<LyricsWord>());
+
+    [Fact]
+    public void NormalizeLines_NullCleanup_MatchesLegacyOverload()
+    {
+        var lines = new[] { TimedLine(0, 5000, "作词：青石"), TimedLine(5200, 8000, "第一句") };
+
+        var legacy = LyricsDocumentNormalizer.NormalizeLines(lines, TimeSpan.FromSeconds(10));
+        var explicitNull = LyricsDocumentNormalizer.NormalizeLines(lines, TimeSpan.FromSeconds(10), cleanup: null);
+
+        Assert.Equal(legacy.Select(l => (l.Text, l.StartTime, l.EndTime)), explicitNull.Select(l => (l.Text, l.StartTime, l.EndTime)));
+        Assert.Equal(2, legacy.Count);
+    }
+
+    [Fact]
+    public void NormalizeLines_RemovedCreditLine_DoesNotCapNextLineAdvance()
+    {
+        var lines = new[] { TimedLine(0, 5000, "作词：青石"), TimedLine(5200, 8000, "第一句") };
+
+        var without = LyricsDocumentNormalizer.NormalizeLines(lines, TimeSpan.FromSeconds(10));
+        var with = LyricsDocumentNormalizer.NormalizeLines(lines, TimeSpan.FromSeconds(10), StripOnly);
+
+        // 不清理时提前量被前一组的结束时间（5000）截住；清理后按 600 ms 默认提前。
+        Assert.Equal(TimeSpan.FromMilliseconds(5000), without[1].StartTime);
+        Assert.Equal(["第一句"], with.Select(l => l.Text));
+        Assert.Equal(TimeSpan.FromMilliseconds(4600), with[0].StartTime);
+    }
+
+    [Fact]
+    public void NormalizeLines_InfersEndTimesBeforeStripping()
+    {
+        // 最后一句结束时间未知（0），其后是会被删掉的空行：结束时间仍应取空行的起点，而不是被拉到整首歌结束。
+        var lines = new[] { TimedLine(1000, 0, "第一句"), TimedLine(3000, 0, "") };
+
+        var normalized = LyricsDocumentNormalizer.NormalizeLines(lines, TimeSpan.FromSeconds(10), StripOnly);
+
+        Assert.Equal(["第一句"], normalized.Select(l => l.Text));
+        Assert.Equal(TimeSpan.FromMilliseconds(3000), normalized[0].EndTime);
+    }
+
+    [Fact]
+    public void Create_FillsTitleAndArtistFromMetadata_ForTitleArtistLine()
+    {
+        var document = LyricsDocumentNormalizer.Create(
+            [TimedLine(0, 1000, "春风十里 - 鹿先森乐队"), TimedLine(2000, 3000, "正文")],
+            new LyricsMetadata("春风十里", "鹿先森乐队", null, TimeSpan.FromSeconds(10)),
+            LyricsSourceId.Netease,
+            "id",
+            LyricsFormat.Lrc,
+            preferWordSync: false,
+            StripOnly);
+
+        Assert.Equal(["正文"], document.Lines.Select(l => l.Text));
+    }
+
+    [Fact]
+    public void Create_AllLinesRemoved_YieldsUnsyncedEmptyDocument()
+    {
+        var document = LyricsDocumentNormalizer.Create(
+            [TimedLine(0, 1000, "作词：青石")],
+            new LyricsMetadata("t", "a", null, null),
+            LyricsSourceId.Netease,
+            "id",
+            LyricsFormat.Lrc,
+            preferWordSync: false,
+            StripOnly);
+
+        Assert.Empty(document.Lines);
+        Assert.Equal(LyricsSyncMode.Unsynced, document.SyncMode);
+    }
 }

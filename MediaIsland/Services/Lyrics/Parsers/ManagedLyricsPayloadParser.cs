@@ -1,3 +1,4 @@
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 
 namespace MediaIsland.Services.Lyrics.Parsers;
@@ -20,7 +21,7 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
     public bool CanParse(LyricsFormat format) =>
         format is LyricsFormat.Lrc or LyricsFormat.Qrc or LyricsFormat.Krc;
 
-    public ValueTask<LyricsDocument> ParseAsync(LyricsPayload payload, CancellationToken cancellationToken)
+    public ValueTask<LyricsDocument> ParseAsync(LyricsPayload payload, CancellationToken cancellationToken, LyricsCleanupOptions? cleanup = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -41,7 +42,8 @@ public sealed class ManagedLyricsPayloadParser : ILyricsPayloadParser
             payload.Source,
             payload.ProviderItemId,
             payload.Format,
-            preferWordSync: payload.Format is LyricsFormat.Qrc or LyricsFormat.Krc);
+            preferWordSync: payload.Format is LyricsFormat.Qrc or LyricsFormat.Krc,
+            cleanup);
         return ValueTask.FromResult(document);
     }
 

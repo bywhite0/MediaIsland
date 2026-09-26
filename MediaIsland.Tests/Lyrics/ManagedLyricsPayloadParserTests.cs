@@ -1,3 +1,4 @@
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Lyrics.Parsers;
 using Xunit;
@@ -298,5 +299,23 @@ public class ManagedLyricsPayloadParserTests
 
         Assert.Equal("za n ko ku na", document.Lines[0].Romanization);
         Assert.Equal("sho u ne n", document.Lines[1].Romanization);
+    }
+
+    [Fact]
+    public async Task ParseAsync_WithCleanup_StripsCreditLines()
+    {
+        var payload = new LyricsPayload(
+            LyricsFormat.Lrc,
+            "[00:00.00]作词：青石\n[00:05.00]第一句\n[00:10.00]第二句",
+            LyricsSourceId.Netease,
+            "id",
+            new LyricsMetadata("Song", "Artist", null, TimeSpan.FromSeconds(30)));
+
+        var cleaned = await new ManagedLyricsPayloadParser().ParseAsync(
+            payload, CancellationToken.None, new LyricsCleanupOptions { StripCredits = true });
+        var raw = await new ManagedLyricsPayloadParser().ParseAsync(payload, CancellationToken.None);
+
+        Assert.Equal(["第一句", "第二句"], cleaned.Lines.Select(l => l.Text));
+        Assert.Equal(3, raw.Lines.Count);
     }
 }

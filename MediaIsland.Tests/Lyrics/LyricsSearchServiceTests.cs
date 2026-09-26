@@ -596,7 +596,8 @@ public class LyricsSearchServiceTests
 
         public ValueTask<LyricsDocument> ParseAsync(
             LyricsPayload payload,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Services.Lyrics.Cleanup.LyricsCleanupOptions? cleanup = null)
         {
             var isWordSynced = payload.Format is LyricsFormat.Qrc or LyricsFormat.Krc;
             IReadOnlyList<LyricsWord> words = isWordSynced
