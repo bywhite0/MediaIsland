@@ -160,6 +160,10 @@ public static class MediaLinkServiceCollectionExtensions
         });
         services.AddHostedService(provider => provider.GetRequiredService<MediaLinkUpstreamHostedService>());
 
+        services.AddSingleton<IAudioVisualSourceInfo>(provider => new MediaLinkAudioVisualSourceInfo(
+            provider.GetRequiredService<LocalAudioCapture>(),
+            () => provider.GetRequiredService<MediaLinkUpstreamHostedService>().IsConsumingUpstreamAudio));
+
         return services;
     }
 }
