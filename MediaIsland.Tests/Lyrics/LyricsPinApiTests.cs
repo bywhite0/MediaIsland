@@ -86,6 +86,35 @@ public class LyricsPinApiTests : IDisposable
     }
 
     [Fact]
+    public async Task PinFromFileAsync_StripsCreditLinesFromImportedFile()
+    {
+        var store = new RecordingStore();
+        var service = CreateService(store);
+        var path = Path.Combine(_folder, "credits.lrc");
+        await File.WriteAllTextAsync(path, "[00:00.00]作词：青石\n[00:01.00]本地歌词");
+
+        var pinned = await service.PinFromFileAsync(CreateMedia(), path);
+
+        Assert.NotNull(pinned);
+        Assert.Equal(["本地歌词"], pinned!.Document.Lines.Select(l => l.Text));
+    }
+
+    [Fact]
+    public async Task PinFromFileAsync_AllLinesAreCredits_ReportsErrorAndWritesNothing()
+    {
+        var store = new RecordingStore();
+        var service = CreateService(store);
+        var path = Path.Combine(_folder, "placeholder.lrc");
+        await File.WriteAllTextAsync(path, "[00:00.00]纯音乐，请欣赏");
+
+        var pinned = await service.PinFromFileAsync(CreateMedia(), path);
+
+        Assert.Null(pinned);
+        Assert.Empty(store.Pins);
+        Assert.NotNull(service.LastPinError);
+    }
+
+    [Fact]
     public async Task PinFromFileAsync_MetadataOnlyFile_ReportsErrorAndWritesNothing()
     {
         var store = new RecordingStore();

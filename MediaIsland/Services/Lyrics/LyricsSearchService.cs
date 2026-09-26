@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using MediaIsland.Helpers;
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Lyrics.Providers;
 using MediaIsland.Services.Lyrics.Storage;
@@ -357,10 +358,12 @@ public sealed class LyricsSearchService
             return null;
         }
 
+        // 落盘条目存的是原始 payload，每次加载都按当前规则重新清理，改规则无需迁移。
+        var cleanup = LyricsCleanupOptions.From(LyricsSourceSettings.Normalize(_settingsFactory().Clone()));
         LyricsDocument document;
         try
         {
-            document = await parser.ParseAsync(payload, cancellationToken).ConfigureAwait(false);
+            document = await parser.ParseAsync(payload, cancellationToken, cleanup).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -923,6 +926,7 @@ public sealed class LyricsSearchService
         LyricsSelectionMode selectionMode,
         CancellationToken cancellationToken)
     {
+        var cleanup = LyricsCleanupOptions.From(settings);
         foreach (var candidate in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -975,7 +979,7 @@ public sealed class LyricsSearchService
             LyricsDocument document;
             try
             {
-                document = await parser.ParseAsync(payload, cancellationToken);
+                document = await parser.ParseAsync(payload, cancellationToken, cleanup);
             }
             catch (OperationCanceledException)
             {
@@ -1012,7 +1016,8 @@ public sealed class LyricsSearchService
                     document.Source,
                     document.ProviderItemId,
                     document.Format,
-                    preferWordSync: false);
+                    preferWordSync: false,
+                    cleanup);
             }
 
             _logger?.LogInformation(

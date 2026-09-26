@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MediaIsland.Helpers;
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using Microsoft.Extensions.Logging;
@@ -58,11 +59,12 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
         // 默认延迟后再首次获取，给 SPlayer-Next 时间解析出更佳歌词。
         await Task.Delay(InitialFetchDelay, cancellationToken).ConfigureAwait(false);
 
+        var cleanup = LyricsCleanupOptions.From(settings);
         for (var attempt = 1; attempt <= MaxFetchAttempts; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var result = await TryFetchOnceAsync(media, baseUrl, cancellationToken).ConfigureAwait(false);
+            var result = await TryFetchOnceAsync(media, baseUrl, cleanup, cancellationToken).ConfigureAwait(false);
             if (result != null)
             {
                 return result;
@@ -90,6 +92,7 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
     private async Task<LyricsSearchResult?> TryFetchOnceAsync(
         MediaInfo media,
         string baseUrl,
+        LyricsCleanupOptions cleanup,
         CancellationToken cancellationToken)
     {
         try
@@ -152,7 +155,8 @@ public sealed class SPlayerNextLyricsClient(ILogger<SPlayerNextLyricsClient>? lo
                 LyricsSourceId.SPlayerNext,
                 trackId,
                 format,
-                preferWordSync: preferWordSync);
+                preferWordSync: preferWordSync,
+                cleanup);
 
             if (document.Lines.Count == 0)
             {
