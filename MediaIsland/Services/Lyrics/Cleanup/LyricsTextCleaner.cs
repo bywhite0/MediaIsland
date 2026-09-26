@@ -84,6 +84,198 @@ public static class LyricsTextCleaner
     }
 
     /// <summary>
+    /// 命中区间内每个 UTF-16 码元替换为一个 <c>*</c>，长度严格不变，
+    /// 使逐字时间与注音索引都不漂移。代价：代理对字符会显示为两个 <c>*</c>。
+    /// </summary>
+    public static IReadOnlyList<LyricsLine> Mask(IReadOnlyList<LyricsLine> lines, LyricsCleanupOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        ArgumentNullException.ThrowIfNull(options);
+        if (!options.MaskEnabled || (options.MaskWords.Count == 0 && options.MaskRegexes.Count == 0))
+        {
+            return lines;
+        }
+
+        var result = new LyricsLine[lines.Count];
+        var changed = false;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            result[i] = MaskLine(lines[i], options);
+            changed |= !ReferenceEquals(result[i], lines[i]);
+        }
+
+        return changed ? result : lines;
+    }
+
+    /// <summary>先排除后遮盖：遮盖会改动文本，放在前面会让关键词判定失效。</summary>
+    public static IReadOnlyList<LyricsLine> Apply(IReadOnlyList<LyricsLine> lines, LyricsCleanupOptions? options) =>
+        options is null ? lines : Mask(StripCredits(lines, options), options);
+
+    private static LyricsLine MaskLine(LyricsLine line, LyricsCleanupOptions options)
+    {
+        var text = line.Text ?? string.Empty;
+        var ranges = FindMaskRanges(text, options);
+        var maskedText = ApplyRanges(text, ranges);
+        var words = MaskWords(line.Words, text, maskedText, options);
+        var translation = MaskText(line.Translation, options);
+        var romanization = MaskText(line.Romanization, options);
+        var rubySpans = DropMaskedRuby(line.RubySpans, ranges);
+
+        if (ReferenceEquals(maskedText, text) &&
+            ReferenceEquals(words, line.Words) &&
+            ReferenceEquals(translation, line.Translation) &&
+            ReferenceEquals(romanization, line.Romanization) &&
+            ReferenceEquals(rubySpans, line.RubySpans))
+        {
+            return line;
+        }
+
+        return line with
+        {
+            Text = maskedText,
+            Words = words,
+            Translation = translation,
+            Romanization = romanization,
+            RubySpans = rubySpans
+        };
+    }
+
+    private static List<(int Start, int Length)> FindMaskRanges(string text, LyricsCleanupOptions options)
+    {
+        var ranges = new List<(int Start, int Length)>();
+        if (text.Length == 0)
+        {
+            return ranges;
+        }
+
+        foreach (var word in options.MaskWords)
+        {
+            // 含拉丁字母的词要求两侧不是 ASCII 字母数字，避免 class 被 ass 遮成 c***s；
+            // 汉字不算边界，「ass你好」照样遮。纯 CJK/假名词按子串匹配。
+            var needsBoundary = word.Any(char.IsAsciiLetter);
+            var index = text.IndexOf(word, StringComparison.OrdinalIgnoreCase);
+            while (index >= 0)
+            {
+                if (!needsBoundary || IsAsciiWordBoundary(text, index, word.Length))
+                {
+                    ranges.Add((index, word.Length));
+                }
+
+                index = text.IndexOf(word, index + 1, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        foreach (var regex in options.MaskRegexes)
+        {
+            try
+            {
+                foreach (Match match in regex.Matches(text))
+                {
+                    if (match.Length > 0)
+                    {
+                        ranges.Add((match.Index, match.Length));
+                    }
+                }
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // 超时的正则放弃本行已找到之外的命中；其余规则照常生效。
+            }
+        }
+
+        return ranges;
+    }
+
+    private static bool IsAsciiWordBoundary(string text, int start, int length) =>
+        (start == 0 || !char.IsAsciiLetterOrDigit(text[start - 1])) &&
+        (start + length >= text.Length || !char.IsAsciiLetterOrDigit(text[start + length]));
+
+    private static string ApplyRanges(string text, List<(int Start, int Length)> ranges)
+    {
+        if (ranges.Count == 0)
+        {
+            return text;
+        }
+
+        var chars = text.ToCharArray();
+        foreach (var (start, length) in ranges)
+        {
+            chars.AsSpan(start, length).Fill('*');
+        }
+
+        return new string(chars);
+    }
+
+    private static string? MaskText(string? text, LyricsCleanupOptions options) =>
+        string.IsNullOrEmpty(text) ? text : ApplyRanges(text, FindMaskRanges(text, options));
+
+    /// <summary>
+    /// 逐字文本拼起来等于整行时，按累计偏移把整行的遮盖投影到各字（跨字边界的词也能遮住）；
+    /// 对不上时退回逐字独立匹配。
+    /// </summary>
+    private static IReadOnlyList<LyricsWord> MaskWords(
+        IReadOnlyList<LyricsWord> words,
+        string text,
+        string maskedText,
+        LyricsCleanupOptions options)
+    {
+        if (words.Count == 0)
+        {
+            return words;
+        }
+
+        if (!string.Equals(string.Concat(words.Select(word => word.Text)), text, StringComparison.Ordinal))
+        {
+            var independent = new LyricsWord[words.Count];
+            var changed = false;
+            for (var i = 0; i < words.Count; i++)
+            {
+                var original = words[i].Text ?? string.Empty;
+                var masked = MaskText(original, options) ?? string.Empty;
+                var wordChanged = !ReferenceEquals(masked, original);
+                independent[i] = wordChanged ? words[i] with { Text = masked } : words[i];
+                changed |= wordChanged;
+            }
+
+            return changed ? independent : words;
+        }
+
+        if (ReferenceEquals(maskedText, text))
+        {
+            return words;
+        }
+
+        var projected = new LyricsWord[words.Count];
+        var offset = 0;
+        for (var i = 0; i < words.Count; i++)
+        {
+            var length = (words[i].Text ?? string.Empty).Length;
+            projected[i] = words[i] with { Text = maskedText.Substring(offset, length) };
+            offset += length;
+        }
+
+        return projected;
+    }
+
+    /// <summary>与遮盖区间相交的注音删掉，否则读音会把被遮的字「念」出来。</summary>
+    private static IReadOnlyList<LyricsRubySpan>? DropMaskedRuby(
+        IReadOnlyList<LyricsRubySpan>? spans,
+        List<(int Start, int Length)> ranges)
+    {
+        if (spans is null || spans.Count == 0 || ranges.Count == 0)
+        {
+            return spans;
+        }
+
+        var kept = spans
+            .Where(span => !ranges.Any(range =>
+                span.BaseStart < range.Start + range.Length &&
+                range.Start < span.BaseStart + span.BaseLength))
+            .ToArray();
+        return kept.Length == spans.Count ? spans : kept;
+    }
+
+    /// <summary>
     /// 命中任一正则；或冒号左侧职务名命中关键词（含「词/曲」「编曲Arranger」这类复合）；
     /// 或无冒号时整行等于多字关键词、或以多字关键词开头并紧跟分隔符。
     /// </summary>
