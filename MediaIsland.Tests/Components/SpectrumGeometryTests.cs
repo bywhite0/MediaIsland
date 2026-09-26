@@ -119,62 +119,6 @@ public class SpectrumGeometryTests
         Assert.InRange(bars[0].Y, 0, Height);
     }
 
-    // ---- Oscilloscope ----
-
-    [Fact]
-    public void Oscilloscope_SpansTheFullWidth()
-    {
-        var points = SpectrumGeometry.Oscilloscope(new float[128], width: 200, Height);
-
-        Assert.Equal(128, points.Length);
-        Assert.Equal(0, points[0].X);
-        Assert.Equal(200, points[^1].X);
-    }
-
-    [Fact]
-    public void Oscilloscope_SilentWaveform_SitsOnTheCenterline()
-    {
-        var points = SpectrumGeometry.Oscilloscope(new float[64], Width, Height);
-
-        Assert.All(points, point => Assert.Equal(Height / 2, point.Y));
-    }
-
-    [Fact]
-    public void Oscilloscope_MapsAmplitudeWithPositiveUp()
-    {
-        // 屏幕坐标 y 向下增长，而波形的正半轴该朝上——这里必须翻转，
-        // 不翻会得到一个上下颠倒的波形，静音时看不出区别，有信号时才发现。
-        var points = SpectrumGeometry.Oscilloscope([1f, -1f], Width, Height);
-
-        Assert.Equal(0, points[0].Y);
-        Assert.Equal(Height, points[1].Y);
-    }
-
-    [Theory]
-    [InlineData(2f)]
-    [InlineData(-2f)]
-    public void Oscilloscope_OutOfRangeAmplitude_StaysInsideTheControl(float value)
-    {
-        var points = SpectrumGeometry.Oscilloscope([value, value], Width, Height);
-
-        Assert.All(points, point => Assert.InRange(point.Y, 0, Height));
-    }
-
-    [Fact]
-    public void Oscilloscope_SinglePoint_DoesNotDivideByZero()
-    {
-        var points = SpectrumGeometry.Oscilloscope([0.5f], Width, Height);
-
-        Assert.Single(points);
-        Assert.Equal(0, points[0].X);
-    }
-
-    [Fact]
-    public void Oscilloscope_EmptyWaveform_ReturnsEmpty()
-    {
-        Assert.Empty(SpectrumGeometry.Oscilloscope([], Width, Height));
-    }
-
     // ---- LevelMeter ----
 
     [Fact]

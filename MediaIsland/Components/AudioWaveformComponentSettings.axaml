@@ -1,0 +1,32 @@
+<ci:ComponentBase x:Class="MediaIsland.Components.AudioWaveformComponentSettings"
+                  x:TypeArguments="local:AudioWaveformConfig"
+                  xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                  xmlns="https://github.com/avaloniaui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                  xmlns:controls="using:FluentAvalonia.UI.Controls"
+                  xmlns:local="clr-namespace:MediaIsland.Components">
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:AudioWaveformComponentSettings}}">
+        <StackPanel>
+            <local:AudioVisualSettingsHeader x:Name="Header" />
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE745;}" Header="组件宽度" Description="占用的横向像素。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown MinWidth="140" Increment="8"
+                                   Minimum="{x:Static local:AudioVisualConfigBase.ComponentWidthMinimum}"
+                                   Maximum="{x:Static local:AudioVisualConfigBase.ComponentWidthMaximum}"
+                                   Value="{Binding Settings.Width, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE790;}" Header="使用主题强调色" Description="关闭则使用固定的白色。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.UseAccentColor, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE793;}" Header="随音色变色"
+                                         Description="声音越明亮颜色越偏暖黄，越低沉越偏深紫。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.UseTimbreColor, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+        </StackPanel>
+    </ScrollViewer>
+</ci:ComponentBase>

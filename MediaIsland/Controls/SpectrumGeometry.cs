@@ -46,32 +46,6 @@ public static class SpectrumGeometry
         return new Rect(x, height / 2 - half, barWidth, half * 2);
     }
 
-    /// <summary>
-    /// 示波器折线。返回点数等于波形长度，首点 x=0、末点 x=width。
-    /// y 轴翻转：屏幕坐标向下增长，而波形的正半轴该朝上——不翻会得到一个
-    /// 上下颠倒的波形，静音时看不出区别，有信号时才发现。
-    /// </summary>
-    public static Point[] Oscilloscope(IReadOnlyList<float> waveform, double width, double height)
-    {
-        if (waveform.Count == 0)
-        {
-            return [];
-        }
-
-        var points = new Point[waveform.Count];
-        // 单点时不做除零；此时该点落在最左侧。
-        var step = waveform.Count > 1 ? width / (waveform.Count - 1) : 0;
-        var middle = height / 2;
-
-        for (var i = 0; i < waveform.Count; i++)
-        {
-            var value = Math.Clamp(waveform[i], -1f, 1f);
-            points[i] = new Point(i * step, middle - value * middle);
-        }
-
-        return points;
-    }
-
     /// <summary>电平表：RMS 填充条 + 峰值刻线。</summary>
     public static (Rect Fill, Rect PeakTick) LevelMeter(
         double rms, double peak, double width, double height)

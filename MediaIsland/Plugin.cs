@@ -78,6 +78,7 @@ namespace MediaIsland
             services.AddComponent<LyricsComponent, LyricsComponentSettings>();
             services.AddComponent<AudioEnergyComponent, AudioEnergyComponentSettings>();
             services.AddComponent<AudioSpectrumComponent, AudioSpectrumComponentSettings>();
+            services.AddComponent<AudioWaveformComponent, AudioWaveformComponentSettings>();
             globalConfigFolder = PluginConfigFolder; 
             Settings = ConfigureFileHelper.LoadConfig<PluginSettings>(Path.Combine(PluginConfigFolder, "Settings.json"));
             Settings.Lyrics = LyricsSourceSettings.Normalize(Settings.Lyrics);
