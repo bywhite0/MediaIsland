@@ -43,20 +43,12 @@ public partial class AudioEnergyComponent : AudioVisualComponentBase<AudioEnergy
 
     protected override void OnSettingChanged(string? propertyName)
     {
-        switch (propertyName)
-        {
-            case nameof(AudioEnergyConfig.Style):
-                _onsets.Reset();
-                _rings.Clear();
-                _history.Clear();
-                _beatIndex = -1;
-                _beatGlow = 0;
-                break;
-            case nameof(AudioEnergyConfig.MinFrequencyHz) or nameof(AudioEnergyConfig.MaxFrequencyHz):
-                // 立即按新频段重算：基类只在快照 Revision 变化时刷新，无声时改设置会一直留着旧能量。
-                RefreshTargets(Visualization.Capture());
-                break;
-        }
+        if (propertyName != nameof(AudioEnergyConfig.Style)) return;
+        _onsets.Reset();
+        _rings.Clear();
+        _history.Clear();
+        _beatIndex = -1;
+        _beatGlow = 0;
     }
 
     protected override void RefreshTargets(AudioVisualizationSnapshot snapshot)
