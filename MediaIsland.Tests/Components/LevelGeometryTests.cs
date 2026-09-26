@@ -91,6 +91,16 @@ public class LevelGeometryTests
         Assert.Equal(new Rect(0, 0, Width, Height), track);
     }
 
+    [Fact]
+    public void Meter_AtZero_DrawsOnlyTheTrack()
+    {
+        // 静止形态只剩底轨：零峰值时的刻线会落在底轨左端圆角外，像一条游离的竖线。
+        var (_, fill, tick) = LevelGeometry.Meter(0, 0, Width, Height);
+
+        Assert.Equal(0, fill.Width);
+        Assert.Equal(0, tick.Width);
+    }
+
     // ---- Pan ----
 
     [Fact]
@@ -114,6 +124,15 @@ public class LevelGeometryTests
 
         Assert.Equal(Width / 2, pan.Dot.X, 6);
         Assert.False(double.IsNaN(pan.Radius));
+    }
+
+    [Fact]
+    public void Pan_NearSilenceBelowTheIdleThreshold_SitsAtTheCenter()
+    {
+        // 两声道都低于停表阈值（0.001）时组件会停表；光点若按底噪比例偏移，就会冻结在一侧。
+        var pan = LevelGeometry.Pan(0.0008, 0.0002, Width, Height);
+
+        Assert.Equal(Width / 2, pan.Dot.X, 1e-6);
     }
 
     [Fact]

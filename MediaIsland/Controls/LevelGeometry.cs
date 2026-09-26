@@ -10,8 +10,16 @@ public static class LevelGeometry
     private const double CenterTickHeight = 8;
 
     /// <summary>
+    /// 声像渐入的起点：两声道之和低于它时光点居中，到它的两倍时完全按声像偏移。
+    /// 取组件停表阈值（每声道 0.001）的两倍——停表时两声道都低于 0.001，和必低于此值，
+    /// 光点因此一定停在中间，而不是按底噪的比例冻结在一侧。
+    /// </summary>
+    private const double PanSilenceSum = 0.002;
+
+    /// <summary>
     /// 电平表：底轨（静止形态）+ RMS 填充 + 峰值刻线。刻线右缘对齐峰值位置再夹回控件内——
     /// 峰值为 1 时不越右边界，为 0 时不越左边界；控件宽度为 0 时上下界会颠倒，用 Math.Max 兜住。
+    /// 峰值为 0 时刻线零宽：静止形态只剩底轨，否则左端圆角外会游离出一条竖线。
     /// </summary>
     public static (Rect Track, Rect Fill, Rect PeakTick) Meter(double rms, double peak, double width, double height)
     {
@@ -22,7 +30,7 @@ public static class LevelGeometry
         var tickX = Math.Clamp(width * peakLevel - PeakTickWidth, 0, Math.Max(0, width - PeakTickWidth));
         return (new Rect(0, 0, width, height),
             new Rect(0, 0, width * level, height),
-            new Rect(tickX, 0, Math.Min(PeakTickWidth, width), height));
+            new Rect(tickX, 0, peakLevel > 0 ? Math.Min(PeakTickWidth, width) : 0, height));
     }
 
     /// <summary>
@@ -40,7 +48,9 @@ public static class LevelGeometry
         var cy = height / 2;
 
         var sum = l + r;
-        var balance = sum > 1e-6 ? (r - l) / sum : 0;
+        // 按能量渐入：近乎无声时比值只反映底噪，一侧的一点点噪声就能把光点推到边缘。
+        var fadeIn = Math.Clamp(sum / PanSilenceSum - 1, 0, 1);
+        var balance = fadeIn > 0 ? (r - l) / sum * fadeIn : 0;
         var maxRadius = Math.Max(SpectrumGeometry.MinDot, Math.Min(height / 2, width / 6));
         var radius = SpectrumGeometry.MinDot + (maxRadius - SpectrumGeometry.MinDot) * Math.Max(l, r);
         var reach = Math.Max(0, cx - Math.Max(PanPadding, radius));

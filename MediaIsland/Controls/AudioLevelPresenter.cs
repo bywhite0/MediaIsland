@@ -42,7 +42,7 @@ public sealed class AudioLevelPresenter : AudioVisualPresenterBase
             var (bg, fill, tick) = LevelGeometry.Meter(Rms, Peak, w, h);
             DrawCapsule(context, track, bg);
             if (fill.Width > 0) context.DrawRectangle(brush, null, fill, Math.Min(1, fill.Height / 2), Math.Min(1, fill.Height / 2));
-            context.FillRectangle(brush, tick);
+            if (tick.Width > 0) context.FillRectangle(brush, tick);
             return;
         }
 
