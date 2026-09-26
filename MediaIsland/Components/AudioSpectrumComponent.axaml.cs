@@ -6,7 +6,7 @@ namespace MediaIsland.Components;
 
 /// <summary>
 /// 音频频谱：多频段的六种画法。GUID 沿用旧「音频频谱」，开发机岛上已放的实例不丢。
-/// 峰值与声谱历史只在对应样式下推进，但切换样式时不清空——切回来能接着看。
+/// 声谱历史只在声谱带样式下推进，切换样式时不清空——切回来能接着看；峰值帽随包络一起清空。
 /// </summary>
 [ComponentInfo(
     "7C4E1A62-3D95-4F08-B1E7-9A2D6F83C540",
@@ -46,26 +46,22 @@ public partial class AudioSpectrumComponent : AudioVisualComponentBase<AudioSpec
 
     protected override void OnSettingChanged(string? propertyName)
     {
-        // 改样式或频段数时清空包络：数组长度与含义都变了，拉伸旧数组会把低频能量带到别处。
-        if (propertyName is nameof(AudioSpectrumConfig.Style) or nameof(AudioSpectrumConfig.BandCount))
+        if (propertyName is not (nameof(AudioSpectrumConfig.Style) or nameof(AudioSpectrumConfig.BandCount)
+            or nameof(AudioSpectrumConfig.MinFrequencyHz) or nameof(AudioSpectrumConfig.MaxFrequencyHz)))
         {
-            _smoothed = [];
-            _peaks = [];
+            return;
         }
+
+        // 清空包络：数组长度与含义都变了，拉伸旧数组会把低频能量带到别处。
+        _smoothed = [];
+        _peaks = [];
+
+        // 立即按新设置重算目标：基类只在快照 Revision 变化时刷新，无声时改设置会一直留着旧长度。
+        RefreshTargets(Visualization.Capture());
     }
 
-    protected override void RefreshTargets(AudioVisualizationSnapshot snapshot)
-    {
-        var (min, max) = Settings.NormalizedRange();
-        var rate = Visualization.Analyzer.SampleRate;
-        _rawBands = Settings.Style switch
-        {
-            SpectrumStyle.Spectrogram => SpectrumBandMapper.Map(snapshot.Spectrum, rate, SpectrumGeometry.SpectrogramRows, min, max),
-            SpectrumStyle.Tri => SpectrumBandMapper.Map(snapshot.Spectrum, rate, 3, min, max),
-            SpectrumStyle.Chroma => AudioFeatures.ChromaFold(snapshot.Spectrum, rate, min, max),
-            _ => SpectrumBandMapper.Map(snapshot.Spectrum, rate, Settings.BandCount, min, max)
-        };
-    }
+    protected override void RefreshTargets(AudioVisualizationSnapshot snapshot) =>
+        _rawBands = AudioSpectrumConfig.MapTargets(Settings, snapshot.Spectrum, Visualization.Analyzer.SampleRate);
 
     protected override void ClearTargets() => _rawBands = new float[_rawBands.Length];
 
@@ -85,7 +81,8 @@ public partial class AudioSpectrumComponent : AudioVisualComponentBase<AudioSpec
             _sinceLastColumn += deltaSeconds;
             if (_sinceLastColumn >= SpectrogramColumnSeconds)
             {
-                _sinceLastColumn = 0;
+                // 减去而非归零：归零会丢掉每次超出的零头，16ms 一帧时实际只有约 12.5 列/秒。
+                _sinceLastColumn -= SpectrogramColumnSeconds;
                 _history.Add(_smoothed.ToArray());
                 if (_history.Count > SpectrumGeometry.SpectrogramColumns) _history.RemoveAt(0);
             }

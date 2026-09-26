@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using MediaIsland.Controls;
 
 namespace MediaIsland.Components;
 
@@ -117,6 +118,23 @@ public class AudioSpectrumConfig() : AudioFrequencyConfigBase(defaultWidth: 96)
         if (style is SpectrumStyle.PeakCap or SpectrumStyle.Ridge)
             set.Add(AudioVisualSetting.Mirror);
         return set;
+    }
+
+    /// <summary>
+    /// 谱 → 当前样式的目标数组。长度只由配置决定（空谱时是同长的全零），不由谱决定——
+    /// 组件在没有新快照时改设置也要靠它立刻拿到新长度，否则岛上会留着上一种样式的点数。
+    /// </summary>
+    internal static float[] MapTargets(
+        AudioSpectrumConfig settings, IReadOnlyList<float> spectrum, int sampleRate)
+    {
+        var (min, max) = settings.NormalizedRange();
+        return settings.Style switch
+        {
+            SpectrumStyle.Spectrogram => SpectrumBandMapper.Map(spectrum, sampleRate, SpectrumGeometry.SpectrogramRows, min, max),
+            SpectrumStyle.Tri => SpectrumBandMapper.Map(spectrum, sampleRate, 3, min, max),
+            SpectrumStyle.Chroma => AudioFeatures.ChromaFold(spectrum, sampleRate, min, max),
+            _ => SpectrumBandMapper.Map(spectrum, sampleRate, settings.BandCount, min, max)
+        };
     }
 
     private void SetBandCount(ref int field, int value,

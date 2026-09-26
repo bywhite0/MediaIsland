@@ -1,3 +1,4 @@
+using System.Text.Json;
 using MediaIsland.Components;
 using Xunit;
 
@@ -96,5 +97,39 @@ public class AudioSpectrumConfigTests
         Assert.Equal((decimal)AudioSpectrumConfig.MaxBandCount, AudioSpectrumConfig.BandCountMaximum);
         Assert.Equal((decimal)AudioSpectrumConfig.MinBarGap, AudioSpectrumConfig.BarGapMinimum);
         Assert.Equal((decimal)AudioSpectrumConfig.MaxBarGap, AudioSpectrumConfig.BarGapMaximum);
+    }
+
+    [Fact]
+    public void LegacyJson_WithRemovedFields_LoadsAsCapsule()
+    {
+        const string legacy = """{"Mode":2,"BandCount":32,"BarCornerRadius":3,"Width":120,"IsMirrored":true}""";
+
+        var config = JsonSerializer.Deserialize<AudioSpectrumConfig>(legacy);
+
+        Assert.NotNull(config);
+        Assert.Equal(SpectrumStyle.Capsule, config.Style);
+        Assert.Equal(120, config.Width);
+    }
+
+    [Fact]
+    public void Serialization_OmitsBandCount_AndRoundTripsEachStylesCount()
+    {
+        var config = new AudioSpectrumConfig
+        {
+            Style = SpectrumStyle.Ridge,
+            CapsuleBandCount = 5,
+            PeakCapBandCount = 30,
+            RidgeBandCount = 20
+        };
+
+        var json = JsonSerializer.Serialize(config);
+        var restored = JsonSerializer.Deserialize<AudioSpectrumConfig>(json);
+
+        Assert.DoesNotContain("\"BandCount\"", json);
+        Assert.NotNull(restored);
+        Assert.Equal(SpectrumStyle.Ridge, restored.Style);
+        Assert.Equal(5, restored.CapsuleBandCount);
+        Assert.Equal(30, restored.PeakCapBandCount);
+        Assert.Equal(20, restored.RidgeBandCount);
     }
 }

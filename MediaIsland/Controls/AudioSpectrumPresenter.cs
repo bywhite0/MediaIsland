@@ -86,7 +86,10 @@ public sealed class AudioSpectrumPresenter : AudioVisualPresenterBase
         }
     }
 
-    /// <summary>柱体自下而上从实色渐隐到 35%；峰值帽用白色 90%，与柱体区分开。</summary>
+    /// <summary>
+    /// 柱体从基线向外由实色渐隐到 35%；峰值帽用白色 90%，与柱体区分开。
+    /// 镜像时基线是中线，渐变从中线起向上铺、以 Reflect 关于起点翻折到下半根——否则下半根会是实心的。
+    /// </summary>
     private void DrawPeakCap(DrawingContext context, IBrush brush, double w, double h)
     {
         var color = ColorOf(brush);
@@ -94,6 +97,7 @@ public sealed class AudioSpectrumPresenter : AudioVisualPresenterBase
         {
             StartPoint = new RelativePoint(0, Mirrored ? 0.5 : 1, RelativeUnit.Relative),
             EndPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+            SpreadMethod = Mirrored ? GradientSpreadMethod.Reflect : GradientSpreadMethod.Pad,
             GradientStops = { new GradientStop(color, 0), new GradientStop(Color.FromArgb((byte)(color.A * 0.35), color.R, color.G, color.B), 1) }
         };
         foreach (var bar in SpectrumGeometry.Bars(Bands, w, h, BarGap, Mirrored))
