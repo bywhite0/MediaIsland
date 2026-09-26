@@ -14,13 +14,14 @@ public static class TimbreColor
     public static Color Mix(Color baseColor, double centroid)
     {
         var c = double.IsNaN(centroid) ? 0.5 : Math.Clamp(centroid, 0, 1);
+        // 透明度恒取基色：两端色只管色相，不该让半透明基色在暗半段突然变成不透明。
         return c < 0.5
-            ? Lerp(Dark, baseColor, c * 2)
-            : Lerp(baseColor, Bright, (c - 0.5) * 2);
+            ? Lerp(baseColor.A, Dark, baseColor, c * 2)
+            : Lerp(baseColor.A, baseColor, Bright, (c - 0.5) * 2);
     }
 
-    private static Color Lerp(Color from, Color to, double t) => Color.FromArgb(
-        from.A,
+    private static Color Lerp(byte alpha, Color from, Color to, double t) => Color.FromArgb(
+        alpha,
         (byte)Math.Round(from.R + (to.R - from.R) * t),
         (byte)Math.Round(from.G + (to.G - from.G) * t),
         (byte)Math.Round(from.B + (to.B - from.B) * t));

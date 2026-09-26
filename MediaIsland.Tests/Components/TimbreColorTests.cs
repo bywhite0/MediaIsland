@@ -34,4 +34,15 @@ public class TimbreColorTests
 
         Assert.Equal(Accent.A, color.A);
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(0.49)]
+    [InlineData(1)]
+    public void TranslucentBase_KeepsItsAlphaAcrossTheWholeRange(double centroid)
+    {
+        var translucent = Color.FromArgb(128, 218, 100, 95);
+
+        Assert.Equal(128, TimbreColor.Mix(translucent, centroid).A);
+    }
 }

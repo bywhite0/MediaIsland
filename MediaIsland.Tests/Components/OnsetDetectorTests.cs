@@ -60,11 +60,25 @@ public class OnsetDetectorTests
     [Fact]
     public void Reset_ForgetsThePreviousSpectrum()
     {
+        // 不 Reset 时 0 → 0.8 的通量必然起拍；Reset 后这一帧没有「上一帧」，通量按 0 计。
         var detector = new OnsetDetector();
-        CountOnsets(detector, _ => Flat(0.8f), 60);
+        CountOnsets(detector, _ => Flat(0f), 60);
 
         detector.Reset();
 
-        Assert.Equal(0, CountOnsets(detector, _ => Flat(0f), 30));
+        Assert.False(detector.Update(Flat(0.8f), 0));
+    }
+
+    [Fact]
+    public void Reset_ForgetsTheLastOnsetTime()
+    {
+        // 第 60 帧（t = 1.0）起拍后 Reset，时间从 0 重新开始：不重置上次起拍时刻的话，
+        // 第 3 帧的阶跃会因「距上次起拍不足 120ms」被吞掉。
+        var detector = new OnsetDetector();
+        Assert.Equal(1, CountOnsets(detector, i => i < 60 ? Flat(0.05f) : Flat(0.8f), 61));
+
+        detector.Reset();
+
+        Assert.Equal(1, CountOnsets(detector, i => i < 3 ? Flat(0.05f) : Flat(0.8f), 4));
     }
 }
