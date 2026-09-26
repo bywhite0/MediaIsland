@@ -45,7 +45,7 @@ public static class LyricsTextCleaner
             excluded[i] = texts[i].Length > 0 && IsCreditLine(texts[i], options, timedOut);
         }
 
-        MarkTitleArtistLines(texts, excluded, options);
+        MarkTitleArtistLines(lines, texts, excluded, options);
         MarkOrphanBackgroundLines(lines, excluded);
 
         var first = -1;
@@ -403,7 +403,11 @@ public static class LyricsTextCleaner
         return processed;
     }
 
-    private static void MarkTitleArtistLines(string[] texts, bool[] excluded, LyricsCleanupOptions options)
+    private static void MarkTitleArtistLines(
+        IReadOnlyList<LyricsLine> lines,
+        string[] texts,
+        bool[] excluded,
+        LyricsCleanupOptions options)
     {
         var title = options.Title;
         if (string.IsNullOrWhiteSpace(title) || options.Artists.Count == 0)
@@ -411,16 +415,20 @@ public static class LyricsTextCleaner
             return;
         }
 
-        // 窗口只数会留下的正文行：本遍删掉的行若也计数，二次清理时窗口会右移、多删一行。
+        // 遮盖开启时，* 可能是上一遍清理遮出来的屏蔽词，算作文字；否则 * 只是装饰符号。
+        var starIsText = IsMaskActive(options);
+
+        // 窗口只数会留下的正文主行：本遍删掉的行（及随主行一起删掉的背景行）若也计数，
+        // 二次清理时窗口会右移、多删一行。
         var scanned = 0;
         for (var i = 0; i < texts.Length && scanned < TitleArtistScanLimit; i++)
         {
-            if (excluded[i] || texts[i].Length == 0)
+            if (excluded[i] || texts[i].Length == 0 || lines[i].IsBackground)
             {
                 continue;
             }
 
-            excluded[i] = IsTitleArtistLine(texts[i], title, options.Artists);
+            excluded[i] = IsTitleArtistLine(texts[i], title, options.Artists, starIsText);
             if (!excluded[i])
             {
                 scanned++;
@@ -429,7 +437,7 @@ public static class LyricsTextCleaner
     }
 
     /// <summary>同时含歌名与某位歌手，且去掉二者后只剩标点或空白——短歌名（如「爱」）不会误伤正文。</summary>
-    private static bool IsTitleArtistLine(string text, string title, IReadOnlyList<string> artists)
+    private static bool IsTitleArtistLine(string text, string title, IReadOnlyList<string> artists, bool starIsText)
     {
         if (!text.Contains(title, StringComparison.OrdinalIgnoreCase))
         {
@@ -450,27 +458,60 @@ public static class LyricsTextCleaner
             remainder = remainder.Replace(artist, string.Empty, StringComparison.OrdinalIgnoreCase);
         }
 
-        // * 按字母算：遮盖后的文本在二次清理时不能被当成「只剩标点」。
-        return !remainder.Any(c => c == '*' || char.IsLetterOrDigit(c));
+        return !remainder.Any(c => (starIsText && c == '*') || char.IsLetterOrDigit(c));
     }
 
-    /// <summary>主行被排除、或前面没有主行的背景行一并排除。</summary>
+    private static bool IsMaskActive(LyricsCleanupOptions options) =>
+        options.MaskEnabled && (options.MaskWords.Count > 0 || options.MaskRegexes.Count > 0);
+
+    /// <summary>所属主行被排除、或找不到所属主行的背景行一并排除。</summary>
     private static void MarkOrphanBackgroundLines(IReadOnlyList<LyricsLine> lines, bool[] excluded)
     {
-        var mainIndex = -1;
         for (var i = 0; i < lines.Count; i++)
         {
             if (!lines[i].IsBackground)
             {
-                mainIndex = i;
                 continue;
             }
 
-            if (mainIndex < 0 || excluded[mainIndex])
+            var owner = FindOwnerMainLine(lines, i);
+            if (owner < 0 || excluded[owner])
             {
                 excluded[i] = true;
             }
         }
+    }
+
+    /// <summary>
+    /// 背景行的所属主行：默认是前一句主行；与后一句主行时间重叠更多时改挂后一句。
+    /// 行按起点排序，起点早于主行的背景行会排到主行之前，只看前一句会把它错挂到上一句名下。
+    /// 返回 -1 表示没有所属主行。
+    /// </summary>
+    private static int FindOwnerMainLine(IReadOnlyList<LyricsLine> lines, int backgroundIndex)
+    {
+        var previous = backgroundIndex - 1;
+        while (previous >= 0 && lines[previous].IsBackground)
+        {
+            previous--;
+        }
+
+        var next = backgroundIndex + 1;
+        while (next < lines.Count && lines[next].IsBackground)
+        {
+            next++;
+        }
+
+        var background = lines[backgroundIndex];
+        var previousOverlap = previous >= 0 ? Overlap(background, lines[previous]) : TimeSpan.Zero;
+        var nextOverlap = next < lines.Count ? Overlap(background, lines[next]) : TimeSpan.Zero;
+        return nextOverlap > previousOverlap ? next : previous;
+    }
+
+    private static TimeSpan Overlap(LyricsLine first, LyricsLine second)
+    {
+        var start = first.StartTime > second.StartTime ? first.StartTime : second.StartTime;
+        var end = first.EndTime < second.EndTime ? first.EndTime : second.EndTime;
+        return end > start ? end - start : TimeSpan.Zero;
     }
 
     /// <summary>一次调用内首次超时的正则记入此集合，余下的行直接跳过它，免得每行都等满超时。</summary>

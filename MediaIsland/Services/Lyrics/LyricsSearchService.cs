@@ -231,7 +231,7 @@ public sealed class LyricsSearchService
             var pinned = await TryLoadStoredAsync(trackKey, isPin: true, cancellationToken).ConfigureAwait(false);
             if (pinned != null)
             {
-                var pinnedResult = await MaterializeAsync(pinned, info, cancellationToken).ConfigureAwait(false);
+                var pinnedResult = await MaterializeAsync(pinned, info, applyCleanup: true, cancellationToken).ConfigureAwait(false);
                 if (pinnedResult != null)
                 {
                     _logger?.LogInformation("[歌词] 使用已固定的歌词：{Title} - {Artist}", info.Title, info.Artist);
@@ -245,7 +245,7 @@ public sealed class LyricsSearchService
             LyricsSearchResult? staleFallback = null;
             if (cached != null)
             {
-                var cachedResult = await MaterializeAsync(cached, info, cancellationToken).ConfigureAwait(false);
+                var cachedResult = await MaterializeAsync(cached, info, applyCleanup: true, cancellationToken).ConfigureAwait(false);
                 if (cachedResult != null)
                 {
                     if (string.Equals(cached.SettingsFingerprint, fingerprint, StringComparison.Ordinal))
@@ -349,8 +349,8 @@ public sealed class LyricsSearchService
     private async Task<LyricsSearchResult?> MaterializeAsync(
         StoredLyrics stored,
         MediaInfo info,
-        CancellationToken cancellationToken,
-        bool applyCleanup = true)
+        bool applyCleanup,
+        CancellationToken cancellationToken)
     {
         var payload = stored.ToPayload();
         var parser = _parsers.FirstOrDefault(item => item.CanParse(payload.Format));
@@ -658,11 +658,13 @@ public sealed class LyricsSearchService
         // 解析出 0 行就拒绝写入：静默接受空歌词会让用户以为导入成功了。
         // 校验放在这里而非 LocalLyricsFileReader，是因为只有这一层能拿到
         // 依赖注入的完整解析器链（含静态代码调用不到的 TTML 解析器）。
-        var materialized = await MaterializeAsync(entry, info, cancellationToken).ConfigureAwait(false);
+        var materialized = await MaterializeAsync(entry, info, applyCleanup: true, cancellationToken).ConfigureAwait(false);
         if (materialized == null)
         {
-            var clearedByCleanup = await MaterializeAsync(entry, info, cancellationToken, applyCleanup: false)
-                .ConfigureAwait(false) != null;
+            // 只有时间戳、没有文字的文件不清理也是空的，不能归咎于清理规则。
+            var uncleaned = await MaterializeAsync(entry, info, applyCleanup: false, cancellationToken)
+                .ConfigureAwait(false);
+            var clearedByCleanup = uncleaned?.Document.Lines.Any(line => !string.IsNullOrWhiteSpace(line.Text)) == true;
             Volatile.Write(
                 ref _lastPinError,
                 clearedByCleanup

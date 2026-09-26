@@ -114,6 +114,22 @@ public class LyricsPinApiTests : IDisposable
         Assert.Contains("清理规则", service.LastPinError);
     }
 
+    /// <summary>只有时间戳、没有文字的文件不清理也是空的，不能提示成「被清理规则排除」。</summary>
+    [Fact]
+    public async Task PinFromFileAsync_TimestampOnlyFile_DoesNotBlameCleanupRules()
+    {
+        var store = new RecordingStore();
+        var service = CreateService(store);
+        var path = Path.Combine(_folder, "timestamps.lrc");
+        await File.WriteAllTextAsync(path, "[00:00.00]\n[00:05.00]");
+
+        var pinned = await service.PinFromFileAsync(CreateMedia(), path);
+
+        Assert.Null(pinned);
+        Assert.Equal("该歌词文件没有解析出任何歌词行，未导入。", service.LastPinError);
+        Assert.Empty(store.Pins);
+    }
+
     [Fact]
     public async Task PinFromFileAsync_MetadataOnlyFile_ReportsErrorAndWritesNothing()
     {

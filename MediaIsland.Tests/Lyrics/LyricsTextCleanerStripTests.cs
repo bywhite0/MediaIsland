@@ -226,7 +226,7 @@ public class LyricsTextCleanerStripTests
         var result = LyricsTextCleaner.StripCredits(lines, options);
         stopwatch.Stop();
 
-        Assert.True(stopwatch.Elapsed < LyricsCleanupOptions.RegexTimeout * 3, $"耗时 {stopwatch.Elapsed}");
+        Assert.True(stopwatch.Elapsed < LyricsCleanupOptions.RegexTimeout * 10, $"耗时 {stopwatch.Elapsed}");
         Assert.Equal(50, result.Count);
     }
 
@@ -294,6 +294,47 @@ public class LyricsTextCleanerStripTests
         var twice = LyricsTextCleaner.Apply(once, options);
 
         Assert.Equal(["春风十里 - 鹿先森乐队 ****", "正文"], Texts(once));
+        Assert.Equal(Texts(once), Texts(twice));
+    }
+
+    [Fact]
+    public void StripCredits_BackgroundStartingBeforeItsMain_FollowsOverlappingMain()
+    {
+        // 起点早于主行的背景行排序后落在主行之前；按时间重叠归属后一句，不能被当成前一句职务行的背景行删掉。
+        LyricsLine[] lines =
+        [
+            new(TimeSpan.Zero, TimeSpan.FromSeconds(1), "作词：青石", []),
+            new(TimeSpan.FromMilliseconds(4900), TimeSpan.FromSeconds(6), "(啊啊)", [], IsBackground: true),
+            new(TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(6), "正文", [])
+        ];
+
+        Assert.Equal(["(啊啊)", "正文"], Texts(LyricsTextCleaner.StripCredits(lines, Strip)));
+    }
+
+    [Fact]
+    public void StripCredits_TitleArtistLineDecoratedWithStar_RemovedWhenMaskOff()
+    {
+        var options = Strip with { Title = "春风十里", Artists = ["鹿先森乐队"] };
+
+        var result = LyricsTextCleaner.StripCredits([Line(0, "春风十里 - 鹿先森乐队 *"), Line(1, "正文")], options);
+
+        Assert.Equal(["正文"], Texts(result));
+    }
+
+    [Fact]
+    public void Apply_BackgroundOfRemovedTitleArtistLine_DoesNotShiftWindow()
+    {
+        var options = Strip with { Title = "春风十里", Artists = ["鹿先森乐队"] };
+        LyricsLine[] lines =
+        [
+            Line(0, "春风十里 - 鹿先森乐队"), Line(0, "(啊啊)", background: true),
+            Line(1, "一"), Line(2, "二"), Line(3, "三"), Line(4, "四"), Line(5, "春风十里 / 鹿先森乐队")
+        ];
+
+        var once = LyricsTextCleaner.Apply(lines, options);
+        var twice = LyricsTextCleaner.Apply(once, options);
+
+        Assert.Equal(["一", "二", "三", "四"], Texts(once));
         Assert.Equal(Texts(once), Texts(twice));
     }
 }

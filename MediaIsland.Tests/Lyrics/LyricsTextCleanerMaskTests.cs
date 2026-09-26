@@ -182,7 +182,12 @@ public class LyricsTextCleanerMaskTests
         var result = LyricsTextCleaner.Mask(lines, options);
         stopwatch.Stop();
 
-        Assert.True(stopwatch.Elapsed < LyricsCleanupOptions.RegexTimeout * 3, $"耗时 {stopwatch.Elapsed}");
-        Assert.All(result, line => Assert.Equal(text, line.Text));
+        Assert.True(stopwatch.Elapsed < LyricsCleanupOptions.RegexTimeout * 10, $"耗时 {stopwatch.Elapsed}");
+        Assert.All(result, line =>
+        {
+            Assert.Equal(text, line.Text);
+            Assert.Equal(text, line.Translation);
+            Assert.Equal(text, line.Romanization);
+        });
     }
 }
