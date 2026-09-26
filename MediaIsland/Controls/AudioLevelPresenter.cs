@@ -39,11 +39,9 @@ public sealed class AudioLevelPresenter : AudioVisualPresenterBase
 
         if (Style == LevelStyle.Meter)
         {
-            var (bg, fill, tick) = LevelGeometry.Meter(Rms, Peak, w, h);
-            DrawCapsule(context, track, bg);
-            // 底轨是满高胶囊（圆角取短边一半），填充与刻线按底轨轮廓裁：否则方角填充和贴右端的刻线
-            // 任何电平下都伸出圆端。
-            using (context.PushClip(new RoundedRect(bg, Math.Min(bg.Width, bg.Height) / 2)))
+            var (bar, fill, tick) = LevelGeometry.Meter(Rms, Peak, w, h);
+            // 不画底轨；填充与刻线按小圆角外框裁剪，两端只有轻微圆角。
+            using (context.PushClip(new RoundedRect(bar, LevelGeometry.MeterRadius(h))))
             {
                 if (fill.Width > 0) context.FillRectangle(brush, fill);
                 if (tick.Width > 0) context.FillRectangle(brush, tick);

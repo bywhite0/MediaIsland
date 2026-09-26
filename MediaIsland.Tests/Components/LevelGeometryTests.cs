@@ -84,21 +84,31 @@ public class LevelGeometryTests
     }
 
     [Fact]
-    public void Meter_TrackSpansTheWholeControl()
+    public void Meter_BarSpansTheWholeControl()
     {
-        var (track, _, _) = LevelGeometry.Meter(0.3, 0.5, Width, Height);
+        var (bar, _, _) = LevelGeometry.Meter(0.3, 0.5, Width, Height);
 
-        Assert.Equal(new Rect(0, 0, Width, Height), track);
+        Assert.Equal(new Rect(0, 0, Width, Height), bar);
     }
 
     [Fact]
-    public void Meter_AtZero_DrawsOnlyTheTrack()
+    public void Meter_AtZero_DrawsNothing()
     {
-        // 静止形态只剩底轨：零峰值时的刻线会落在底轨左端圆角外，像一条游离的竖线。
+        // 电平表不画底轨，静止时填充与刻线都为零宽——零峰值时的刻线否则会在左端游离成一条竖线。
         var (_, fill, tick) = LevelGeometry.Meter(0, 0, Width, Height);
 
         Assert.Equal(0, fill.Width);
         Assert.Equal(0, tick.Width);
+    }
+
+    [Theory]
+    [InlineData(40, 3)]
+    [InlineData(30, 3)]
+    [InlineData(4, 2)]
+    [InlineData(0, 0)]
+    public void Meter_CornerRadius_IsSmall_AndNeverExceedsHalfTheHeight(double height, double expected)
+    {
+        Assert.Equal(expected, LevelGeometry.MeterRadius(height));
     }
 
     // ---- Pan ----
@@ -154,17 +164,25 @@ public class LevelGeometryTests
         return data;
     }
 
+    /// <summary>
+    /// 电平表是「静止时也有可见图元」的唯一例外：用户认为满高底轨多余，故它静止时不画任何东西。
+    /// 例外写在这里而不是从数据里悄悄剔除——新增样式仍会被遍历到。
+    /// </summary>
     [Theory]
     [MemberData(nameof(AllStyles))]
-    public void EveryStyle_AtZero_StillDrawsSomething(LevelStyle style)
+    public void EveryStyle_AtZero_HasItsDocumentedRestShape(LevelStyle style)
     {
-        var drawn = style switch
+        switch (style)
         {
-            LevelStyle.Meter => LevelGeometry.Meter(0, 0, Width, Height).Track is var t && t.Width > 0 && t.Height > 0,
-            LevelStyle.Pan => LevelGeometry.Pan(0, 0, Width, Height).Radius > 0,
-            _ => throw new ArgumentOutOfRangeException(nameof(style))
-        };
-
-        Assert.True(drawn, $"{style} 在零电平时什么都没画");
+            case LevelStyle.Meter:
+                var (_, fill, tick) = LevelGeometry.Meter(0, 0, Width, Height);
+                Assert.True(fill.Width == 0 && tick.Width == 0, "电平表静止时不应画任何东西");
+                break;
+            case LevelStyle.Pan:
+                Assert.True(LevelGeometry.Pan(0, 0, Width, Height).Radius > 0, "声像光点静止时应留一个最小光点");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(style), style, "新样式需在此声明它的静止形态");
+        }
     }
 }

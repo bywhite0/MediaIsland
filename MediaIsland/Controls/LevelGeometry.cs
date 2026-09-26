@@ -2,10 +2,16 @@ using Avalonia;
 
 namespace MediaIsland.Controls;
 
-/// <summary>音频电平两种样式的几何。从原 SpectrumGeometry 迁出并补底轨。</summary>
+/// <summary>音频电平两种样式的几何。从原 SpectrumGeometry 迁出。</summary>
 public static class LevelGeometry
 {
     private const double PeakTickWidth = 2;
+
+    /// <summary>电平表的圆角。取小值：按半高取圆角时整条变成胶囊，两端过圆。</summary>
+    private const double MeterCornerRadius = 3;
+
+    /// <summary>圆角不超过半高：极矮时退化为胶囊而不是画出越界的圆弧。</summary>
+    public static double MeterRadius(double height) => Math.Min(MeterCornerRadius, Math.Max(0, height) / 2);
     private const double PanPadding = 10;
     private const double CenterTickHeight = 8;
 
@@ -17,11 +23,13 @@ public static class LevelGeometry
     private const double PanSilenceSum = 0.002;
 
     /// <summary>
-    /// 电平表：底轨（静止形态）+ RMS 填充 + 峰值刻线。刻线右缘对齐峰值位置再夹回控件内——
+    /// 电平表：RMS 填充 + 峰值刻线，<c>Bar</c> 是整条的外框，只用作裁剪区域，不画出来——
+    /// 满高的底轨在岛上显得多余（用户 2026-09-26 的取舍），故电平表静止时什么都不画，
+    /// 是「每种样式都有静止形态」的唯一例外。刻线右缘对齐峰值位置再夹回控件内——
     /// 峰值为 1 时不越右边界，为 0 时不越左边界；控件宽度为 0 时上下界会颠倒，用 Math.Max 兜住。
-    /// 峰值为 0 时刻线零宽：静止形态只剩底轨，否则左端圆角外会游离出一条竖线。
+    /// 峰值为 0 时刻线零宽，否则静止时左端会游离出一条竖线。
     /// </summary>
-    public static (Rect Track, Rect Fill, Rect PeakTick) Meter(double rms, double peak, double width, double height)
+    public static (Rect Bar, Rect Fill, Rect PeakTick) Meter(double rms, double peak, double width, double height)
     {
         width = Math.Max(0, width);
         height = Math.Max(0, height);
