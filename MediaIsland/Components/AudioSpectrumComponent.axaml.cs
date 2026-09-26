@@ -12,7 +12,7 @@ namespace MediaIsland.Components;
 [ComponentInfo(
     "7C4E1A62-3D95-4F08-B1E7-9A2D6F83C540",
     "音频频谱",
-    "",
+    "\uE5D1",
     "以多种样式显示正在播放的声音在各频段的强弱。"
 )]
 // ReSharper disable once ClassNeverInstantiated.Global

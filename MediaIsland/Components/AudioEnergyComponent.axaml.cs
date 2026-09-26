@@ -12,7 +12,7 @@ namespace MediaIsland.Components;
 [ComponentInfo(
     "3B8F5D21-6A4C-4E9B-8D17-C2E5A9F04B63",
     "音频能量",
-    "",
+    "\uEE21",
     "以一个随声音强弱变化的图形，显示正在播放的声音。"
 )]
 // ReSharper disable once ClassNeverInstantiated.Global

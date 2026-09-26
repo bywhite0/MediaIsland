@@ -12,7 +12,7 @@ namespace MediaIsland.Components;
 [ComponentInfo(
     "9E2C7A48-1F5D-4B36-A0E8-5D4B1C9F7E02",
     "音频波形",
-    "",
+    "\uEFF7",
     "以示波器显示正在播放的声音波形。"
 )]
 // ReSharper disable once ClassNeverInstantiated.Global

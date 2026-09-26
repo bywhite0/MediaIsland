@@ -9,7 +9,7 @@ namespace MediaIsland.Components;
 [ComponentInfo(
     "D41A6E93-8C2B-4F75-9B0E-7A3F5E1C2D84",
     "音频电平",
-    "",
+    "\uE8E1",
     "显示正在播放的声音的音量与左右声像。"
 )]
 // ReSharper disable once ClassNeverInstantiated.Global
