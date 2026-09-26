@@ -50,6 +50,8 @@ public class MediaLinkCaptureDecouplingTests
         using (var cts = new CancellationTokenSource(10_000)) await host.StartAsync(cts.Token);
         using var registration = demand.Register();
         await WaitUntilAsync(() => source.StartCount == 1);
+        // 构造时没挂可视化 sink，此刻 hub 上唯一的 sink 就是服务端挂的广播器。
+        Assert.Equal(1, capture.SinkCount);
 
         settings.MediaLinkIsEnabled = false;
         // 防抖 500ms + 停服；等足以确认「重建已经发生过」。
@@ -57,6 +59,30 @@ public class MediaLinkCaptureDecouplingTests
 
         Assert.Equal(0, source.StopCount);
         Assert.True(capture.IsCapturing);
+        // 采集照旧，但本机帧不再流向广播器。
+        Assert.Equal(0, capture.SinkCount);
+    }
+
+    /// <summary>
+    /// 宿主退出时 ClassIsland 不 Dispose Host，只调 StopAsync；采集若只在容器释放时才停，
+    /// native 采集线程会一直跑到进程被终止。
+    /// </summary>
+    [Fact]
+    public async Task StopAsync_WhileVisualizing_StopsLocalCapture()
+    {
+        var settings = new PluginSettings { MediaLinkIsEnabled = false };
+        var source = new FakeAudioFrameSource();
+        var demand = new AudioVisualizationDemand();
+        using var capture = new LocalAudioCapture(source);
+        using var host = NewHost(settings, demand, capture);
+        using (var cts = new CancellationTokenSource(10_000)) await host.StartAsync(cts.Token);
+        using var registration = demand.Register();
+        await WaitUntilAsync(() => source.StartCount == 1);
+
+        using (var cts = new CancellationTokenSource(10_000)) await host.StopAsync(cts.Token);
+
+        Assert.Equal(1, source.StopCount);
+        Assert.False(capture.IsCapturing);
     }
 
     private static MediaLinkHostedService NewHost(

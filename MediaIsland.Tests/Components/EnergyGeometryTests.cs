@@ -89,6 +89,16 @@ public class EnergyGeometryTests
         Assert.Equal(H / 2, loud.Line.Center.Y, 6);
     }
 
+    /// <summary>
+    /// 零能量的光带是静止形态本身。不可用态再整体乘 0.35，起点低于 0.3 就在深色岛上看不见了
+    /// ——0.3 是 presenter 基类里静止元素共用的下限。
+    /// </summary>
+    [Fact]
+    public void GlowLine_AtZero_IsNoDimmerThanTheRestFloor()
+    {
+        Assert.True(EnergyGeometry.GlowLine(0, W, H).Opacity >= 0.3);
+    }
+
     [Fact]
     public void Dots_AtZero_LieOnTheCenterLine()
     {

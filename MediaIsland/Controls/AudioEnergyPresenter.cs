@@ -122,7 +122,7 @@ public sealed class AudioEnergyPresenter : AudioVisualPresenterBase
                 {
                     var on = k == BeatIndex;
                     if (on) DrawGlow(context, color, centers[k], r * 0.4, r * 1.8 * 2, 0.6 * BeatGlow);
-                    DrawCircle(context, on ? WithOpacity(brush, 0.45 + 0.55 * BeatGlow) : WithOpacity(brush, TrackOpacity),
+                    DrawCircle(context, on ? WithOpacity(brush, 0.45 + 0.55 * BeatGlow) : WithOpacity(brush, RestOpacity),
                         centers[k], r + (on ? BeatGlow * 1.5 : 0));
                 }
 

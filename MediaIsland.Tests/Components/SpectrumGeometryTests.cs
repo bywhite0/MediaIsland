@@ -107,6 +107,25 @@ public class SpectrumGeometryTests
         Assert.All(bars, bar => Assert.True(bar.Width >= 0, $"负宽度：{bar.Width}"));
     }
 
+    /// <summary>
+    /// 「段数 × 间距 ≥ 宽度」时，间距若照原值扣，每根都夹到 0 宽，有声无声都一片空白。
+    /// 间距最多吃掉半个槽，图元始终有宽度。两组取值是细柱默认 16 段拖窄、和 64 段的实际配置。
+    /// </summary>
+    [Theory]
+    [InlineData(16, 32)]
+    [InlineData(64, 96)]
+    public void NarrowWidthOrManyBands_EveryShapeKeepsAPositiveWidth(int count, double width)
+    {
+        var values = Enumerable.Repeat(0.5f, count).ToArray();
+
+        Assert.All(SpectrumGeometry.Bars(values, width, Height, gap: 2, mirrored: false),
+            r => Assert.True(r.Width > 0, $"Bars 宽度为 {r.Width}"));
+        Assert.All(SpectrumGeometry.Capsules(values, width, Height, 2),
+            r => Assert.True(r.Width > 0, $"Capsules 宽度为 {r.Width}"));
+        Assert.All(SpectrumGeometry.PeakCaps(values, width, Height, 2, mirrored: false),
+            r => Assert.True(r.Width > 0, $"PeakCaps 宽度为 {r.Width}"));
+    }
+
     [Theory]
     [InlineData(1.5f)]
     [InlineData(-0.3f)]

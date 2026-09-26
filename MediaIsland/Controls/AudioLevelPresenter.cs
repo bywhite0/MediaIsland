@@ -35,14 +35,20 @@ public sealed class AudioLevelPresenter : AudioVisualPresenterBase
         var (w, h) = (Bounds.Width, Bounds.Height);
         if (w <= 0 || h <= 0) return;
         var brush = Brush;
-        var track = WithOpacity(brush, TrackOpacity);
+        var track = WithOpacity(brush, RestOpacity);
 
         if (Style == LevelStyle.Meter)
         {
             var (bg, fill, tick) = LevelGeometry.Meter(Rms, Peak, w, h);
             DrawCapsule(context, track, bg);
-            if (fill.Width > 0) context.DrawRectangle(brush, null, fill, Math.Min(1, fill.Height / 2), Math.Min(1, fill.Height / 2));
-            if (tick.Width > 0) context.FillRectangle(brush, tick);
+            // 底轨是满高胶囊（圆角取短边一半），填充与刻线按底轨轮廓裁：否则方角填充和贴右端的刻线
+            // 任何电平下都伸出圆端。
+            using (context.PushClip(new RoundedRect(bg, Math.Min(bg.Width, bg.Height) / 2)))
+            {
+                if (fill.Width > 0) context.FillRectangle(brush, fill);
+                if (tick.Width > 0) context.FillRectangle(brush, tick);
+            }
+
             return;
         }
 

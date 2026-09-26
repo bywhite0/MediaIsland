@@ -65,7 +65,7 @@ public sealed class AudioSpectrumPresenter : AudioVisualPresenterBase
                 var color = ColorOf(brush);
                 foreach (var (cell, value) in SpectrumGeometry.SpectrogramCells(History, SpectrumGeometry.SpectrogramColumns, w, h))
                 {
-                    context.FillRectangle(new SolidColorBrush(color, 0.06 + 0.94 * value), cell);
+                    context.FillRectangle(new SolidColorBrush(color, RestOpacity + (1 - RestOpacity) * value), cell);
                 }
 
                 break;
@@ -171,7 +171,7 @@ public sealed class AudioSpectrumPresenter : AudioVisualPresenterBase
                 sink.EndFigure(false);
             }
 
-            var pen = new Pen(WithOpacity(brush, 0.12 + 0.88 * value), thickness, lineCap: PenLineCap.Round);
+            var pen = new Pen(WithOpacity(brush, RestOpacity + (1 - RestOpacity) * value), thickness, lineCap: PenLineCap.Round);
             context.DrawGeometry(null, pen, geometry);
         }
     }

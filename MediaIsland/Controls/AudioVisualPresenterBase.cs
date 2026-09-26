@@ -11,7 +11,7 @@ namespace MediaIsland.Controls;
 public abstract class AudioVisualPresenterBase : Control
 {
     /// <summary>
-    /// 继承属性：组件要主题色时 ClearValue 让继承链送下来，要固定色或音色色时显式赋值。
+    /// 继承属性：组件绑定强调色资源或显式赋值；继承只是兜底。
     /// </summary>
     public static readonly StyledProperty<IBrush?> ForegroundProperty =
         AvaloniaProperty.Register<AudioVisualPresenterBase, IBrush?>(nameof(Foreground), inherits: true);
@@ -49,6 +49,9 @@ public abstract class AudioVisualPresenterBase : Control
     protected static Color ColorOf(IBrush brush) =>
         brush is ISolidColorBrush solid ? solid.Color : Colors.White;
 
-    /// <summary>底轨/暗格的统一不透明度。</summary>
-    protected const double TrackOpacity = 0.18;
+    /// <summary>
+    /// 静止元素（底轨、暗格、暗弧、暗点）的不透明度下限。不可用态再整体乘 0.35，
+    /// 乘完约 0.1，在深色岛上仍可辨——「组件坏了」也得看得出组件在，而不是一片空白。
+    /// </summary>
+    protected const double RestOpacity = 0.3;
 }

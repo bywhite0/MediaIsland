@@ -192,6 +192,13 @@ public sealed class MediaLinkHostedService : IHostedService, IMediaLinkGateway, 
         try
         {
             await StopCoreAsync(cancellationToken);
+            // 退出时 ClassIsland 不 Dispose Host，LocalAudioCapture 等不到容器释放；
+            // 不在这里把需求归零，native 采集线程会一直跑到进程被终止。
+            // StopCoreAsync 不做这一步：改设置重建 listener 也走它，那时采集要照旧。
+            if (_localCapture is not null)
+            {
+                await _localCapture.SetDemandAsync(false, false, false);
+            }
         }
         finally
         {

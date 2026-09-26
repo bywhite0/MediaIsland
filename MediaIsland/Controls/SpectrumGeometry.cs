@@ -20,9 +20,7 @@ public static class SpectrumGeometry
         }
 
         var slot = width / bands.Count;
-        // 槽位比间隙还窄时夹到 0：岛上的槽位可以被拖得很窄，而段数是用户配的，
-        // 两者没有约束关系。
-        var barWidth = Math.Max(0, slot - gap);
+        var barWidth = Math.Max(0, slot - EffectiveGap(gap, slot));
         var result = new Rect[bands.Count];
 
         for (var i = 0; i < bands.Count; i++)
@@ -36,6 +34,12 @@ public static class SpectrumGeometry
 
         return result;
     }
+
+    /// <summary>
+    /// 间距最多吃掉半个槽。岛上的槽位可以被拖得很窄，而段数是用户配的，两者没有约束关系；
+    /// 间距照原值扣时「段数 × 间距 ≥ 宽度」就把每根都夹到 0 宽，有声无声都一片空白。
+    /// </summary>
+    private static double EffectiveGap(double gap, double slot) => Math.Min(gap, slot / 2);
 
     /// <summary>以垂直中线上下对称：满值时充满，零值时退化为中线上的零高矩形。</summary>
     private static Rect MirroredBar(double x, double barWidth, double value, double height)
@@ -58,7 +62,7 @@ public static class SpectrumGeometry
         if (bands.Count == 0 || width <= 0 || height <= 0) return [];
 
         var slot = width / bands.Count;
-        var capsuleWidth = Math.Max(0, Math.Min(slot - gap, slot / 2));
+        var capsuleWidth = Math.Max(0, Math.Min(slot - EffectiveGap(gap, slot), slot / 2));
         var result = new Rect[bands.Count];
         for (var i = 0; i < bands.Count; i++)
         {
@@ -79,7 +83,7 @@ public static class SpectrumGeometry
         if (peaks.Count == 0 || width <= 0 || height <= 0) return [];
 
         var slot = width / peaks.Count;
-        var capWidth = Math.Max(0, slot - gap);
+        var capWidth = Math.Max(0, slot - EffectiveGap(gap, slot));
         var thickness = Math.Min(PeakCapThickness, height / (mirrored ? 2 : 1));
         var result = new List<Rect>(peaks.Count * (mirrored ? 2 : 1));
         for (var i = 0; i < peaks.Count; i++)

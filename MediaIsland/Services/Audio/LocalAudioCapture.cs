@@ -47,6 +47,9 @@ public sealed class LocalAudioCapture : IDisposable
     /// <summary>挂一个额外的帧汇（MediaLink 广播器）。释放返回值即摘除。</summary>
     public IDisposable AttachSink(IAudioFrameSink sink) => _hub.AddSink(sink);
 
+    /// <summary>当前挂着的帧汇数。只供测试观察广播器是否随共享开关挂上/摘下。</summary>
+    internal int SinkCount => _hub.SinkCount;
+
     /// <summary>重算并应用采集需求。幂等：重复传相同结果不触碰源。</summary>
     public Task SetDemandAsync(bool protocolDemand, bool visualizationDemand, bool externalMediaEffective) =>
         _hub.SetCaptureDemandAsync(
