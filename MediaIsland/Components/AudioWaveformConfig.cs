@@ -5,7 +5,7 @@ public class AudioWaveformConfig() : AudioVisualConfigBase(defaultWidth: 96)
 {
     private static readonly IReadOnlySet<AudioVisualSetting> Settings = new HashSet<AudioVisualSetting>
     {
-        AudioVisualSetting.Width, AudioVisualSetting.AccentColor, AudioVisualSetting.TimbreColor
+        AudioVisualSetting.Width, AudioVisualSetting.ColorSource, AudioVisualSetting.TimbreColor
     };
 
     public static IReadOnlySet<AudioVisualSetting> ApplicableSettings() => Settings;

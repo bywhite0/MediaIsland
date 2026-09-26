@@ -91,6 +91,11 @@ public static class MediaLinkServiceCollectionExtensions
         services.AddSingleton<IEffectiveMediaSource>(provider =>
             provider.GetRequiredService<MediaSourceCoordinator>());
 
+        // 音频组件的「封面主题色」：按生效媒体取色，本机与上游曲目都覆盖；无组件需要时不做事。
+        services.AddSingleton<CoverColorService>(provider => new CoverColorService(
+            provider.GetRequiredService<IEffectiveMediaSource>(),
+            provider.GetService<ILoggerFactory>()?.CreateLogger<CoverColorService>()));
+
         services.AddSingleton<MediaLinkHostedService>(provider => new MediaLinkHostedService(
             provider.GetRequiredService<IMediaService>(),
             provider.GetRequiredService<LyricsSearchService>(),

@@ -33,7 +33,7 @@ public class AudioSpectrumConfig() : AudioFrequencyConfigBase(defaultWidth: 96)
     private static readonly AudioVisualSetting[] Common =
     [
         AudioVisualSetting.Style, AudioVisualSetting.Width, AudioVisualSetting.FrequencyRange,
-        AudioVisualSetting.Decay, AudioVisualSetting.AccentColor, AudioVisualSetting.TimbreColor
+        AudioVisualSetting.Decay, AudioVisualSetting.ColorSource, AudioVisualSetting.TimbreColor
     ];
 
     private SpectrumStyle _style = SpectrumStyle.Capsule;

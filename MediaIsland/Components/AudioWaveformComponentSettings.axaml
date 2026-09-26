@@ -16,9 +16,14 @@
                                    Value="{Binding Settings.Width, Mode=TwoWay}" />
                 </controls:FASettingsExpander.Footer>
             </controls:FASettingsExpander>
-            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE790;}" Header="使用主题强调色" Description="关闭则使用固定的白色。">
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE790;}" Header="颜色"
+                                         Description="封面主题色取自当前曲目的专辑封面，没有封面时使用主题强调色。">
                 <controls:FASettingsExpander.Footer>
-                    <ToggleSwitch IsChecked="{Binding Settings.UseAccentColor, Mode=TwoWay}" />
+                    <ComboBox MinWidth="140" SelectedIndex="{Binding Settings.ColorSource}">
+                        <ComboBoxItem>主题强调色</ComboBoxItem>
+                        <ComboBoxItem>封面主题色</ComboBoxItem>
+                        <ComboBoxItem>白色</ComboBoxItem>
+                    </ComboBox>
                 </controls:FASettingsExpander.Footer>
             </controls:FASettingsExpander>
             <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE793;}" Header="随音色变色"

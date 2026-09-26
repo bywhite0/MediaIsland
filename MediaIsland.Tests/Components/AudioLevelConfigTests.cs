@@ -23,7 +23,7 @@ public class AudioLevelConfigTests
             new HashSet<AudioVisualSetting>
             {
                 AudioVisualSetting.Style, AudioVisualSetting.Width, AudioVisualSetting.Decay,
-                AudioVisualSetting.AccentColor, AudioVisualSetting.TimbreColor
+                AudioVisualSetting.ColorSource, AudioVisualSetting.TimbreColor
             },
             AudioLevelConfig.ApplicableSettings(style));
     }

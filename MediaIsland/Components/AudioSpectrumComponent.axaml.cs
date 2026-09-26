@@ -1,6 +1,7 @@
 using ClassIsland.Core.Attributes;
 using MediaIsland.Controls;
 using MediaIsland.Services.Audio.Visualization;
+using MediaIsland.Services.Media;
 
 namespace MediaIsland.Components;
 
@@ -29,8 +30,11 @@ public partial class AudioSpectrumComponent : AudioVisualComponentBase<AudioSpec
     private readonly List<float[]> _history = [];
     private double _sinceLastColumn;
 
-    public AudioSpectrumComponent(AudioVisualizationService visualization, IAudioVisualSourceInfo sourceInfo)
-        : base(visualization, sourceInfo)
+    public AudioSpectrumComponent(
+        AudioVisualizationService visualization,
+        IAudioVisualSourceInfo sourceInfo,
+        CoverColorService coverColors)
+        : base(visualization, sourceInfo, coverColors)
     {
         InitializeComponent();
     }

@@ -1,6 +1,7 @@
 using ClassIsland.Core.Attributes;
 using MediaIsland.Controls;
 using MediaIsland.Services.Audio.Visualization;
+using MediaIsland.Services.Media;
 
 namespace MediaIsland.Components;
 
@@ -21,8 +22,11 @@ public partial class AudioWaveformComponent : AudioVisualComponentBase<AudioWave
     private float _rawRms;
     private float _smoothedRms;
 
-    public AudioWaveformComponent(AudioVisualizationService visualization, IAudioVisualSourceInfo sourceInfo)
-        : base(visualization, sourceInfo)
+    public AudioWaveformComponent(
+        AudioVisualizationService visualization,
+        IAudioVisualSourceInfo sourceInfo,
+        CoverColorService coverColors)
+        : base(visualization, sourceInfo, coverColors)
     {
         InitializeComponent();
     }

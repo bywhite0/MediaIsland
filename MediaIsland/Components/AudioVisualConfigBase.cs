@@ -9,11 +9,26 @@ public enum AudioVisualSetting
     Width,
     FrequencyRange,
     Decay,
-    AccentColor,
+    ColorSource,
     TimbreColor,
     BandCount,
     BarGap,
     Mirror
+}
+
+/// <summary>
+/// 组件的颜色从哪来。按序号存进配置，只许在末尾追加。
+/// </summary>
+public enum AudioVisualColorSource
+{
+    /// <summary>ClassIsland 主题强调色，随主题切换。</summary>
+    Accent,
+
+    /// <summary>当前曲目的专辑封面主题色；没有封面或取不到颜色时回落到主题强调色。</summary>
+    Cover,
+
+    /// <summary>固定白色。</summary>
+    White
 }
 
 /// <summary>
@@ -38,7 +53,7 @@ public abstract class AudioVisualConfigBase : ObservableRecipient
     public static readonly decimal DecayMaximum = (decimal)MaxDecayPerSecond;
 
     private double _width;
-    private bool _useAccentColor = true;
+    private AudioVisualColorSource _colorSource = AudioVisualColorSource.Accent;
     private bool _useTimbreColor;
     private double _decayPerSecond = 2.5;
 
@@ -53,11 +68,11 @@ public abstract class AudioVisualConfigBase : ObservableRecipient
         set => SetClamped(ref _width, value, MinComponentWidth, MaxComponentWidth);
     }
 
-    /// <summary>用主题强调色而非固定白色。</summary>
-    public bool UseAccentColor
+    /// <summary>每个组件各自选择：频谱和进度条摆在一起时，未必都想跟着封面变色。</summary>
+    public AudioVisualColorSource ColorSource
     {
-        get => _useAccentColor;
-        set => SetProperty(ref _useAccentColor, value);
+        get => _colorSource;
+        set => SetProperty(ref _colorSource, value);
     }
 
     /// <summary>按频谱质心偏移颜色：声音越亮越暖、越沉越紫。</summary>

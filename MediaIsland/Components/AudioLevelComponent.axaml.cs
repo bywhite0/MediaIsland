@@ -1,6 +1,7 @@
 using ClassIsland.Core.Attributes;
 using MediaIsland.Controls;
 using MediaIsland.Services.Audio.Visualization;
+using MediaIsland.Services.Media;
 
 namespace MediaIsland.Components;
 
@@ -17,8 +18,11 @@ public partial class AudioLevelComponent : AudioVisualComponentBase<AudioLevelCo
     private float _rawRms, _rawPeak, _rawLeft, _rawRight;
     private float _rms, _peak, _left, _right;
 
-    public AudioLevelComponent(AudioVisualizationService visualization, IAudioVisualSourceInfo sourceInfo)
-        : base(visualization, sourceInfo)
+    public AudioLevelComponent(
+        AudioVisualizationService visualization,
+        IAudioVisualSourceInfo sourceInfo,
+        CoverColorService coverColors)
+        : base(visualization, sourceInfo, coverColors)
     {
         InitializeComponent();
     }

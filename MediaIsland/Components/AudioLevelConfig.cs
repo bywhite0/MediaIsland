@@ -13,7 +13,7 @@ public class AudioLevelConfig() : AudioVisualConfigBase(defaultWidth: 80)
     private static readonly IReadOnlySet<AudioVisualSetting> Settings = new HashSet<AudioVisualSetting>
     {
         AudioVisualSetting.Style, AudioVisualSetting.Width, AudioVisualSetting.Decay,
-        AudioVisualSetting.AccentColor, AudioVisualSetting.TimbreColor
+        AudioVisualSetting.ColorSource, AudioVisualSetting.TimbreColor
     };
 
     private LevelStyle _style = LevelStyle.Meter;

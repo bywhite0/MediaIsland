@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using MediaIsland.Controls;
 using MediaIsland.Services.Audio.Visualization;
+using MediaIsland.Services.Media;
 
 namespace MediaIsland.Components;
 
@@ -40,9 +41,12 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     private const string AccentBrushKey = "AccentFillColorDefaultBrush";
 
     private readonly IAudioVisualSourceInfo _sourceInfo;
+    private readonly CoverColorService _coverColors;
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _idleTimer;
-    private readonly SolidColorBrush _timbreBrush = new(Colors.White);
+
+    /// <summary>presenter 始终用这一支笔刷，颜色变化只改它的 Color——不在绑定与本地值之间来回切换。</summary>
+    private readonly SolidColorBrush _foreground = new(Colors.White);
     private IDisposable? _demandRegistration;
     private long _lastRevision = -1;
     private DateTime _lastDataUtc = DateTime.UtcNow;
@@ -50,13 +54,18 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     private float _rawCentroid = 0.5f;
     private double _centroid = 0.5;
     private Color _baseColor = Colors.White;
-    private IDisposable? _accentBrushBinding;
-    private IDisposable? _accentColorSubscription;
+    private Color? _accentColor;
+    private IDisposable? _accentSubscription;
+    private IDisposable? _coverRegistration;
 
-    protected AudioVisualComponentBase(AudioVisualizationService visualization, IAudioVisualSourceInfo sourceInfo)
+    protected AudioVisualComponentBase(
+        AudioVisualizationService visualization,
+        IAudioVisualSourceInfo sourceInfo,
+        CoverColorService coverColors)
     {
         Visualization = visualization ?? throw new ArgumentNullException(nameof(visualization));
         _sourceInfo = sourceInfo ?? throw new ArgumentNullException(nameof(sourceInfo));
+        _coverColors = coverColors ?? throw new ArgumentNullException(nameof(coverColors));
 
         // 构造里都不 Start：组件实例可能先于挂载被创建（设置页预览）。
         _renderTimer = new DispatcherTimer { Interval = FrameInterval };
@@ -99,7 +108,11 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
         _demandRegistration = Visualization.Demand.Register();
         Settings.PropertyChanged += OnSettingsPropertyChanged;
         VisualPresenter.Width = Settings.Width;
-        ApplyForeground();
+        VisualPresenter.Foreground = _foreground;
+        // 主题色始终订阅：它既是「主题强调色」本身，也是封面取不到时的回落。
+        _accentSubscription = VisualPresenter.GetResourceObservable(AccentBrushKey)
+            .Subscribe(new AnonymousObserver<object?>(OnAccentBrushChanged));
+        ApplyColorSource();
         ApplyStaticSettings();
         UpdateStatus(hasRecentData: false);
         _lastDataUtc = DateTime.UtcNow;
@@ -111,7 +124,9 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
         _renderTimer.Stop();
         _idleTimer.Stop();
         Settings.PropertyChanged -= OnSettingsPropertyChanged;
-        ReleaseAccent();
+        _accentSubscription?.Dispose();
+        _accentSubscription = null;
+        ReleaseCover();
 
         // 必须与 Loaded 成对，且无条件——停表状态下被移出岛同样要释放。
         _demandRegistration?.Dispose();
@@ -122,7 +137,7 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     {
         OnSettingChanged(e.PropertyName);
         VisualPresenter.Width = Settings.Width;
-        ApplyForeground();
+        ApplyColorSource();
         ApplyStaticSettings();
 
         // 改了配置就当作有新数据：停表状态下改样式要立刻看到。
@@ -135,64 +150,53 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     }
 
     /// <summary>
-    /// 主题色：presenter 的 Foreground 是自己注册的继承属性，没有祖先会设它，ClearValue 只会得到
-    /// null（画成白色）。所以直接绑到强调色资源；资源观察器随主题切换重新推值，基色也跟着它走。
-    /// 固定色：白。音色开启时 presenter 用一支常驻笔刷，逐帧只改它的 Color；此时先解除资源绑定，
-    /// 免得绑定与本地值争同一个属性。
+    /// 选了封面色才向封面取色服务登记需求——没人选时服务不订阅媒体、不做任何提取。
+    /// 登记与撤销都跟着配置走，改完颜色来源立刻生效。
     /// </summary>
-    private void ApplyForeground()
+    private void ApplyColorSource()
     {
-        if (Settings.UseAccentColor)
+        var wantsCover = Settings.ColorSource == AudioVisualColorSource.Cover;
+        if (wantsCover && _coverRegistration is null)
         {
-            _accentColorSubscription ??= VisualPresenter.GetResourceObservable(AccentBrushKey)
-                .Subscribe(new AnonymousObserver<object?>(OnAccentBrushChanged));
+            _coverColors.ColorChanged += UpdateBaseColor;
+            _coverRegistration = _coverColors.Register();
         }
-        else
+        else if (!wantsCover)
         {
-            _accentColorSubscription?.Dispose();
-            _accentColorSubscription = null;
-            _baseColor = Colors.White;
+            ReleaseCover();
         }
 
-        if (Settings.UseTimbreColor)
-        {
-            UnbindAccentBrush();
-            _timbreBrush.Color = TimbreColor.Mix(_baseColor, _centroid);
-            VisualPresenter.Foreground = _timbreBrush;
-        }
-        else if (Settings.UseAccentColor)
-        {
-            _accentBrushBinding ??= VisualPresenter.Bind(
-                AudioVisualPresenterBase.ForegroundProperty, VisualPresenter.GetResourceObservable(AccentBrushKey));
-        }
-        else
-        {
-            UnbindAccentBrush();
-            VisualPresenter.Foreground = Brushes.White;
-        }
+        UpdateBaseColor();
+    }
+
+    private void ReleaseCover()
+    {
+        if (_coverRegistration is null) return;
+        _coverColors.ColorChanged -= UpdateBaseColor;
+        _coverRegistration.Dispose();
+        _coverRegistration = null;
     }
 
     private void OnAccentBrushChanged(object? value)
     {
-        _baseColor = value is ISolidColorBrush solid ? solid.Color : Colors.White;
-        if (Settings.UseTimbreColor)
-        {
-            _timbreBrush.Color = TimbreColor.Mix(_baseColor, _centroid);
-        }
+        _accentColor = (value as ISolidColorBrush)?.Color;
+        UpdateBaseColor();
     }
 
-    private void UnbindAccentBrush()
+    /// <summary>
+    /// 基色的任一输入变了（颜色来源、主题、封面）都走这里。停表时画面不会自己重绘，
+    /// 所以要显式失效一次，否则换主题或换歌后颜色要等到下次有声音才更新。
+    /// </summary>
+    private void UpdateBaseColor()
     {
-        _accentBrushBinding?.Dispose();
-        _accentBrushBinding = null;
+        var cover = _coverRegistration is null ? null : _coverColors.CurrentColor;
+        _baseColor = AudioVisualColorRules.ResolveBase(Settings.ColorSource, cover, _accentColor);
+        UpdateForeground();
+        VisualPresenter.InvalidateVisual();
     }
 
-    private void ReleaseAccent()
-    {
-        UnbindAccentBrush();
-        _accentColorSubscription?.Dispose();
-        _accentColorSubscription = null;
-    }
+    private void UpdateForeground() =>
+        _foreground.Color = AudioVisualColorRules.Foreground(_baseColor, Settings.UseTimbreColor, _centroid);
 
     /// <summary>
     /// Revision 只决定是否刷新目标值，包络每帧都推进。不可在 Revision 未变时直接 return——
@@ -233,7 +237,7 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     {
         if (!Settings.UseTimbreColor) return;
         _centroid += (_rawCentroid - _centroid) * Math.Min(1, delta * CentroidFollowPerSecond);
-        _timbreBrush.Color = TimbreColor.Mix(_baseColor, _centroid);
+        UpdateForeground();
     }
 
     private void UpdateStatus(bool hasRecentData)

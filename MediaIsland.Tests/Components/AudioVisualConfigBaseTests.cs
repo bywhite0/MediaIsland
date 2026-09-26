@@ -63,12 +63,21 @@ public class AudioVisualConfigBaseTests
     }
 
     [Fact]
-    public void TimbreColor_IsOffByDefault_AccentIsOn()
+    public void TimbreColor_IsOffByDefault_ColorSourceIsAccent()
     {
         var config = new Probe();
 
         Assert.False(config.UseTimbreColor);
-        Assert.True(config.UseAccentColor);
+        Assert.Equal(AudioVisualColorSource.Accent, config.ColorSource);
+    }
+
+    /// <summary>颜色来源按序号存进配置：只许在末尾追加，已有项的序号不得变。</summary>
+    [Fact]
+    public void ColorSource_OrdinalsAreStable()
+    {
+        Assert.Equal(0, (int)AudioVisualColorSource.Accent);
+        Assert.Equal(1, (int)AudioVisualColorSource.Cover);
+        Assert.Equal(2, (int)AudioVisualColorSource.White);
     }
 
     [Fact]

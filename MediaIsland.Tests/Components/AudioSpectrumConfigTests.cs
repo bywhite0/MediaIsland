@@ -83,7 +83,7 @@ public class AudioSpectrumConfigTests
         foreach (var always in new[]
                  {
                      AudioVisualSetting.Style, AudioVisualSetting.Width, AudioVisualSetting.FrequencyRange,
-                     AudioVisualSetting.Decay, AudioVisualSetting.AccentColor, AudioVisualSetting.TimbreColor
+                     AudioVisualSetting.Decay, AudioVisualSetting.ColorSource, AudioVisualSetting.TimbreColor
                  })
         {
             Assert.Contains(always, settings);

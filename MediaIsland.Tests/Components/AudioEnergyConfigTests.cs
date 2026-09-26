@@ -27,7 +27,7 @@ public class AudioEnergyConfigTests
             new HashSet<AudioVisualSetting>
             {
                 AudioVisualSetting.Style, AudioVisualSetting.Width, AudioVisualSetting.FrequencyRange,
-                AudioVisualSetting.Decay, AudioVisualSetting.AccentColor, AudioVisualSetting.TimbreColor
+                AudioVisualSetting.Decay, AudioVisualSetting.ColorSource, AudioVisualSetting.TimbreColor
             },
             AudioEnergyConfig.ApplicableSettings(style));
     }

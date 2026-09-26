@@ -17,7 +17,7 @@ public class AudioWaveformConfigTests
         Assert.Equal(
             new HashSet<AudioVisualSetting>
             {
-                AudioVisualSetting.Width, AudioVisualSetting.AccentColor, AudioVisualSetting.TimbreColor
+                AudioVisualSetting.Width, AudioVisualSetting.ColorSource, AudioVisualSetting.TimbreColor
             },
             AudioWaveformConfig.ApplicableSettings());
     }

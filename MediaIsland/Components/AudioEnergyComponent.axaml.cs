@@ -1,6 +1,7 @@
 using ClassIsland.Core.Attributes;
 using MediaIsland.Controls;
 using MediaIsland.Services.Audio.Visualization;
+using MediaIsland.Services.Media;
 
 namespace MediaIsland.Components;
 
@@ -31,8 +32,11 @@ public partial class AudioEnergyComponent : AudioVisualComponentBase<AudioEnergy
     private double _beatGlow;
     private double _phase;
 
-    public AudioEnergyComponent(AudioVisualizationService visualization, IAudioVisualSourceInfo sourceInfo)
-        : base(visualization, sourceInfo)
+    public AudioEnergyComponent(
+        AudioVisualizationService visualization,
+        IAudioVisualSourceInfo sourceInfo,
+        CoverColorService coverColors)
+        : base(visualization, sourceInfo, coverColors)
     {
         InitializeComponent();
     }
