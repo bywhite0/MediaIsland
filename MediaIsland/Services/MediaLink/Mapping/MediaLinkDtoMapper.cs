@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink.Protocol;
@@ -141,24 +142,29 @@ public static class MediaLinkDtoMapper
     public static bool TryMapInjectedLyrics(
         MediaLinkLyricsDto payload,
         out LyricsSearchResult? result,
-        out string? error)
+        out string? error,
+        LyricsCleanupOptions? cleanup = null)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
         var documentDto = payload.Document ?? new MediaLinkLyricsDocumentDto { Lines = [] };
         var lines = MapLines(documentDto.Lines);
-        var metadata = documentDto.Metadata ?? new MediaLinkLyricsMetadataDto();
-        var duration = ResolveDuration(payload.DurationMs, metadata.DurationMs);
+        var metadataDto = documentDto.Metadata ?? new MediaLinkLyricsMetadataDto();
+        var duration = ResolveDuration(payload.DurationMs, metadataDto.DurationMs);
         var id = string.IsNullOrWhiteSpace(payload.Id)
             ? Guid.NewGuid().ToString("N")
             : payload.Id.Trim();
-        var title = FirstNonEmpty(payload.Title, metadata.Title) ?? string.Empty;
-        var artist = FirstNonEmpty(payload.Artist, metadata.Artist) ?? string.Empty;
-        var album = string.IsNullOrWhiteSpace(metadata.Album) ? null : metadata.Album.Trim();
+        var title = FirstNonEmpty(payload.Title, metadataDto.Title) ?? string.Empty;
+        var artist = FirstNonEmpty(payload.Artist, metadataDto.Artist) ?? string.Empty;
+        var album = string.IsNullOrWhiteSpace(metadataDto.Album) ? null : metadataDto.Album.Trim();
         var providerItemId = string.IsNullOrWhiteSpace(documentDto.ProviderItemId)
             ? id
             : documentDto.ProviderItemId.Trim();
         var format = ParseOrDefault(documentDto.Format, LyricsFormat.Unknown);
+        var metadata = new LyricsMetadata(title, artist, album, duration > TimeSpan.Zero ? duration : null);
+
+        // 上游若是 MediaIsland，已按它自己的规则清理过；本机再按本机规则清理一次，清理幂等，结果只会更严不会出错。
+        lines = LyricsTextCleaner.Apply(lines, cleanup?.WithMetadataIfMissing(metadata));
         var syncMode = InferSyncMode(documentDto.SyncMode, lines);
 
         // 上游标注的真实来源，仅用于显示。通道必须保持 External：
@@ -166,7 +172,7 @@ public static class MediaLinkDtoMapper
         var originSource = ParseLyricsSource(FirstNonEmpty(documentDto.Source, payload.Source));
 
         var document = new LyricsDocument(
-            new LyricsMetadata(title, artist, album, duration > TimeSpan.Zero ? duration : null),
+            metadata,
             lines,
             syncMode,
             LyricsSourceId.External,

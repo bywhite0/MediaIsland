@@ -1,5 +1,6 @@
 using Avalonia.Media.Imaging;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Lyrics.Models;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.MediaLink.Mapping;
@@ -11,6 +12,7 @@ public sealed class MediaLinkInjectionStore
 {
     private readonly object _gate = new();
     private readonly Func<long> _tickProvider;
+    private readonly Func<LyricsCleanupOptions?>? _cleanupProvider;
 
     private string _sourceApp = "external";
     private string? _title;
@@ -39,9 +41,14 @@ public sealed class MediaLinkInjectionStore
     private Bitmap? _thumbnail;
     private string? _thumbnailToken;
 
-    public MediaLinkInjectionStore(Func<long>? tickProvider = null)
+    /// <param name="cleanupProvider">注入时取当前清理规则；null 表示不清理。
+    /// 规则变化不回溯已注入的歌词，下次注入生效——注入很频繁。</param>
+    public MediaLinkInjectionStore(
+        Func<long>? tickProvider = null,
+        Func<LyricsCleanupOptions?>? cleanupProvider = null)
     {
         _tickProvider = tickProvider ?? (() => Environment.TickCount64);
+        _cleanupProvider = cleanupProvider;
     }
 
     public bool HasExternalMedia
@@ -169,7 +176,7 @@ public sealed class MediaLinkInjectionStore
     {
         ArgumentNullException.ThrowIfNull(payload);
 
-        if (!MediaLinkDtoMapper.TryMapInjectedLyrics(payload, out var result, out error))
+        if (!MediaLinkDtoMapper.TryMapInjectedLyrics(payload, out var result, out error, _cleanupProvider?.Invoke()))
         {
             return false;
         }

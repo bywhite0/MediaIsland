@@ -5,6 +5,7 @@ using MediaIsland.Services.Audio.Playback;
 using MediaIsland.Services.Audio.Playback.Native;
 using MediaIsland.Services.Audio.Visualization;
 using MediaIsland.Services.Lyrics;
+using MediaIsland.Services.Lyrics.Cleanup;
 using MediaIsland.Services.Media;
 using MediaIsland.Services.Media.Platform;
 using Microsoft.Extensions.DependencyInjection;
@@ -39,7 +40,8 @@ public static class MediaLinkServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(settingsAccessor);
 
-        services.AddSingleton<MediaLinkInjectionStore>();
+        services.AddSingleton(_ => new MediaLinkInjectionStore(
+            cleanupProvider: () => LyricsCleanupOptions.From(settingsAccessor().Lyrics)));
 
         // 分析层三件套：需求计数、共享分析器、门面。全是单例——FFT 贵且与观察者无关，
         // N 个频谱组件共用一次计算。
