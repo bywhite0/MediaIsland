@@ -1,0 +1,92 @@
+<ci:ComponentBase x:Class="MediaIsland.Components.AudioSpectrumComponentSettings"
+                  x:TypeArguments="local:AudioSpectrumConfig"
+                  xmlns:ci="http://classisland.tech/schemas/xaml/core"
+                  xmlns="https://github.com/avaloniaui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                  xmlns:controls="using:FluentAvalonia.UI.Controls"
+                  xmlns:local="clr-namespace:MediaIsland.Components">
+    <ScrollViewer DataContext="{Binding RelativeSource={RelativeSource FindAncestor, AncestorType=local:AudioSpectrumComponentSettings}}">
+        <StackPanel>
+            <local:AudioVisualSettingsHeader x:Name="Header" />
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9D9;}" Header="样式"
+                                         Description="胶囊律动在窄岛上最易读；细柱与山脊需要一定高度；声谱带显示最近几秒的变化。">
+                <controls:FASettingsExpander.Footer>
+                    <ComboBox MinWidth="140" SelectedIndex="{Binding Settings.Style}">
+                        <ComboBoxItem>胶囊律动</ComboBoxItem>
+                        <ComboBoxItem>细柱 + 峰值帽</ComboBoxItem>
+                        <ComboBoxItem>平滑山脊</ComboBoxItem>
+                        <ComboBoxItem>迷你声谱带</ComboBoxItem>
+                        <ComboBoxItem>低中高三球</ComboBoxItem>
+                        <ComboBoxItem>十二音环</ComboBoxItem>
+                    </ComboBox>
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE745;}" Header="组件宽度" Description="占用的横向像素。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown MinWidth="140" Increment="8"
+                                   Minimum="{x:Static local:AudioVisualConfigBase.ComponentWidthMinimum}"
+                                   Maximum="{x:Static local:AudioVisualConfigBase.ComponentWidthMaximum}"
+                                   Value="{Binding Settings.Width, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander x:Name="BandCountRow" IconSource="{ci:FluentIconSource &#xE9E9;}" Header="频段数"
+                                         Description="越多越细，但窄岛上会糊成一片。每种样式各记一份。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown MinWidth="140" Increment="1"
+                                   Minimum="{x:Static local:AudioSpectrumConfig.BandCountMinimum}"
+                                   Maximum="{x:Static local:AudioSpectrumConfig.BandCountMaximum}"
+                                   Value="{Binding Settings.BandCount, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander x:Name="BarGapRow" IconSource="{ci:FluentIconSource &#xE8C8;}" Header="间距">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown MinWidth="140" Increment="1"
+                                   Minimum="{x:Static local:AudioSpectrumConfig.BarGapMinimum}"
+                                   Maximum="{x:Static local:AudioSpectrumConfig.BarGapMaximum}"
+                                   Value="{Binding Settings.BarGap, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander x:Name="MirrorRow" IconSource="{ci:FluentIconSource &#xE744;}" Header="上下镜像"
+                                         Description="以水平中线上下对称展开。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.IsMirrored, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9F9;}" Header="频率下限 (Hz)" Description="低于此频率的能量不参与显示。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown MinWidth="140" Increment="10"
+                                   Minimum="{x:Static local:AudioFrequencyConfigBase.FrequencyLowerMinimum}"
+                                   Maximum="{x:Static local:AudioFrequencyConfigBase.FrequencyLowerMaximum}"
+                                   Value="{Binding Settings.MinFrequencyHz, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9F9;}" Header="频率上限 (Hz)" Description="高于此频率的能量不参与显示。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown MinWidth="140" Increment="100"
+                                   Minimum="{x:Static local:AudioFrequencyConfigBase.FrequencyUpperMinimum}"
+                                   Maximum="{x:Static local:AudioFrequencyConfigBase.FrequencyUpperMaximum}"
+                                   Value="{Binding Settings.MaxFrequencyHz, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE916;}" Header="回落速度" Description="每秒衰减的比例。值越大回落越快，视觉越「跳」。">
+                <controls:FASettingsExpander.Footer>
+                    <NumericUpDown MinWidth="140" Increment="0.5"
+                                   Minimum="{x:Static local:AudioVisualConfigBase.DecayMinimum}"
+                                   Maximum="{x:Static local:AudioVisualConfigBase.DecayMaximum}"
+                                   Value="{Binding Settings.DecayPerSecond, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE790;}" Header="使用主题强调色" Description="关闭则使用固定的白色。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.UseAccentColor, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+            <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE793;}" Header="随音色变色"
+                                         Description="声音越明亮颜色越偏暖黄，越低沉越偏深紫。">
+                <controls:FASettingsExpander.Footer>
+                    <ToggleSwitch IsChecked="{Binding Settings.UseTimbreColor, Mode=TwoWay}" />
+                </controls:FASettingsExpander.Footer>
+            </controls:FASettingsExpander>
+        </StackPanel>
+    </ScrollViewer>
+</ci:ComponentBase>

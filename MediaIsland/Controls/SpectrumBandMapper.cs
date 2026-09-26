@@ -47,7 +47,7 @@ public static class SpectrumBandMapper
         return bands;
     }
 
-    /// <summary>限频段能量归约为标量，供律动条使用。</summary>
+    /// <summary>限频段能量归约为标量，供音频能量组件使用。</summary>
     /// <exception cref="ArgumentException">频率范围无效。校验与 <see cref="Map"/> 同源。</exception>
     public static float Energy(
         IReadOnlyList<float> spectrum, int sampleRate,

@@ -1,0 +1,14 @@
+<local:AudioVisualComponentBase x:Class="MediaIsland.Components.AudioSpectrumComponent"
+                                x:TypeArguments="local:AudioSpectrumConfig"
+                                xmlns="https://github.com/avaloniaui"
+                                xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                                xmlns:controls="using:MediaIsland.Controls"
+                                xmlns:local="clr-namespace:MediaIsland.Components"
+                                ClipToBounds="False">
+    <Border ClipToBounds="False" Background="Transparent">
+        <!-- 高度撑满槽位，宽度由配置决定：岛上的可用高度是外部给的，宽度才是用户能取舍的。 -->
+        <controls:AudioSpectrumPresenter x:Name="SpectrumPresenter"
+                                         VerticalAlignment="Stretch"
+                                         HorizontalAlignment="Center" />
+    </Border>
+</local:AudioVisualComponentBase>

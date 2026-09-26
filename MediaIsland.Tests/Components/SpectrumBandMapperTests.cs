@@ -163,7 +163,7 @@ public class SpectrumBandMapperTests
     [Fact]
     public void Energy_OutsideTheRange_IsZero()
     {
-        // bin 213 ≈ 5000Hz，在 80–2000 之外。律动条只跟随限定频段，
+        // bin 213 ≈ 5000Hz，在 80–2000 之外。音频能量只跟随限定频段，
         // 否则高频的嘶声会让它一直亮着。
         Assert.Equal(0f, SpectrumBandMapper.Energy(SpectrumWithPeakAt(213), SampleRate, MinHz, MaxHz));
     }
