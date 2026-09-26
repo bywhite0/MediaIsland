@@ -76,8 +76,23 @@ public class WaveformGeometryTests
     }
 
     [Fact]
-    public void Oscilloscope_ZeroSize_DoesNotThrow()
+    public void Oscilloscope_ZeroSize_CollapsesToTheOrigin()
     {
-        _ = WaveformGeometry.Oscilloscope([0.5f, -0.5f], 0, 0);
+        var points = WaveformGeometry.Oscilloscope([0.5f, -0.5f], 0, 0);
+
+        Assert.All(points, p => Assert.Equal(new Point(0, 0), p));
+    }
+
+    /// <summary>负尺寸先夹到 0：否则振幅会按负的半高映射，折线翻到控件外面。</summary>
+    [Fact]
+    public void Oscilloscope_NegativeSize_IsClampedToZero()
+    {
+        var points = WaveformGeometry.Oscilloscope([0.5f, -0.5f], -10, -10);
+
+        Assert.All(points, p =>
+        {
+            Assert.Equal(0, p.X);
+            Assert.Equal(0, p.Y);
+        });
     }
 }
