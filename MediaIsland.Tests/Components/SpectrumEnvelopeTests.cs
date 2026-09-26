@@ -143,4 +143,17 @@ public class SpectrumEnvelopeTests
         Assert.True(SpectrumEnvelope.StallTimeout > TimeSpan.FromMilliseconds(50));
         Assert.True(SpectrumEnvelope.StallTimeout <= TimeSpan.FromMilliseconds(500));
     }
+
+    [Fact]
+    public void FallLinear_RisesImmediately_FallsAtTheGivenRate()
+    {
+        Assert.Equal(0.9f, SpectrumEnvelope.FallLinear(0.2f, 0.9f, 0.6, 0.1));
+        Assert.Equal(0.84f, SpectrumEnvelope.FallLinear(0.9f, 0.1f, 0.6, 0.1), 5);
+    }
+
+    [Fact]
+    public void FallLinear_NeverFallsBelowTheCurrentValue()
+    {
+        Assert.Equal(0.5f, SpectrumEnvelope.FallLinear(0.52f, 0.5f, 0.6, 1));
+    }
 }

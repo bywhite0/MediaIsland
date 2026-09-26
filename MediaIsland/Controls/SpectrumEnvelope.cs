@@ -63,4 +63,12 @@ public static class SpectrumEnvelope
     /// 帧流是否已停。停了就该把目标当成零，而不是沿用最后一份快照。
     /// </summary>
     public static bool IsStalled(TimeSpan sinceLastData) => sinceLastData >= StallTimeout;
+
+    /// <summary>
+    /// 峰值帽的下落：上升立即到位，下降按固定速率线性落，且不低于当前值。
+    /// 与 <see cref="Advance"/> 的指数衰减分开——峰值帽要的是「匀速落下」的读数感，
+    /// 指数衰减在末端会拖成一条几乎不动的线。
+    /// </summary>
+    public static float FallLinear(float previous, float current, double fallPerSecond, double deltaSeconds) =>
+        Math.Max(current, (float)(previous - fallPerSecond * deltaSeconds));
 }
