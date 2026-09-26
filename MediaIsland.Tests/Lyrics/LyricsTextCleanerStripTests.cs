@@ -247,6 +247,23 @@ public class LyricsTextCleanerStripTests
     }
 
     [Fact]
+    public void Apply_TitleArtistAfterFiveKeptLines_IsKeptOnBothPasses()
+    {
+        var options = Strip with { Title = "春风十里", Artists = ["鹿先森乐队"] };
+        LyricsLine[] lines =
+        [
+            Line(0, "第一句"), Line(1, "春风十里 - 鹿先森乐队"), Line(2, "第二句"), Line(3, "第三句"),
+            Line(4, "第四句"), Line(5, "第五句"), Line(6, "春风十里 · 鹿先森乐队")
+        ];
+
+        var once = LyricsTextCleaner.Apply(lines, options);
+        var twice = LyricsTextCleaner.Apply(once, options);
+
+        Assert.Equal(["第一句", "第二句", "第三句", "第四句", "第五句", "春风十里 · 鹿先森乐队"], Texts(once));
+        Assert.Equal(Texts(once), Texts(twice));
+    }
+
+    [Fact]
     public void Apply_CreditLineBeforeTitleArtist_IsIdempotent()
     {
         var options = Strip with { Title = "春风十里", Artists = ["鹿先森乐队"] };
