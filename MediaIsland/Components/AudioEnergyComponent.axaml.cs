@@ -6,8 +6,8 @@ using MediaIsland.Services.Media;
 namespace MediaIsland.Components;
 
 /// <summary>
-/// 音频能量：限定频段内的一个能量值，六种画法。起拍检测只在涟漪与四拍计数下推进，
-/// 但切换样式时一并清空——换到节拍类样式时不该带着旧的起拍状态。
+/// 音频能量：限定频段内的一个能量值，六种画法。起拍检测只在涟漪下推进、节拍跟踪只在
+/// 四拍计数下推进，但切换样式时一并清空——换到节拍类样式时不该带着旧的状态。
 /// </summary>
 [ComponentInfo(
     "3B8F5D21-6A4C-4E9B-8D17-C2E5A9F04B63",
@@ -22,6 +22,7 @@ public partial class AudioEnergyComponent : AudioVisualComponentBase<AudioEnergy
     private const double BeatGlowFallPerSecond = 3;
 
     private readonly OnsetDetector _onsets = new();
+    private readonly BeatTracker _beats = new();
     private readonly List<RippleRing> _rings = [];
     private readonly List<float> _history = [];
     private IReadOnlyList<float> _latestSpectrum = [];
@@ -49,6 +50,7 @@ public partial class AudioEnergyComponent : AudioVisualComponentBase<AudioEnergy
     {
         if (propertyName != nameof(AudioEnergyConfig.Style)) return;
         _onsets.Reset();
+        _beats.Reset();
         _rings.Clear();
         _history.Clear();
         _beatIndex = -1;
@@ -75,12 +77,17 @@ public partial class AudioEnergyComponent : AudioVisualComponentBase<AudioEnergy
         _phase += deltaSeconds;
 
         // 只在有新谱时喂检测器：同一份谱喂两次，第二次通量为零，会把滑动均值往下拖。
-        if (Settings.Style is EnergyStyle.Ripple or EnergyStyle.Beat && _hasNewSpectrum)
+        // 涟漪每下鼓起一圈；四拍计数数的是拍，由节拍跟踪按预测拍点推进。
+        if (_hasNewSpectrum)
         {
             _hasNewSpectrum = false;
-            if (_onsets.Update(_latestSpectrum, nowSeconds))
+            if (Settings.Style == EnergyStyle.Ripple && _onsets.Update(_latestSpectrum, nowSeconds))
             {
                 _rings.Add(new RippleRing(0, _smoothed));
+            }
+            else if (Settings.Style == EnergyStyle.Beat
+                     && _beats.Update(_latestSpectrum, Visualization.Analyzer.SampleRate, nowSeconds))
+            {
                 _beatIndex = (_beatIndex + 1) % 4;
                 _beatGlow = 1;
             }

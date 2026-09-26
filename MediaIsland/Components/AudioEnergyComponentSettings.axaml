@@ -9,7 +9,7 @@
         <StackPanel>
             <local:AudioVisualSettingsHeader x:Name="Header" />
             <controls:FASettingsExpander IconSource="{ci:FluentIconSource &#xE9D9;}" Header="样式"
-                                         Description="呼吸光点占位最小；节拍涟漪与四拍计数跟随鼓点；心电图显示最近三秒的起伏。">
+                                         Description="呼吸光点占位最小；节拍涟漪每下鼓点扩散一圈；四拍计数按拍子逐拍点亮，开播后约 3 秒开始计数；心电图显示最近三秒的起伏。">
                 <controls:FASettingsExpander.Footer>
                     <ComboBox MinWidth="140" SelectedIndex="{Binding Settings.Style}">
                         <ComboBoxItem>呼吸光点</ComboBoxItem>
