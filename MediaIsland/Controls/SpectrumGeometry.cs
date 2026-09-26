@@ -11,8 +11,6 @@ namespace MediaIsland.Controls;
 /// </summary>
 public static class SpectrumGeometry
 {
-    private const double PeakTickWidth = 2;
-
     public static Rect[] Bars(
         IReadOnlyList<float> bands, double width, double height, double gap, bool mirrored)
     {
@@ -44,21 +42,6 @@ public static class SpectrumGeometry
     {
         var half = height * value / 2;
         return new Rect(x, height / 2 - half, barWidth, half * 2);
-    }
-
-    /// <summary>电平表：RMS 填充条 + 峰值刻线。</summary>
-    public static (Rect Fill, Rect PeakTick) LevelMeter(
-        double rms, double peak, double width, double height)
-    {
-        var level = Math.Clamp(rms, 0, 1);
-        var peakLevel = Math.Clamp(peak, 0, 1);
-
-        var fill = new Rect(0, 0, Math.Max(0, width * level), height);
-
-        // 刻线右缘对齐峰值位置，再夹回控件内——峰值为 1 时不越右边界，为 0 时不越左边界。
-        // 控件宽度为 0（布局完成前）时上下界会颠倒，故用 Math.Max 兜住。
-        var tickX = Math.Clamp(width * peakLevel - PeakTickWidth, 0, Math.Max(0, width - PeakTickWidth));
-        return (fill, new Rect(tickX, 0, PeakTickWidth, height));
     }
 
     public const int SpectrogramRows = 6;
