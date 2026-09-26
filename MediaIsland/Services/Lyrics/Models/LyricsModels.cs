@@ -112,6 +112,22 @@ public sealed class LyricsSourceSettings
     /// </summary>
     public string SPlayerNextApiBaseUrl { get; set; } = DefaultSPlayerNextApiBaseUrl;
 
+    /// <summary>排除制作人员与版权等非歌词行。默认开启：旧配置缺此字段时升级即生效。</summary>
+    public bool StripCreditLines { get; set; } = true;
+
+    /// <summary>用户追加的职务关键词；内置规则不落盘。</summary>
+    public List<string> CreditKeywords { get; set; } = [];
+
+    /// <summary>用户追加的排除正则。</summary>
+    public List<string> CreditRegexes { get; set; } = [];
+
+    /// <summary>屏蔽词遮盖；词表完全由用户填写，不内置。</summary>
+    public bool MaskEnabled { get; set; }
+
+    public List<string> MaskWords { get; set; } = [];
+
+    public List<string> MaskRegexes { get; set; } = [];
+
     public static List<LyricsSourceEntry> CreateDefaultSources() =>
     [
         new() { Id = LyricsSourceId.AmllTtml, IsEnabled = false, UseWordSyncedLyrics = true },
@@ -126,6 +142,12 @@ public sealed class LyricsSourceSettings
         {
             AmllApiBaseUrl = AmllApiBaseUrl,
             SPlayerNextApiBaseUrl = SPlayerNextApiBaseUrl,
+            StripCreditLines = StripCreditLines,
+            CreditKeywords = [.. CreditKeywords ?? []],
+            CreditRegexes = [.. CreditRegexes ?? []],
+            MaskEnabled = MaskEnabled,
+            MaskWords = [.. MaskWords ?? []],
+            MaskRegexes = [.. MaskRegexes ?? []],
             Sources = (Sources ?? []).OfType<LyricsSourceEntry>().Select(source => new LyricsSourceEntry
             {
                 Id = source.Id,
@@ -180,8 +202,20 @@ public sealed class LyricsSourceSettings
         settings.Sources = normalized;
         settings.AmllApiBaseUrl = NormalizeAmllBaseUrl(settings.AmllApiBaseUrl);
         settings.SPlayerNextApiBaseUrl = NormalizeSPlayerNextBaseUrl(settings.SPlayerNextApiBaseUrl);
+        settings.CreditKeywords = NormalizeRuleList(settings.CreditKeywords);
+        settings.CreditRegexes = NormalizeRuleList(settings.CreditRegexes);
+        settings.MaskWords = NormalizeRuleList(settings.MaskWords);
+        settings.MaskRegexes = NormalizeRuleList(settings.MaskRegexes);
         return settings;
     }
+
+    /// <summary>规则列表：去首尾空白、去空、按原序去重。</summary>
+    public static List<string> NormalizeRuleList(IEnumerable<string?>? values) =>
+        (values ?? [])
+            .Select(value => value?.Trim() ?? string.Empty)
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
 
     public static string NormalizeAmllBaseUrl(string? value)
     {

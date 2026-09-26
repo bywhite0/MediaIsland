@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Xunit;
 using MediaIsland.Services.Lyrics;
 using MediaIsland.Services.Lyrics.Models;
@@ -87,5 +88,85 @@ public class LyricsSourceSettingsTests
 
         Assert.Equal(250, item.GlobalOffsetMilliseconds);
         Assert.Equal(0, saveCount);
+    }
+
+    [Fact]
+    public void Defaults_StripCreditsOn_MaskOff_ListsEmpty()
+    {
+        var settings = new LyricsSourceSettings();
+
+        Assert.True(settings.StripCreditLines);
+        Assert.False(settings.MaskEnabled);
+        Assert.Empty(settings.CreditKeywords);
+        Assert.Empty(settings.CreditRegexes);
+        Assert.Empty(settings.MaskWords);
+        Assert.Empty(settings.MaskRegexes);
+    }
+
+    [Fact]
+    public void Clone_CopiesCleanupFields_IntoIndependentLists()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            StripCreditLines = false,
+            CreditKeywords = ["监修"],
+            CreditRegexes = ["^OP"],
+            MaskEnabled = true,
+            MaskWords = ["坏词"],
+            MaskRegexes = ["b[a]d"]
+        };
+
+        var clone = settings.Clone();
+        settings.CreditKeywords.Add("后加");
+
+        Assert.False(clone.StripCreditLines);
+        Assert.Equal(["监修"], clone.CreditKeywords);
+        Assert.Equal(["^OP"], clone.CreditRegexes);
+        Assert.True(clone.MaskEnabled);
+        Assert.Equal(["坏词"], clone.MaskWords);
+        Assert.Equal(["b[a]d"], clone.MaskRegexes);
+    }
+
+    [Fact]
+    public void Normalize_TrimsDropsEmptyAndDeduplicatesRuleLists_KeepingOrder()
+    {
+        var settings = new LyricsSourceSettings
+        {
+            CreditKeywords = [" 监修 ", "", "   ", "监修", "出品"],
+            CreditRegexes = null!,
+            MaskWords = ["b", "a", "b"],
+            MaskRegexes = [" x "]
+        };
+
+        var normalized = LyricsSourceSettings.Normalize(settings);
+
+        Assert.Equal(["监修", "出品"], normalized.CreditKeywords);
+        Assert.Empty(normalized.CreditRegexes);
+        Assert.Equal(["b", "a"], normalized.MaskWords);
+        Assert.Equal(["x"], normalized.MaskRegexes);
+    }
+
+    [Fact]
+    public void Deserialize_LegacyJsonWithoutCleanupFields_UsesDefaults()
+    {
+        var restored = JsonSerializer.Deserialize<LyricsSourceSettings>("""{"AmllApiBaseUrl":""}""")!;
+        var normalized = LyricsSourceSettings.Normalize(restored);
+
+        Assert.True(normalized.StripCreditLines);
+        Assert.False(normalized.MaskEnabled);
+        Assert.Empty(normalized.CreditKeywords);
+        Assert.Empty(normalized.MaskWords);
+    }
+
+    [Fact]
+    public void Serialize_RoundTripsCleanupFields()
+    {
+        var settings = new LyricsSourceSettings { StripCreditLines = false, MaskEnabled = true, MaskWords = ["坏词"] };
+
+        var restored = JsonSerializer.Deserialize<LyricsSourceSettings>(JsonSerializer.Serialize(settings))!;
+
+        Assert.False(restored.StripCreditLines);
+        Assert.True(restored.MaskEnabled);
+        Assert.Equal(["坏词"], restored.MaskWords);
     }
 }
