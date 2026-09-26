@@ -215,4 +215,68 @@ public class LyricsTextCleanerStripTests
 
         Assert.Equal(Texts(once), Texts(twice));
     }
+    [Fact]
+    public void StripCredits_TimedOutRegex_IsSkippedForRestOfCall()
+    {
+        var text = CatastrophicRegex.Input;
+        var options = new LyricsCleanupOptions { StripCredits = true, CreditRegexes = [CatastrophicRegex.Create()] };
+        var lines = Enumerable.Range(0, 50).Select(i => Line(i, text)).ToArray();
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var result = LyricsTextCleaner.StripCredits(lines, options);
+        stopwatch.Stop();
+
+        Assert.True(stopwatch.Elapsed < LyricsCleanupOptions.RegexTimeout * 3, $"耗时 {stopwatch.Elapsed}");
+        Assert.Equal(50, result.Count);
+    }
+
+    [Fact]
+    public void Apply_TitleArtistLineRemovedInWindow_DoesNotShiftWindowOnSecondPass()
+    {
+        var options = Strip with { Title = "春风十里", Artists = ["鹿先森乐队"] };
+        LyricsLine[] lines =
+        [
+            Line(0, "第一句"), Line(1, "春风十里 - 鹿先森乐队"), Line(2, "第二句"), Line(3, "第三句"),
+            Line(4, "第四句"), Line(5, "春风十里 · 鹿先森乐队"), Line(6, "第五句")
+        ];
+
+        var once = LyricsTextCleaner.Apply(lines, options);
+        var twice = LyricsTextCleaner.Apply(once, options);
+
+        Assert.Equal(Texts(once), Texts(twice));
+    }
+
+    [Fact]
+    public void Apply_CreditLineBeforeTitleArtist_IsIdempotent()
+    {
+        var options = Strip with { Title = "春风十里", Artists = ["鹿先森乐队"] };
+        LyricsLine[] lines =
+        [
+            Line(0, "作词：青石"), Line(1, "第一句"), Line(2, "第二句"), Line(3, "第三句"),
+            Line(4, "第四句"), Line(5, "春风十里 - 鹿先森乐队"), Line(6, "第五句")
+        ];
+
+        var once = LyricsTextCleaner.Apply(lines, options);
+        var twice = LyricsTextCleaner.Apply(once, options);
+
+        Assert.Equal(Texts(once), Texts(twice));
+    }
+
+    [Fact]
+    public void Apply_TitleArtistLineWithMaskedWord_IsKeptOnSecondPass()
+    {
+        var options = Strip with
+        {
+            Title = "春风十里",
+            Artists = ["鹿先森乐队"],
+            MaskEnabled = true,
+            MaskWords = ["fuck"]
+        };
+
+        var once = LyricsTextCleaner.Apply([Line(0, "春风十里 - 鹿先森乐队 fuck"), Line(1, "正文")], options);
+        var twice = LyricsTextCleaner.Apply(once, options);
+
+        Assert.Equal(["春风十里 - 鹿先森乐队 ****", "正文"], Texts(once));
+        Assert.Equal(Texts(once), Texts(twice));
+    }
 }

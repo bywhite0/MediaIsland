@@ -111,7 +111,7 @@ public class LyricsPinApiTests : IDisposable
 
         Assert.Null(pinned);
         Assert.Empty(store.Pins);
-        Assert.NotNull(service.LastPinError);
+        Assert.Contains("清理规则", service.LastPinError);
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public class LyricsPinApiTests : IDisposable
         var pinned = await service.PinFromFileAsync(CreateMedia(), path);
 
         Assert.Null(pinned);
-        Assert.NotNull(service.LastPinError);
+        Assert.Equal("该歌词文件没有解析出任何歌词行，未导入。", service.LastPinError);
         Assert.Empty(store.Pins);
     }
 

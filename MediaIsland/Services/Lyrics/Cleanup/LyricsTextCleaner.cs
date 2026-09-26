@@ -9,7 +9,8 @@ namespace MediaIsland.Services.Lyrics.Cleanup;
 /// <remarks>
 /// 排除判定移植自 lyric-kit v0.6.0 src/clean/stripper.ts
 /// （https://github.com/SPlayer-Dev/lyric-kit，AGPL-3.0）。
-/// 与原实现的差异：「歌名 - 歌手」行额外要求去掉歌名与歌手后只剩标点或空白。
+/// 与原实现的差异：「歌名 - 歌手」行额外要求去掉歌名与歌手后只剩标点或空白；
+/// 其 5 行窗口只数留下的正文行，以保证二次清理幂等。
 /// </remarks>
 public static class LyricsTextCleaner
 {
@@ -38,9 +39,10 @@ public static class LyricsTextCleaner
 
         var texts = lines.Select(line => (line.Text ?? string.Empty).Trim()).ToArray();
         var excluded = new bool[lines.Count];
+        var timedOut = NewTimedOutSet();
         for (var i = 0; i < lines.Count; i++)
         {
-            excluded[i] = texts[i].Length > 0 && IsCreditLine(texts[i], options);
+            excluded[i] = texts[i].Length > 0 && IsCreditLine(texts[i], options, timedOut);
         }
 
         MarkTitleArtistLines(texts, excluded, options);
@@ -98,9 +100,10 @@ public static class LyricsTextCleaner
 
         var result = new LyricsLine[lines.Count];
         var changed = false;
+        var timedOut = NewTimedOutSet();
         for (var i = 0; i < lines.Count; i++)
         {
-            result[i] = MaskLine(lines[i], options);
+            result[i] = MaskLine(lines[i], options, timedOut);
             changed |= !ReferenceEquals(result[i], lines[i]);
         }
 
@@ -111,14 +114,14 @@ public static class LyricsTextCleaner
     public static IReadOnlyList<LyricsLine> Apply(IReadOnlyList<LyricsLine> lines, LyricsCleanupOptions? options) =>
         options is null ? lines : Mask(StripCredits(lines, options), options);
 
-    private static LyricsLine MaskLine(LyricsLine line, LyricsCleanupOptions options)
+    private static LyricsLine MaskLine(LyricsLine line, LyricsCleanupOptions options, HashSet<Regex> timedOut)
     {
         var text = line.Text ?? string.Empty;
-        var ranges = FindMaskRanges(text, options);
+        var ranges = FindMaskRanges(text, options, timedOut);
         var maskedText = ApplyRanges(text, ranges);
-        var words = MaskWords(line.Words, text, maskedText, options);
-        var translation = MaskText(line.Translation, options);
-        var romanization = MaskText(line.Romanization, options);
+        var words = MaskWords(line.Words, text, maskedText, options, timedOut);
+        var translation = MaskText(line.Translation, options, timedOut);
+        var romanization = MaskText(line.Romanization, options, timedOut);
         var rubySpans = DropMaskedRuby(line.RubySpans, ranges);
 
         if (ReferenceEquals(maskedText, text) &&
@@ -140,7 +143,10 @@ public static class LyricsTextCleaner
         };
     }
 
-    private static List<(int Start, int Length)> FindMaskRanges(string text, LyricsCleanupOptions options)
+    private static List<(int Start, int Length)> FindMaskRanges(
+        string text,
+        LyricsCleanupOptions options,
+        HashSet<Regex> timedOut)
     {
         var ranges = new List<(int Start, int Length)>();
         if (text.Length == 0)
@@ -150,6 +156,11 @@ public static class LyricsTextCleaner
 
         foreach (var word in options.MaskWords)
         {
+            if (word.Length == 0)
+            {
+                continue;
+            }
+
             // 含拉丁字母的词要求两侧不是 ASCII 字母数字，避免 class 被 ass 遮成 c***s；
             // 汉字不算边界，「ass你好」照样遮。纯 CJK/假名词按子串匹配。
             var needsBoundary = word.Any(char.IsAsciiLetter);
@@ -167,6 +178,11 @@ public static class LyricsTextCleaner
 
         foreach (var regex in options.MaskRegexes)
         {
+            if (timedOut.Contains(regex))
+            {
+                continue;
+            }
+
             try
             {
                 foreach (Match match in regex.Matches(text))
@@ -179,7 +195,8 @@ public static class LyricsTextCleaner
             }
             catch (RegexMatchTimeoutException)
             {
-                // 超时的正则放弃本行已找到之外的命中；其余规则照常生效。
+                // 超时的正则放弃本行已找到之外的命中，本次调用余下的文本也不再跑它；其余规则照常生效。
+                timedOut.Add(regex);
             }
         }
 
@@ -206,8 +223,8 @@ public static class LyricsTextCleaner
         return new string(chars);
     }
 
-    private static string? MaskText(string? text, LyricsCleanupOptions options) =>
-        string.IsNullOrEmpty(text) ? text : ApplyRanges(text, FindMaskRanges(text, options));
+    private static string? MaskText(string? text, LyricsCleanupOptions options, HashSet<Regex> timedOut) =>
+        string.IsNullOrEmpty(text) ? text : ApplyRanges(text, FindMaskRanges(text, options, timedOut));
 
     /// <summary>
     /// 逐字文本拼起来等于整行时，按累计偏移把整行的遮盖投影到各字（跨字边界的词也能遮住）；
@@ -217,7 +234,8 @@ public static class LyricsTextCleaner
         IReadOnlyList<LyricsWord> words,
         string text,
         string maskedText,
-        LyricsCleanupOptions options)
+        LyricsCleanupOptions options,
+        HashSet<Regex> timedOut)
     {
         if (words.Count == 0)
         {
@@ -231,7 +249,7 @@ public static class LyricsTextCleaner
             for (var i = 0; i < words.Count; i++)
             {
                 var original = words[i].Text ?? string.Empty;
-                var masked = MaskText(original, options) ?? string.Empty;
+                var masked = MaskText(original, options, timedOut) ?? string.Empty;
                 var wordChanged = !ReferenceEquals(masked, original);
                 independent[i] = wordChanged ? words[i] with { Text = masked } : words[i];
                 changed |= wordChanged;
@@ -279,11 +297,11 @@ public static class LyricsTextCleaner
     /// 命中任一正则；或冒号左侧职务名命中关键词（含「词/曲」「编曲Arranger」这类复合）；
     /// 或无冒号时整行等于多字关键词、或以多字关键词开头并紧跟分隔符。
     /// </summary>
-    internal static bool IsCreditLine(string text, LyricsCleanupOptions options)
+    internal static bool IsCreditLine(string text, LyricsCleanupOptions options, HashSet<Regex> timedOut)
     {
         foreach (var regex in options.CreditRegexes)
         {
-            if (SafeIsMatch(regex, text))
+            if (SafeIsMatch(regex, text, timedOut))
             {
                 return true;
             }
@@ -393,6 +411,7 @@ public static class LyricsTextCleaner
             return;
         }
 
+        // 窗口只数会留下的正文行：本遍删掉的行若也计数，二次清理时窗口会右移、多删一行。
         var scanned = 0;
         for (var i = 0; i < texts.Length && scanned < TitleArtistScanLimit; i++)
         {
@@ -401,8 +420,11 @@ public static class LyricsTextCleaner
                 continue;
             }
 
-            scanned++;
             excluded[i] = IsTitleArtistLine(texts[i], title, options.Artists);
+            if (!excluded[i])
+            {
+                scanned++;
+            }
         }
     }
 
@@ -428,7 +450,8 @@ public static class LyricsTextCleaner
             remainder = remainder.Replace(artist, string.Empty, StringComparison.OrdinalIgnoreCase);
         }
 
-        return !remainder.Any(char.IsLetterOrDigit);
+        // * 按字母算：遮盖后的文本在二次清理时不能被当成「只剩标点」。
+        return !remainder.Any(c => c == '*' || char.IsLetterOrDigit(c));
     }
 
     /// <summary>主行被排除、或前面没有主行的背景行一并排除。</summary>
@@ -450,14 +473,23 @@ public static class LyricsTextCleaner
         }
     }
 
-    private static bool SafeIsMatch(Regex regex, string text)
+    /// <summary>一次调用内首次超时的正则记入此集合，余下的行直接跳过它，免得每行都等满超时。</summary>
+    private static HashSet<Regex> NewTimedOutSet() => new(ReferenceEqualityComparer.Instance);
+
+    private static bool SafeIsMatch(Regex regex, string text, HashSet<Regex> timedOut)
     {
+        if (timedOut.Contains(regex))
+        {
+            return false;
+        }
+
         try
         {
             return regex.IsMatch(text);
         }
         catch (RegexMatchTimeoutException)
         {
+            timedOut.Add(regex);
             return false;
         }
     }

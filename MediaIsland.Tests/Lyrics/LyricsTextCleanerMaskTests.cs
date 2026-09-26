@@ -163,4 +163,26 @@ public class LyricsTextCleanerMaskTests
 
         Assert.Equal(once.Select(Describe), twice.Select(Describe));
     }
+    [Fact]
+    public void Mask_EmptyWord_IsIgnored()
+    {
+        var result = LyricsTextCleaner.Mask([Line("oh shit")], MaskOf("", "shit"));
+
+        Assert.Equal("oh ****", result[0].Text);
+    }
+
+    [Fact]
+    public void Mask_TimedOutRegex_IsSkippedForRestOfCall()
+    {
+        var text = CatastrophicRegex.Input;
+        var options = new LyricsCleanupOptions { MaskEnabled = true, MaskRegexes = [CatastrophicRegex.Create()] };
+        var lines = Enumerable.Range(0, 50).Select(_ => Line(text) with { Translation = text, Romanization = text }).ToArray();
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var result = LyricsTextCleaner.Mask(lines, options);
+        stopwatch.Stop();
+
+        Assert.True(stopwatch.Elapsed < LyricsCleanupOptions.RegexTimeout * 3, $"耗时 {stopwatch.Elapsed}");
+        Assert.All(result, line => Assert.Equal(text, line.Text));
+    }
 }

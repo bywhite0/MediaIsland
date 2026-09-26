@@ -345,10 +345,12 @@ public sealed class LyricsSearchService
     }
 
     /// <summary>把落盘的原始 payload 交给现有解析器还原成结果。</summary>
+    /// <param name="applyCleanup">false 时不套用歌词清理规则，仅供区分「解析出 0 行」与「被规则清空」。</param>
     private async Task<LyricsSearchResult?> MaterializeAsync(
         StoredLyrics stored,
         MediaInfo info,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool applyCleanup = true)
     {
         var payload = stored.ToPayload();
         var parser = _parsers.FirstOrDefault(item => item.CanParse(payload.Format));
@@ -359,7 +361,9 @@ public sealed class LyricsSearchService
         }
 
         // 落盘条目存的是原始 payload，每次加载都按当前规则重新清理，改规则无需迁移。
-        var cleanup = LyricsCleanupOptions.From(LyricsSourceSettings.Normalize(_settingsFactory().Clone()));
+        var cleanup = applyCleanup
+            ? LyricsCleanupOptions.From(LyricsSourceSettings.Normalize(_settingsFactory().Clone()))
+            : null;
         LyricsDocument document;
         try
         {
@@ -376,9 +380,9 @@ public sealed class LyricsSearchService
         }
 
         // 此处刻意不调用 IsInstrumentalPlaceholder：在线路径挡占位歌词是为了让搜索继续尝试下一个源，
-        // 而落盘条目没有「下一个源」可试。pin 的占位歌词是用户拿着文件明确选定的结果，
-        // 挡掉等于替用户否决其选择，且界面无从显示否决原因。占位歌词也进不了缓存分支——
-        // 在线路径已在写入前滤除，故缓存里不存在这种条目。
+        // 而落盘条目没有「下一个源」可试，占位判定不该替用户否决 pin 的选择。
+        // 但歌词清理规则可能把 pin 或缓存条目清成 0 行（例如默认规则删掉「纯音乐，请欣赏」），
+        // 此时按未命中回落重搜是已接受的行为：规则由用户在设置里开关，关掉即恢复。
         if (document.Lines.Count == 0)
         {
             return null;
@@ -657,7 +661,13 @@ public sealed class LyricsSearchService
         var materialized = await MaterializeAsync(entry, info, cancellationToken).ConfigureAwait(false);
         if (materialized == null)
         {
-            Volatile.Write(ref _lastPinError, "该歌词文件没有解析出任何歌词行，未导入。");
+            var clearedByCleanup = await MaterializeAsync(entry, info, cancellationToken, applyCleanup: false)
+                .ConfigureAwait(false) != null;
+            Volatile.Write(
+                ref _lastPinError,
+                clearedByCleanup
+                    ? "该歌词文件的内容都被歌词清理规则排除了，未导入。可在「排除制作人员与版权信息」中关闭后再试。"
+                    : "该歌词文件没有解析出任何歌词行，未导入。");
             return null;
         }
 
