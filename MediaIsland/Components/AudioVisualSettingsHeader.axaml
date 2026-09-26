@@ -3,11 +3,12 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:pages="clr-namespace:MediaIsland.SettingsPages">
     <StackPanel Spacing="4" Margin="0 0 0 12">
-        <StackPanel Orientation="Horizontal" Spacing="8">
-            <TextBlock x:Name="ExplanationText" TextWrapping="Wrap" VerticalAlignment="Center"
+        <!-- 横向 StackPanel 以无限宽度测量子元素，说明文字不会换行；Grid 的星号列才给出有限宽度。 -->
+        <Grid ColumnDefinitions="*,Auto">
+            <TextBlock x:Name="ExplanationText" Grid.Column="0" TextWrapping="Wrap" Margin="0 0 8 0"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-            <pages:ExperimentalBadge VerticalAlignment="Center" />
-        </StackPanel>
+            <pages:ExperimentalBadge Grid.Column="1" VerticalAlignment="Top" />
+        </Grid>
         <TextBlock x:Name="StatusText" TextWrapping="Wrap" />
     </StackPanel>
 </UserControl>

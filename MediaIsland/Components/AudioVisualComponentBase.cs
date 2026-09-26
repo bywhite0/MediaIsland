@@ -1,5 +1,7 @@
+using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using Avalonia.Reactive;
 using Avalonia.Threading;
 using ClassIsland.Core.Abstractions.Controls;
 using MediaIsland.Controls;
@@ -34,6 +36,9 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     /// <summary>质心的平滑速率（每秒趋近比例）。颜色跟得太紧会随每个鼓点闪烁。</summary>
     private const double CentroidFollowPerSecond = 4;
 
+    /// <summary>FluentAvalonia 的 ProgressBar 默认前景用的键，ClassIsland 主题同样提供。</summary>
+    private const string AccentBrushKey = "AccentFillColorDefaultBrush";
+
     private readonly IAudioVisualSourceInfo _sourceInfo;
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _idleTimer;
@@ -45,6 +50,8 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     private float _rawCentroid = 0.5f;
     private double _centroid = 0.5;
     private Color _baseColor = Colors.White;
+    private IDisposable? _accentBrushBinding;
+    private IDisposable? _accentColorSubscription;
 
     protected AudioVisualComponentBase(AudioVisualizationService visualization, IAudioVisualSourceInfo sourceInfo)
     {
@@ -63,11 +70,7 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
 
     protected AudioVisualizationService Visualization { get; }
 
-    /// <summary>
-    /// 有意隐藏 ContentControl.Presenter：框架经基类引用取模板里的 ContentPresenter，不受影响；
-    /// 子类与本类里的 Presenter 一律指绘制控件。
-    /// </summary>
-    protected new abstract AudioVisualPresenterBase Presenter { get; }
+    protected abstract AudioVisualPresenterBase VisualPresenter { get; }
 
     /// <summary>快照有新 Revision 时刷新目标值。</summary>
     protected abstract void RefreshTargets(AudioVisualizationSnapshot snapshot);
@@ -95,7 +98,7 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     {
         _demandRegistration = Visualization.Demand.Register();
         Settings.PropertyChanged += OnSettingsPropertyChanged;
-        Presenter.Width = Settings.Width;
+        VisualPresenter.Width = Settings.Width;
         ApplyForeground();
         ApplyStaticSettings();
         UpdateStatus(hasRecentData: false);
@@ -108,6 +111,7 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
         _renderTimer.Stop();
         _idleTimer.Stop();
         Settings.PropertyChanged -= OnSettingsPropertyChanged;
+        ReleaseAccent();
 
         // 必须与 Loaded 成对，且无条件——停表状态下被移出岛同样要释放。
         _demandRegistration?.Dispose();
@@ -117,7 +121,7 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     private void OnSettingsPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         OnSettingChanged(e.PropertyName);
-        Presenter.Width = Settings.Width;
+        VisualPresenter.Width = Settings.Width;
         ApplyForeground();
         ApplyStaticSettings();
 
@@ -131,27 +135,63 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     }
 
     /// <summary>
-    /// 主题色：清除本地值让继承链送下来，再读回实际颜色作音色混色的基色。
-    /// 固定色：白。音色开启时 presenter 用一支常驻笔刷，逐帧只改它的 Color。
+    /// 主题色：presenter 的 Foreground 是自己注册的继承属性，没有祖先会设它，ClearValue 只会得到
+    /// null（画成白色）。所以直接绑到强调色资源；资源观察器随主题切换重新推值，基色也跟着它走。
+    /// 固定色：白。音色开启时 presenter 用一支常驻笔刷，逐帧只改它的 Color；此时先解除资源绑定，
+    /// 免得绑定与本地值争同一个属性。
     /// </summary>
     private void ApplyForeground()
     {
         if (Settings.UseAccentColor)
         {
-            Presenter.ClearValue(AudioVisualPresenterBase.ForegroundProperty);
-            _baseColor = Presenter.Foreground is ISolidColorBrush solid ? solid.Color : Colors.White;
+            _accentColorSubscription ??= VisualPresenter.GetResourceObservable(AccentBrushKey)
+                .Subscribe(new AnonymousObserver<object?>(OnAccentBrushChanged));
         }
         else
         {
+            _accentColorSubscription?.Dispose();
+            _accentColorSubscription = null;
             _baseColor = Colors.White;
-            Presenter.Foreground = Brushes.White;
         }
 
         if (Settings.UseTimbreColor)
         {
+            UnbindAccentBrush();
             _timbreBrush.Color = TimbreColor.Mix(_baseColor, _centroid);
-            Presenter.Foreground = _timbreBrush;
+            VisualPresenter.Foreground = _timbreBrush;
         }
+        else if (Settings.UseAccentColor)
+        {
+            _accentBrushBinding ??= VisualPresenter.Bind(
+                AudioVisualPresenterBase.ForegroundProperty, VisualPresenter.GetResourceObservable(AccentBrushKey));
+        }
+        else
+        {
+            UnbindAccentBrush();
+            VisualPresenter.Foreground = Brushes.White;
+        }
+    }
+
+    private void OnAccentBrushChanged(object? value)
+    {
+        _baseColor = value is ISolidColorBrush solid ? solid.Color : Colors.White;
+        if (Settings.UseTimbreColor)
+        {
+            _timbreBrush.Color = TimbreColor.Mix(_baseColor, _centroid);
+        }
+    }
+
+    private void UnbindAccentBrush()
+    {
+        _accentBrushBinding?.Dispose();
+        _accentBrushBinding = null;
+    }
+
+    private void ReleaseAccent()
+    {
+        UnbindAccentBrush();
+        _accentColorSubscription?.Dispose();
+        _accentColorSubscription = null;
     }
 
     /// <summary>
@@ -200,7 +240,7 @@ public abstract class AudioVisualComponentBase<TConfig> : ComponentBase<TConfig>
     {
         var status = AudioVisualStatusRules.Resolve(
             _sourceInfo.IsLocalSourceAvailable, _sourceInfo.IsConsumingUpstream, hasRecentData);
-        Presenter.Opacity = AudioVisualStatusRules.OpacityFor(status);
+        VisualPresenter.Opacity = AudioVisualStatusRules.OpacityFor(status);
     }
 
     /// <summary>停表判定放在最后：要等画面落完再停，否则会停在半衰减的画面上。</summary>
