@@ -50,7 +50,7 @@ public sealed class AudioSpectrumPresenter : AudioVisualPresenterBase
         switch (Style)
         {
             case SpectrumStyle.Capsule:
-                foreach (var r in SpectrumGeometry.Capsules(Bands, w, h, BarGap)) DrawCapsule(context, brush, r);
+                foreach (var r in SpectrumGeometry.Capsules(Bands, w, h)) DrawCapsule(context, brush, r);
                 break;
 
             case SpectrumStyle.PeakCap:

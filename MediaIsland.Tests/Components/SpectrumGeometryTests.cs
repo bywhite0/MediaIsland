@@ -120,7 +120,7 @@ public class SpectrumGeometryTests
 
         Assert.All(SpectrumGeometry.Bars(values, width, Height, gap: 2, mirrored: false),
             r => Assert.True(r.Width > 0, $"Bars 宽度为 {r.Width}"));
-        Assert.All(SpectrumGeometry.Capsules(values, width, Height, 2),
+        Assert.All(SpectrumGeometry.Capsules(values, width, Height),
             r => Assert.True(r.Width > 0, $"Capsules 宽度为 {r.Width}"));
         Assert.All(SpectrumGeometry.PeakCaps(values, width, Height, 2, mirrored: false),
             r => Assert.True(r.Width > 0, $"PeakCaps 宽度为 {r.Width}"));
@@ -158,7 +158,7 @@ public class SpectrumGeometryTests
         var zeros = new float[7];
         var drawn = style switch
         {
-            SpectrumStyle.Capsule => SpectrumGeometry.Capsules(zeros, Width, Height, 2).Any(r => r.Width > 0 && r.Height > 0),
+            SpectrumStyle.Capsule => SpectrumGeometry.Capsules(zeros, Width, Height).Any(r => r.Width > 0 && r.Height > 0),
             SpectrumStyle.PeakCap => SpectrumGeometry.PeakCaps(zeros, Width, Height, 2, false).Any(r => r.Width > 0 && r.Height > 0),
             SpectrumStyle.Ridge => SpectrumGeometry.Ridge(zeros, Width, Height, false).Length >= 2,
             SpectrumStyle.Spectrogram => SpectrumGeometry.SpectrogramCells([], SpectrumGeometry.SpectrogramColumns, Width, Height).Any(c => c.Cell.Width > 0),
@@ -179,7 +179,7 @@ public class SpectrumGeometryTests
         {
             _ = style switch
             {
-                SpectrumStyle.Capsule => (object)SpectrumGeometry.Capsules(garbage, w, h, 2),
+                SpectrumStyle.Capsule => (object)SpectrumGeometry.Capsules(garbage, w, h),
                 SpectrumStyle.PeakCap => SpectrumGeometry.PeakCaps(garbage, w, h, 2, true),
                 SpectrumStyle.Ridge => SpectrumGeometry.Ridge(garbage, w, h, true),
                 SpectrumStyle.Spectrogram => SpectrumGeometry.SpectrogramCells([garbage], 40, w, h),
@@ -195,7 +195,7 @@ public class SpectrumGeometryTests
     [Fact]
     public void Capsules_AreSymmetricAboutTheHorizontalCenter()
     {
-        var capsules = SpectrumGeometry.Capsules([0.5f, 1f], Width, Height, 2);
+        var capsules = SpectrumGeometry.Capsules([0.5f, 1f], Width, Height);
 
         Assert.All(capsules, c => Assert.Equal(Height / 2, c.Center.Y, 6));
         Assert.Equal(Height, capsules[1].Height, 6);
@@ -204,17 +204,22 @@ public class SpectrumGeometryTests
     [Fact]
     public void Capsules_AtZero_AreDotsAsTallAsTheyAreWide()
     {
-        var capsules = SpectrumGeometry.Capsules([0f, 0f, 0f], Width, Height, 2);
+        var capsules = SpectrumGeometry.Capsules([0f, 0f, 0f], Width, Height);
 
         Assert.All(capsules, c => Assert.Equal(c.Width, c.Height, 6));
     }
 
     [Fact]
-    public void Capsules_AreAtMostHalfTheirSlotWide()
+    public void Capsules_AreExactlyHalfTheirSlotWide_CenteredInTheSlot()
     {
-        var capsules = SpectrumGeometry.Capsules([0.5f, 0.5f], Width, Height, 0);
+        var capsules = SpectrumGeometry.Capsules([0.5f, 0.5f], Width, Height);
 
-        Assert.All(capsules, c => Assert.True(c.Width <= Width / 2 / 2 + 1e-9));
+        var slot = Width / 2;
+        for (var i = 0; i < capsules.Length; i++)
+        {
+            Assert.Equal(slot / 2, capsules[i].Width, 6);
+            Assert.Equal(slot * i + slot / 2, capsules[i].Center.X, 6);
+        }
     }
 
     // ---- PeakCaps ----

@@ -55,14 +55,15 @@ public static class SpectrumGeometry
 
     /// <summary>
     /// 胶囊：以水平中线对称，最矮时是一个圆点（高 = 宽），而不是消失——静止时仍看得出组件在。
-    /// 宽度取「槽宽减间距」与「半个槽宽」的较小者：频段少时槽很宽，胶囊撑满会变成一排方块。
+    /// 宽度固定为半个槽宽：另一半就是胶囊间的缝，所以胶囊不接受间距参数——
+    /// 频段少时槽很宽，若按「槽宽减间距」撑满会变成一排方块。
     /// </summary>
-    public static Rect[] Capsules(IReadOnlyList<float> bands, double width, double height, double gap)
+    public static Rect[] Capsules(IReadOnlyList<float> bands, double width, double height)
     {
         if (bands.Count == 0 || width <= 0 || height <= 0) return [];
 
         var slot = width / bands.Count;
-        var capsuleWidth = Math.Max(0, Math.Min(slot - EffectiveGap(gap, slot), slot / 2));
+        var capsuleWidth = slot / 2;
         var result = new Rect[bands.Count];
         for (var i = 0; i < bands.Count; i++)
         {

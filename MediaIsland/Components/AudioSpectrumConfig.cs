@@ -113,7 +113,8 @@ public class AudioSpectrumConfig() : AudioFrequencyConfigBase(defaultWidth: 96)
         var set = new HashSet<AudioVisualSetting>(Common);
         if (style is SpectrumStyle.Capsule or SpectrumStyle.PeakCap or SpectrumStyle.Ridge)
             set.Add(AudioVisualSetting.BandCount);
-        if (style is SpectrumStyle.Capsule or SpectrumStyle.PeakCap)
+        // 间距只对细柱有意义：胶囊宽度固定为半个槽宽，缝隙由几何自带。
+        if (style is SpectrumStyle.PeakCap)
             set.Add(AudioVisualSetting.BarGap);
         if (style is SpectrumStyle.PeakCap or SpectrumStyle.Ridge)
             set.Add(AudioVisualSetting.Mirror);

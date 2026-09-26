@@ -67,7 +67,7 @@ public class AudioSpectrumConfigTests
     }
 
     [Theory]
-    [InlineData(SpectrumStyle.Capsule, true, true, false)]
+    [InlineData(SpectrumStyle.Capsule, true, false, false)]
     [InlineData(SpectrumStyle.PeakCap, true, true, true)]
     [InlineData(SpectrumStyle.Ridge, true, false, true)]
     [InlineData(SpectrumStyle.Spectrogram, false, false, false)]
