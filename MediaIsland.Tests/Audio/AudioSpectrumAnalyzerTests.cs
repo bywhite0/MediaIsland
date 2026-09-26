@@ -370,4 +370,61 @@ public class AudioSpectrumAnalyzerTests
         // 0 不是一个采样率，是「不知道」。用它覆盖已知值会让频率换算除以零。
         Assert.Equal(SampleRate, analyzer.SampleRate);
     }
+
+    /// <summary>逐声道可控的立体声正弦：左右各自给幅度。</summary>
+    private static AudioFrame StereoSine(float frequency, int frames, short leftAmplitude, short rightAmplitude)
+    {
+        var pcm = new byte[frames * 2 * sizeof(short)];
+        for (var f = 0; f < frames; f++)
+        {
+            var s = MathF.Sin(2 * MathF.PI * frequency * f / SampleRate);
+            BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(f * 4), (short)(s * leftAmplitude));
+            BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(f * 4 + 2), (short)(s * rightAmplitude));
+        }
+
+        return new AudioFrame(pcm, 0, SampleRate, 2, false);
+    }
+
+    [Fact]
+    public void LeftOnlySignal_HasLeftRmsAndNoRightRms()
+    {
+        var analyzer = NewAnalyzer();
+        analyzer.Submit(StereoSine(1000, Window, Amplitude, 0));
+
+        var snapshot = analyzer.Capture();
+
+        Assert.True(snapshot.LeftRms > 0.5f, $"LeftRms={snapshot.LeftRms}");
+        Assert.Equal(0f, snapshot.RightRms);
+    }
+
+    [Fact]
+    public void MonoSource_ReportsEqualChannels()
+    {
+        var analyzer = NewAnalyzer();
+        var pcm = new byte[Window * sizeof(short)];
+        for (var f = 0; f < Window; f++)
+        {
+            BinaryPrimitives.WriteInt16LittleEndian(
+                pcm.AsSpan(f * 2), (short)(MathF.Sin(2 * MathF.PI * 1000 * f / SampleRate) * Amplitude));
+        }
+
+        analyzer.Submit(new AudioFrame(pcm, 0, SampleRate, 1, false));
+        var snapshot = analyzer.Capture();
+
+        Assert.True(snapshot.LeftRms > 0f);
+        Assert.Equal(snapshot.LeftRms, snapshot.RightRms, 5);
+    }
+
+    [Fact]
+    public void LessThanOneWindow_ReturnsEmptyWithZeroChannelLevels()
+    {
+        var analyzer = NewAnalyzer();
+        analyzer.Submit(StereoSine(1000, Window / 2, Amplitude, Amplitude));
+
+        var snapshot = analyzer.Capture();
+
+        Assert.Equal(0, snapshot.Revision);
+        Assert.Equal(0f, snapshot.LeftRms);
+        Assert.Equal(0f, snapshot.RightRms);
+    }
 }

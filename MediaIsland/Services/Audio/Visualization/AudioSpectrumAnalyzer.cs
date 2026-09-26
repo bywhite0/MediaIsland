@@ -33,10 +33,14 @@ public sealed class AudioSpectrumAnalyzer : IAudioFrameSink
     private const long MinRecomputeIntervalMs = 8;
 
     private readonly AudioSampleRing _ring = new(WindowSize * 2);
+    private readonly AudioSampleRing _left = new(WindowSize * 2);
+    private readonly AudioSampleRing _right = new(WindowSize * 2);
     private readonly Func<long> _nowMs;
     private readonly object _captureGate = new();
     private readonly float[] _real = new float[WindowSize];
     private readonly float[] _imaginary = new float[WindowSize];
+    private readonly float[] _leftWindow = new float[WindowSize];
+    private readonly float[] _rightWindow = new float[WindowSize];
 
     private int _sampleRate = 48000;
     private long _lastComputedAtMs;
@@ -82,6 +86,32 @@ public sealed class AudioSpectrumAnalyzer : IAudioFrameSink
 
         _lastFrameSilent = frame.IsSilent;
         _ring.Append(frame.Pcm, frame.Channels);
+        AppendChannel(_left, frame.Pcm, frame.Channels, 0);
+        AppendChannel(_right, frame.Pcm, frame.Channels, frame.Channels >= 2 ? 1 : 0);
+    }
+
+    /// <summary>
+    /// 从交错 PCM 抽出一个声道写进单声道环。复用环的 Append（channels=1）而不是再写一套
+    /// i16 归一：抽出的是一段连续 i16，与单声道 PCM 字节布局完全相同。
+    /// 用 stackalloc 限 4KB 以内分块，避免在音频线程上分配。
+    /// </summary>
+    private static void AppendChannel(AudioSampleRing ring, ReadOnlySpan<byte> pcm, int channels, int channel)
+    {
+        const int ChunkFrames = 1024;
+        Span<byte> chunk = stackalloc byte[ChunkFrames * sizeof(short)];
+        var frames = pcm.Length / sizeof(short) / channels;
+        for (var start = 0; start < frames; start += ChunkFrames)
+        {
+            var count = Math.Min(ChunkFrames, frames - start);
+            for (var f = 0; f < count; f++)
+            {
+                var offset = ((start + f) * channels + channel) * sizeof(short);
+                chunk[f * 2] = pcm[offset];
+                chunk[f * 2 + 1] = pcm[offset + 1];
+            }
+
+            ring.Append(chunk[..(count * sizeof(short))], 1);
+        }
     }
 
     /// <summary>
@@ -114,6 +144,8 @@ public sealed class AudioSpectrumAnalyzer : IAudioFrameSink
 
             var waveform = SampleWaveform(window);
             var (rms, peak) = ComputeLevels(window);
+            var leftRms = _left.TryReadLatest(_leftWindow) ? ComputeLevels(_leftWindow).Rms : 0f;
+            var rightRms = _right.TryReadLatest(_rightWindow) ? ComputeLevels(_rightWindow).Rms : 0f;
 
             RealFft.ApplyHannWindow(window);
             _imaginary.AsSpan().Clear();
@@ -138,6 +170,8 @@ public sealed class AudioSpectrumAnalyzer : IAudioFrameSink
                 Waveform = waveform,
                 Rms = rms,
                 Peak = peak,
+                LeftRms = leftRms,
+                RightRms = rightRms,
                 IsSilent = _lastFrameSilent,
                 Revision = ++_revision
             };

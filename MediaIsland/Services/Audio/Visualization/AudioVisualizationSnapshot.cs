@@ -2,7 +2,7 @@ namespace MediaIsland.Services.Audio.Visualization;
 
 /// <summary>
 /// 一次分析的完整结果。复合而非只有频谱，因为不是所有形态都需要 FFT：
-/// 示波器要时域抽样、电平表要 RMS 与峰值、律动条要限频段能量归约的标量。
+/// 示波器要时域抽样、电平表要 RMS 与峰值、音频能量要限频段能量归约的标量。
 /// 渲染层按当前形态各取所需，故切换形态是纯渲染层的事，分析层不变。
 ///
 /// 装的是定长原始幅度谱，不是分好的频段。频段映射（段数、频率范围）是
@@ -23,6 +23,8 @@ public sealed record AudioVisualizationSnapshot
         Waveform = [],
         Rms = 0f,
         Peak = 0f,
+        LeftRms = 0f,
+        RightRms = 0f,
         IsSilent = true,
         Revision = 0
     };
@@ -36,6 +38,14 @@ public sealed record AudioVisualizationSnapshot
     public required float Rms { get; init; }
 
     public required float Peak { get; init; }
+
+    /// <summary>
+    /// 左右声道各自的 RMS，与 <see cref="Rms"/> 同窗。单声道源两者相等。
+    /// 只有声像类样式需要它；频谱与波形仍走混单声道那条，避免为立体声把 FFT 算两遍。
+    /// </summary>
+    public required float LeftRms { get; init; }
+
+    public required float RightRms { get; init; }
 
     public required bool IsSilent { get; init; }
 
